@@ -11,7 +11,7 @@ dist
 .DS_Store
 **/*.pyc
 gen.py
-
+tag.txt
 
 ################## Berkley Function Call Leaderboard ##########################
 
