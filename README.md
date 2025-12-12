@@ -55,7 +55,9 @@ cd research
 
 # Generate solutions with an LLM
 python generate_oneshot_gpt.py --model <model_name>
+
 # Run evaluation locally (requires Docker)
+chmod -x ./main_loop.sh
 ./main_loop.sh
 
 # Or run on cloud (requires SkyPilot)
