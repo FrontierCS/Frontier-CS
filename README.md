@@ -10,22 +10,33 @@ Evolving Challenges for Evolving Intelligence
 
 <p align="center">
   <a href="https://frontier-cs.org"><img src="https://img.shields.io/badge/Website-frontier--cs.org-orange?logo=googlechrome" alt="Website"></a>
+  <a href="https://frontier-cs.org/leaderboard"><img src="https://img.shields.io/badge/Leaderboard-View_Rankings-purple?logo=trophy" alt="Leaderboard"></a>
   <img src="https://img.shields.io/badge/Research_Problems-50-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-115-green" alt="Algorithmic Problems">
 </p>
 
-**Frontier-CS** is an _unsolved_, _verifiable_, _open-ended_, and _diverse_ dataset for evaluating frontier models on challenging computer science problems, ranging from optimization problems in real research to competitive programming–style open challenges.
+## What is Frontier-CS?
 
-Whether you are benchmarking LLM agents, evaluating code generation models, or stress-testing reasoning capabilities, Frontier-CS provides a comprehensive suite of tasks designed for rigorous and practical evaluation.
+**Frontier-CS** is an _unsolved_, _open-ended_, _verifiable_, and _diverse_ benchmark for evaluating AI on challenging computer science problems.
 
-Frontier-CS consists of two categories:
+Think of it as an "exam" for AI, but instead of easy textbook questions, we give problems that are genuinely difficult: ones that researchers struggle with, that have no known optimal solutions, or that require deep expertise to even attempt.
 
-- **Algorithmic Problems**: Competitive programming challenges, including optimization, construction, and interactive problems. For each algorithmic problem, we release the full problem statement, evaluator, and _one_ public test case.
-- **Research Problems**: Real-world systems challenges, including GPU kernels, distributed scheduling, ML pipelines, database optimization, and security exploits. For research problems, we release all data and scripts required to fully reproduce the results.
+## Why Frontier-CS?
 
-Frontier-CS is continuously expanding with new and increasingly challenging tasks contributed by our community.
+Current benchmarks are becoming too easy. Models score 90%+ on many existing coding benchmarks, but that doesn't mean they can actually do useful research or solve real-world engineering challenges.
 
-## Quickstart
+**Frontier-CS is different:**
+
+|            | Traditional Benchmarks          | Frontier-CS                                             |
+| ---------- | ------------------------------- | ------------------------------------------------------- |
+| Difficulty | Often saturated (90%+ scores)   | _Unsolved_: no model has achieved perfect scores        |
+| Problems   | Textbook-style, known solutions | _Open-ended_ research & optimization challenges         |
+| Evaluation | Binary pass/fail                | _Verifiable_ continuous scoring, always room to improve |
+| Scope      | Usually one domain              | _Diverse_: systems, ML, algorithms, security, and more  |
+
+**[Leaderboard →](https://frontier-cs.org/leaderboard)** | Browse all problems at [frontier-cs.org](https://frontier-cs.org)
+
+## Getting Started
 
 ### Installation
 
@@ -33,112 +44,80 @@ Frontier-CS is continuously expanding with new and increasingly challenging task
 git clone https://github.com/FrontierCS/Frontier-CS.git
 cd Frontier-CS
 
-# Install Python dependencies (using uv, recommended)
+# Install dependencies (using uv, recommended)
 uv sync
 
 # Or with pip:
 pip install -e .
 ```
 
+### Try it yourself
+
+<p align="center">
+  <img src="assets/teaser.png" alt="Example Problem" width="800"/>
+</p>
+
+```bash
+# Run the example solution
+frontier-eval <PROBLEM_ID> examples/<PROBLEM_ID>_solution.py
+```
+
+<!-- TODO: Replace <PROBLEM_ID> with actual problem, add example solution to examples/ -->
+
 ### Research Problems
 
-Real-world research problems requiring domain expertise in areas including machine learning, operating systems, distributed systems, GPU computing, databases, programming languages, and security.
-
-**CLI Evaluation:**
-
 ```bash
-# List available problems
+# List all problems
 frontier-eval --list
 
-# Evaluate a single problem (requires Docker)
+# Evaluate a solution (requires Docker)
 frontier-eval flash_attn <your_solution.py>
 
-# Evaluate with SkyPilot (cloud)
+# Evaluate on cloud (requires SkyPilot)
 frontier-eval flash_attn <your_solution.py> --skypilot
-
-# Evaluate multiple problems
-frontier-eval --problems flash_attn,cross_entropy <your_solution.py>
 ```
 
-**Batch Evaluation:**
-
-For evaluating multiple solutions, create a pairs file (`pairs.txt`) mapping solutions to problems:
-
-```
-# pairs.txt format: solution_name:problem_id
-my_flash_attn_v1:flash_attn
-my_flash_attn_v2:flash_attn
-my_cross_entropy:cross_entropy
-```
-
-Then run batch evaluation:
-
-```bash
-# Evaluate all pairs
-frontier-eval batch --pairs-file pairs.txt
-
-# Resume interrupted evaluation
-frontier-eval batch --pairs-file pairs.txt --resume
-
-# Check status
-frontier-eval batch --status --results-dir results/batch
-```
+See [research/README.md](research/README.md) for full documentation.
 
 ### Algorithmic Problems
 
-Competitive programming-style problems with automated judging (see [algorithmic/README.md](algorithmic/README.md) for details).
-
-**Start Judge Server:**
-
 ```bash
+# Start the judge server
 cd algorithmic && docker compose up -d
-```
 
-**CLI Evaluation:**
-
-```bash
-# Evaluate your solution for problem 1
+# Evaluate a solution
 frontier-eval --algorithmic 1 <your_solution.cpp>
 ```
 
-### Evaluation API
+See [algorithmic/README.md](algorithmic/README.md) for full documentation.
 
-Unified Python API for evaluating both algorithmic and research problems:
+### Python API
 
 ```python
 from frontier_cs import FrontierCSEvaluator
 
 evaluator = FrontierCSEvaluator()
 
-# Algorithmic problem (requires judge server)
+# Evaluate a research problem
+result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code)
+print(f"Score: {result.score}")
+
+# Evaluate an algorithmic problem
 result = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)
 print(f"Score: {result.score}")
-
-# Research problem (requires Docker)
-result = evaluator.evaluate("research", problem_id="flash_attn", code=py_code)
-print(f"Score: {result.score}")
-
-# Research problem with SkyPilot (cloud)
-result = evaluator.evaluate("research", problem_id="flash_attn", code=py_code,
-                           backend="skypilot")
-
-# Batch evaluation
-results = evaluator.evaluate_batch("research",
-                                  problem_ids=["flash_attn", "cross_entropy"],
-                                  code=py_code)
 ```
 
-## Submit Your Results
+## Submitting Results
 
-We currently release partial test cases for algorithmic problems to allow users to test and debug their solutions. To submit your solutions for full evaluation and have it included in the leaderboard, please send your solutions to qmang@berkeley.edu or wenhao.chai@princeton.edu following the instructions in [SUBMIT.md](SUBMIT.md).
+We release partial test cases so you can develop and debug locally. For full evaluation and leaderboard inclusion, submit your solutions to qmang@berkeley.edu, or wenhao.chai@princeton.edu, or zhifei.li@berkeley.edu following the instructions in [SUBMIT.md](SUBMIT.md).
 
 ## Acknowledgments
 
-Some of the problems are adapted from [ALE-bench](https://github.com/SakanaAI/ALE-Bench) and [AI-Driven Research for Systems (ADRS)](https://ucbskyadrs.github.io/).
+Some problems are adapted from [ALE-bench](https://github.com/SakanaAI/ALE-Bench) and [AI-Driven Research for Systems (ADRS)](https://ucbskyadrs.github.io/).
 
 ## Citing Us
 
-If you found Frontier-CS useful, please cite us as:
+If you use Frontier-CS in your research, please cite:
 
 ```bibtex
 
