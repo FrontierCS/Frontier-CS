@@ -10,6 +10,7 @@ Evolving Challenges for Evolving Intelligence
 
 <p align="center">
   <a href="https://frontier-cs.org"><img src="https://img.shields.io/badge/Website-frontier--cs.org-orange?logo=googlechrome" alt="Website"></a>
+  <a href="https://frontier-cs.org/leaderboard"><img src="https://img.shields.io/badge/Leaderboard-View_Rankings-purple?logo=trophy" alt="Leaderboard"></a>
   <img src="https://img.shields.io/badge/Research_Problems-50-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-115-green" alt="Algorithmic Problems">
 </p>
@@ -33,7 +34,7 @@ Current benchmarks are becoming too easy. Models score 90%+ on many existing cod
 | Evaluation | Binary pass/fail                | _Verifiable_ continuous scoring, always room to improve  |
 | Scope      | Usually one domain              | _Diverse_: systems, ML, algorithms, security, and more   |
 
-Browse all problems at [frontier-cs.org](https://frontier-cs.org).
+**[Leaderboard →](https://frontier-cs.org/leaderboard)** · Browse all problems at [frontier-cs.org](https://frontier-cs.org)
 
 ## Getting Started
 
@@ -108,7 +109,7 @@ print(f"Score: {result.score}")
 
 ## Submitting Results
 
-We release partial test cases so you can develop and debug locally. For full evaluation and leaderboard inclusion, submit your solutions to qmang@berkeley.edu, or wenhao.chai@princeton.edu, or zhifei.li@berkeley.edu following the instructions in [SUBMIT.md](SUBMIT.md).
+We release partial test cases for local development and debugging. To get your solutions evaluated on the full test suite and included in the leaderboard, submit following the instructions in [SUBMIT.md](SUBMIT.md).
 
 ## Acknowledgments
 
