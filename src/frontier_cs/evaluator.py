@@ -220,24 +220,67 @@ class FrontierCSEvaluator:
             List of problem identifiers
         """
         if track == "algorithmic":
-            return [str(p) for p in self.algorithmic_runner.list_problems()]
+            # Read from local ./algorithmic/problems directory
+            try:
+                alg_base = self.docker_runner.base_dir / "algorithmic" / "problems"
+            except Exception:
+                return []
+            
+            if not alg_base or not alg_base.exists():
+                return []
+            
+            problems = []
+            for item in alg_base.iterdir():
+                if item.is_dir() and not item.name.startswith("."):
+                    problems.append(item.name)
+            
+            # Sort numerically if possible
+            def sort_key(name):
+                try:
+                    return (0, int(name))
+                except ValueError:
+                    return (1, name)
+            
+            return sorted(problems, key=sort_key)
 
-        # Research problems - read from problems.txt in scripts/
-        problems_file = self.docker_runner.research_dir / "scripts" / "problems.txt"
-        if not problems_file.exists():
+        # Research problems - count by evaluator.py files (matches update_problem_count.py logic)
+        research_problems_dir = self.docker_runner.research_dir / "problems"
+        if not research_problems_dir.exists():
             return []
 
         problems = []
-        for line in problems_file.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                # Remove "research/problems/" prefix if present
-                if line.startswith("research/problems/"):
-                    line = line[len("research/problems/"):]
-                elif line.startswith("research/"):
-                    line = line[len("research/"):]
-                problems.append(line)
-        return problems
+        
+        # Special case: poc_generation has 4 subcategories
+        poc_dir = research_problems_dir / "poc_generation"
+        if poc_dir.exists():
+            # List the 4 subcategories directly
+            problems.extend([
+                "research/poc_generation/heap_buffer_overflow",
+                "research/poc_generation/heap_use_after_free",
+                "research/poc_generation/stack_buffer_overflow",
+                "research/poc_generation/uninitialized_value"
+            ])
+        
+        # Find all evaluator.py files, excluding those in poc_generation
+        for evaluator_file in research_problems_dir.rglob("evaluator.py"):
+            # Skip if it's under poc_generation directory
+            if "poc_generation" not in str(evaluator_file):
+                # Get relative path from research_problems_dir
+                problem_path = evaluator_file.parent.relative_to(research_problems_dir)
+                problems.append("research/" + str(problem_path))
+        
+        # Also include local algorithmic problems (from ./algorithmic/problems)
+        try:
+            alg_base = self.docker_runner.base_dir / "algorithmic" / "problems"
+        except Exception:
+            alg_base = None
+
+        if alg_base and alg_base.exists():
+            for item in sorted(alg_base.iterdir(), key=lambda p: p.name):
+                if item.is_dir() and not item.name.startswith("."):
+                    problems.append(f"algorithmic/{item.name}")
+
+        return sorted(problems)
 
     def get_problem_statement(
         self,

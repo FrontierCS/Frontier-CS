@@ -87,6 +87,11 @@ Examples:
         help="Evaluate algorithmic problem (expects numeric ID)",
     )
     problem_group.add_argument(
+        "--research",
+        action="store_true",
+        help="Evaluate research problem (default track)",
+    )
+    problem_group.add_argument(
         "--problems",
         type=str,
         help="Comma-separated list of problem IDs to evaluate",
@@ -531,10 +536,39 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Handle info commands
     if args.list:
-        problems = evaluator.list_problems(track)
-        print(f"\n{track.title()} Problems ({len(problems)} total):\n")
-        for p in problems:
-            print(f"  {p}")
+        if args.algorithmic:
+            # Only list algorithmic problems in compact format
+            problems = evaluator.list_problems("algorithmic")
+            print(f"\nAlgorithmic Problems ({len(problems)} total):\n")
+            # Display 10 IDs per line
+            ids_per_line = 10
+            for i in range(0, len(problems), ids_per_line):
+                line_ids = problems[i:i+ids_per_line]
+                print("  " + ", ".join(line_ids))
+        elif args.research:
+            # Only list research problems
+            all_research = evaluator.list_problems("research")
+            research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
+            print(f"\nResearch Problems ({len(research_problems)} total):\n")
+            for p in research_problems:
+                print(f"  {p}")
+        else:
+            # List both tracks separately - research first, then algorithmic
+            # Get research problems (excluding algorithmic)
+            all_research = evaluator.list_problems("research")
+            research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
+            print(f"\nResearch Problems ({len(research_problems)} total):\n")
+            for p in research_problems:
+                print(f"  {p}")
+            
+            # Get algorithmic problems - show in compact format (multiple per line)
+            alg_problems = evaluator.list_problems("algorithmic")
+            print(f"\nAlgorithmic Problems ({len(alg_problems)} total):\n")
+            # Display 10 IDs per line
+            ids_per_line = 10
+            for i in range(0, len(alg_problems), ids_per_line):
+                line_ids = alg_problems[i:i+ids_per_line]
+                print("  " + ", ".join(line_ids))
         return 0
 
     if args.show:
