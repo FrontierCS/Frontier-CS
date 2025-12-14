@@ -6,14 +6,13 @@
 
 [![Website](https://img.shields.io/badge/Website-frontier--cs.org-orange?logo=googlechrome)](https://frontier-cs.org) ![Research Problems](https://img.shields.io/badge/Research_Problems-50-blue) ![Algorithmic Problems](https://img.shields.io/badge/Algorithmic_Problems-114-green)
 
-
-**Frontier-CS** is an *unsolved*, *verifiable*, *open-ended*, and *diverse* dataset for evaluating frontier models on challenging computer science problems, ranging from optimization problems in real research to competitive programming–style open challenges.
+**Frontier-CS** is an _unsolved_, _verifiable_, _open-ended_, and _diverse_ dataset for evaluating frontier models on challenging computer science problems, ranging from optimization problems in real research to competitive programming–style open challenges.
 
 Whether you are benchmarking LLM agents, evaluating code generation models, or stress-testing reasoning capabilities, Frontier-CS provides a comprehensive suite of tasks designed for rigorous and practical evaluation.
 
 Frontier-CS consists of two categories:
 
-- **Algorithmic Problems**: Competitive programming challenges, including optimization, construction, and interactive problems. For each algorithmic problem, we release the full problem statement, evaluator, and *one* public test case.  
+- **Algorithmic Problems**: Competitive programming challenges, including optimization, construction, and interactive problems. For each algorithmic problem, we release the full problem statement, evaluator, and _one_ public test case.
 
 - **Research Problems**: Real-world systems challenges, including GPU kernels, distributed scheduling, ML pipelines, database optimization, and security exploits. For research problems, we release all data and scripts required to fully reproduce the results.
 
@@ -44,7 +43,6 @@ export ANTHROPIC_API_KEY="sk-ant-..." # For Claude models
 export GOOGLE_API_KEY="..."           # For Gemini models
 ```
 
-
 ### Research Problems
 
 Real-world research problems requiring domain expertise in areas including machine learning, operating systems, distributed systems, GPU computing, databases, programming languages, and security.
@@ -56,13 +54,13 @@ Real-world research problems requiring domain expertise in areas including machi
 frontier-eval --list
 
 # Evaluate a single problem (requires Docker)
-frontier-eval flash_attn solution.py
+frontier-eval flash_attn <your_solution.py>
 
 # Evaluate with SkyPilot (cloud)
-frontier-eval flash_attn solution.py --skypilot
+frontier-eval flash_attn <your_solution.py> --skypilot
 
 # Evaluate multiple problems
-frontier-eval --problems flash_attn,cross_entropy solution.py
+frontier-eval --problems flash_attn,cross_entropy <your_solution.py>
 ```
 
 **Generate Solutions:**
@@ -79,13 +77,14 @@ Competitive programming-style problems with automated judging (see [algorithmic/
 **Start Judge Server:**
 
 ```bash
-cd algorithmic && docker-compose up -d
+cd algorithmic && docker compose up -d
 ```
 
 **CLI Evaluation:**
 
 ```bash
-frontier-eval --algorithmic 1 solution.cpp
+# Evaluate your solution for problem 1
+frontier-eval --algorithmic 1 <your_solution.cpp>
 ```
 
 ### Evaluation API
@@ -116,6 +115,7 @@ results = evaluator.evaluate_batch("research",
 ```
 
 ## Submit Your Results
+
 We currently release partial test cases for algorithmic problems to allow users to test and debug their solutions. To submit your solutions for full evaluation and have it included in the leaderboard, please send your solutions to qmang@berkeley.edu or wenhao.chai@princeton.edu following the instructions in [SUBMIT_RESULTS.md](SUBMIT_RESULTS.md).
 
 ## Citing Us

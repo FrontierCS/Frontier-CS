@@ -987,8 +987,8 @@ def generate_code(
     return code
 
 
-def create_solution(base_dir: Path, name: str, code: str) -> Path:
-    sol_dir = base_dir / "solutions" / name
+def create_solution(repo_root: Path, name: str, code: str) -> Path:
+    sol_dir = repo_root / "solutions" / name
     res_dir = sol_dir / "resources"
     res_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1031,6 +1031,7 @@ def get_problem_name(problem_path: Path) -> str:
 
 def main():
     base_dir = Path(__file__).parent
+    repo_root = base_dir.parent  # Root of the repository
     ensure_numpy_version(REQUIRED_NUMPY_VERSION)
     load_env_file(base_dir / ".env")
 
@@ -1170,7 +1171,7 @@ def main():
         sys.exit(1)
 
     # Create logs directory
-    logs_dir = base_dir / "gpt_generation_logs"
+    logs_dir = repo_root / "generation_logs"
     logs_dir.mkdir(exist_ok=True)
 
     # Resolve model selection precedence
@@ -1279,7 +1280,7 @@ def main():
                 variant_index = int(tail_parts[1])
             total_variants_for_task = max(variant_index + 1, 1)
 
-            sol_dir = base_dir / "solutions" / solution_name
+            sol_dir = repo_root / "solutions" / solution_name
             if sol_dir.exists():
                 if args.force:
                     try:
@@ -1366,7 +1367,7 @@ def main():
                 for pos, variant_index in enumerate(variant_indices):
                     suffix = "" if variant_index == 0 else f"_{variant_index}"
                     solution_name = f"{model_prefix}_{problem_name}{suffix}"
-                    sol_dir = base_dir / "solutions" / solution_name
+                    sol_dir = repo_root / "solutions" / solution_name
 
                     if sol_dir.exists():
                         if args.force:
@@ -1494,7 +1495,7 @@ def main():
                 problem_name=task.problem_name,
                 problem_path=task.problem_path,
             )
-            sol_dir = create_solution(base_dir, task.solution_name, code)
+            sol_dir = create_solution(repo_root, task.solution_name, code)
             print(f"Created: {sol_dir}")
             print(f"Log saved: {log_file}")
             print(f"Add to pairs.txt: {task.solution_name}:{task.display_path}")
