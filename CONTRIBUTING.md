@@ -77,10 +77,14 @@ The problem statement should include:
 - **Memory Limit**: Memory usage limit
 - **Sample Input/Output**: At least one example with explanation
 
-#### chk.cc
+#### chk.cc / interactor.cc (for interactive problems)
 
 Evaluator for scoring logic
 
+(**NOTE**) the current judge returns the partial score by parsing the message returned by `testlib.h`, making sure your `quitp` follows the following format:
+```cpp
+quitp(score, "Ratio: %.9f [additional message str]", score, ...);
+```
 #### testdata/
 
 Test cases with inputs (`.in`) and expected outputs (`.ans`):
