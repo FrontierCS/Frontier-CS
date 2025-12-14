@@ -13,7 +13,7 @@ def count_research_problems(research_dir: Path) -> int:
     count = 0
     
     # Special case: poc_generation counts as 4 problems (4 subcategories)
-    poc_dir = research_dir / 'poc_generation'
+    poc_dir = research_dir / 'problems' / 'poc_generation'
     if poc_dir.exists():
         count += 4
     
