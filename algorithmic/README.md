@@ -1,15 +1,3 @@
-# Algorithmic Problems Benchmark
-
-107 algorithmic problems with automated judging via go-judge.
-
-## Problem Categories
-
-| Category | Description |
-|----------|-------------|
-| **Optimization** | Find optimal solution for given equation/constraints |
-| **Construction** | Build a solution satisfying all constraints |
-| **Interactive** | Query-response with judge, partial information revealed over time |
-
 ## Problem Structure
 
 Each problem in `problems/{id}/` contains:
@@ -38,7 +26,7 @@ docker-compose up -d           # Subsequent runs
 
 Judge runs at `http://localhost:8081`.
 
-### 2. Run Benchmark
+### 2. Run Benchmark for LLMs
 
 ```bash
 python scripts/run_tests.py <model_name>
@@ -79,7 +67,7 @@ Results saved to `scripts/solutions/`:
 
 ---
 
-## Adding Problems
+## Customized Problems
 
 1. Create `problems/{id}/` directory
 2. Add required files:
