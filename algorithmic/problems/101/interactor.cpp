@@ -8,14 +8,14 @@
 using namespace std;
 
 enum {
-    INVALID_INPUT = -1,        // 评测端输入非法（仅评测内部使用）
-    INVALID_T_LENGTH = 1,      // t 长度 != N
-    INVALID_T_CHAR   = 2,      // t 含非法字符
-    WRONG_T          = 3,      // t 与真值不一致
-    INVALID_S_LENGTH = 4,      // s 长度 != 2N+1
-    INVALID_S_CHAR   = 5,      // s 含非法字符
-    QUERY_LIMIT_EXCEEDED = 6,  // 询问次数 > 1000
-    INVALID_OUTPUT   = 9,      // 选手输出行的首字符既不是 '?' 也不是 '!'
+    INVALID_INPUT = -1,
+    INVALID_T_LENGTH = 1,
+    INVALID_T_CHAR   = 2,
+    WRONG_T          = 3,
+    INVALID_S_LENGTH = 4,
+    INVALID_S_CHAR   = 5,
+    QUERY_LIMIT_EXCEEDED = 6,
+    INVALID_OUTPUT   = 9,
 };
 
 const int N_MAX = 8000;
@@ -26,14 +26,12 @@ std::vector<int> U, V;
 std::string T;
 int QUERY_COUNT = 0;
 
-// 有界：900 内满分 1.0，>=5000 为 0，线性插值
 double score(int x){
     if (x <= 900) return 1.0;
     if (x >= 5000) return 0.0;
     return (5000.0 - x) / (5000.0 - 900.0);
 }
 
-// 无下界：0 内满分 1.0，>=5000 为 0，线性插值
 double score_unbounded(int x){
     if (x <= 0) return 1.0;
     if (x >= 5000) return 0.0;
@@ -41,7 +39,6 @@ double score_unbounded(int x){
 }
 
 [[noreturn]] void wrong(const int num) {
-    // 向选手程序写一个标志（避免卡读），随后用 testlib 结束
     fprintf(stdout, "-1\n");
     fflush(stdout);
     quitf(_wa, "translate:wrong\nWrong Answer [%d]\n", num);
@@ -66,19 +63,16 @@ int query(std::string s) {
     }
     QUERY_COUNT++;
 
-    // 将 '0'/'1' 转为 0/1
     for (char &c : s) c -= '0';
 
-    // 自高到低地计算槽输出并折叠到开关 i（XOR 技巧实现 OFF/ON 两种行为）
     for (int i = N - 1; i >= 0; --i) {
         const int u = U[i], v = V[i];
         if (T[i] == '&') {
             s[i] ^= (s[u] & s[v]);
-        } else { // '|'
+        } else {
             s[i] ^= (s[u] | s[v]);
         }
     }
-    // 返回最终开关 0 的输出
     return s[0];
 }
 
@@ -98,9 +92,8 @@ void answer(std::string t) {
 int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
-    // ---------- 读取评测输入（仅评测端使用） ----------
-    N = inf.readInt();     // 1..8000
-    R = inf.readInt();     // 1..min(N,120)
+    N = inf.readInt();
+    R = inf.readInt();
     if (N < 1 || N > N_MAX) {
         wrong(INVALID_INPUT);
     }
@@ -111,12 +104,9 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < N; ++i) {
         U[i] = inf.readInt();
         V[i] = inf.readInt();
-        // 边界/拓扑约束可按需打开
-        // if (!(i < U[i] && U[i] < V[i] && V[i] <= 2 * N)) wrong(INVALID_INPUT);
         cout << U[i] << " " << V[i] << endl;
     }
 
-    // 隐藏真值（仅评测端使用，选手不可见）
     T = inf.readToken();
     if ((int)T.size() != N) {
         wrong(INVALID_INPUT);
@@ -130,16 +120,14 @@ int main(int argc, char* argv[]) {
         wrong(INVALID_INPUT);
     }
 
-    // ---------- 交互循环 ----------
     while (true) {
-        std::string op = ouf.readToken(); // 读一个 token
+        std::string op = ouf.readToken();
         if (op.empty()) wrong(INVALID_OUTPUT);
         const char type = op[0];
         if (type != '?' && type != '!') wrong(INVALID_OUTPUT);
 
         std::string payload = ouf.readToken();
 
-        // 兼容性处理：若末尾带换行，去掉（通常 readToken 不会带）
         if (!payload.empty() && payload.back() == '\n') payload.pop_back();
 
         if (type == '?') {
@@ -147,7 +135,7 @@ int main(int argc, char* argv[]) {
             fprintf(stdout, "%d\n", res);
             fflush(stdout);
         } else {
-            answer(payload); // 内部会 quitp
+            answer(payload);
         }
     }
 }

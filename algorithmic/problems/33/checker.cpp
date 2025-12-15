@@ -47,14 +47,12 @@ long long getInc(vector<int> perm) {
     return ans;
 }
 
-// 线性衰减（有界）：n<=90 得 90 分；n>=2000 得 0 分；中间线性插值
 double score_bounded(int n) {
     if (n <= 90) return 90.0;
     if (n >= 2000) return 0.0;
     return 90.0 * (2000.0 - n) / (2000.0 - 90.0);
 }
 
-// 线性衰减（无下限）：n=0 得 90 分；n>=2000 得 0 分；中间线性插值
 double score_unbounded(int n) {
     if (n <= 0) return 90.0;
     if (n >= 2000) return 0.0;
@@ -62,9 +60,6 @@ double score_unbounded(int n) {
 }
 
 int main(int argc, char *argv[]) {
-    // registerChecker("perm", argc, argv);
-    // readBothSecrets(output_secret);
-    // readBothGraderResults();
     registerTestlibCmd(argc, argv);
 
     int t = inf.readInt();
@@ -89,12 +84,11 @@ int main(int argc, char *argv[]) {
         mxn = max(mxn, n);
     }
 
-    // 计算两种分数与比率
-    double bounded = score_bounded(mxn);          // 0..90
-    double unbounded = score_unbounded(mxn);      // 0..90
+    double bounded = score_bounded(mxn);
+    double unbounded = score_unbounded(mxn);
 
-    double score_ratio = bounded / 90.0;          // 0..1
-    double unbounded_ratio = unbounded / 90.0;    // 0..1（n=0时为1）
+    double score_ratio = bounded / 90.0;
+    double unbounded_ratio = unbounded / 90.0;
 
     quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f",
           mxn, score_ratio, unbounded_ratio);

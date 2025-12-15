@@ -3,14 +3,12 @@
 using namespace std;
 
 double f_bounded(int x) {
-    // 有界：x<=500 得 100；x>=5000 得 0；中间线性
     if (x <= 500) return 100.0;
     if (x >= 5000) return 0.0;
     return 100.0 * (5000.0 - x) / (5000.0 - 500.0);
 }
 
 double f_unbounded(int x) {
-    // 无界（下界为 0 得 100 分，上界仍为 5000 得 0 分；中间线性）
     if (x <= 0) return 100.0;
     if (x >= 5000) return 0.0;
     return 100.0 * (5000.0 - x) / 5000.0;
@@ -24,11 +22,10 @@ int main(int argc, char* argv[]) {
     const int T = 20;
     cout << T << endl;
 
-    double best_bounded = 100.0;   // 所有测试中的最小（最差）有界分
-    double best_unbounded = 100.0; // 所有测试中的最小（最差）无界分
+    double best_bounded = 100.0;
+    double best_unbounded = 100.0;
     int mxq = 0;
 
-    // 修复：使用 uint32_t（而不是 uint32）
     uint32_t seed = static_cast<uint32_t>(
         chrono::steady_clock::now().time_since_epoch().count()
     );

@@ -3,13 +3,12 @@
 using namespace std;
 
 double F_bounded(int x, int n) {
-    int l = n, r = n + 1000;     // 原有有界：l=n, r=n+1000
+    int l = n, r = n + 1000;
     if (x <= l) return 100.0;
     if (x >= r) return 0.0;
     return 100.0 * (r - x) / (r - l);
 }
 
-// 无界版本（下界改为 0）：l=0, r=n+1000；x<=0 得 100 分，x>=r 得 0 分
 double F_unbounded(int x, int n) {
     int l = 0, r = n + 1000;
     if (x <= l) return 100.0;
@@ -41,11 +40,10 @@ int main(int argc, char* argv[]) {
     int T = inf.readInt();
     cout << T << endl;
 
-    double best_bounded = 100.0;    // 所有测试最小（最差）有界分（百分制）
-    double best_unbounded = 100.0;  // 所有测试最小（最差）无界分（百分制）
+    double best_bounded = 100.0;
+    double best_unbounded = 100.0;
     int mxq = 0;
 
-    // 将随机种子移到循环外，避免每个用例同一秒内种子相同
     uint32_t seed = static_cast<uint32_t>(
         chrono::steady_clock::now().time_since_epoch().count()
     );

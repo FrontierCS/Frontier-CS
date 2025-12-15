@@ -3,12 +3,11 @@
 using namespace std;
 
 const int MAXN = 100005;
-int p[MAXN]; // 全局数组存当前排列
+int p[MAXN];
 
 static const int N_SUM_LIMIT = 100000;
 static const int SEGMENT_SUM_MULT = 30;
 
-// O(r-l+1): 返回区间 [l,r] 内次大元素的全局位置
 int secondLargestPos(int /*n*/, int l, int r) {
     int mxVal = -1, mxPos = -1;
     int seVal = -1, sePos = -1;
@@ -24,7 +23,6 @@ int secondLargestPos(int /*n*/, int l, int r) {
     return sePos;
 }
 
-// 题面给的有界得分（0..100）
 double perCaseScoreBounded(int q, int n) {
     double L = log2((double)n);
     if (q <= L) return 100.0;
@@ -32,13 +30,12 @@ double perCaseScoreBounded(int q, int n) {
     return 100.0 * (15.0 * L - (double)q) / (14.0 * L);
 }
 
-// 无界比例：按下限为 0 算（不封顶），q=L => 1.0，再少查询可>1，再多查询线性下降到 0
 double perCaseRatioUnbounded(int q, int n) {
     double L = log2((double)n);
     if (L <= 0.0) return 0.0;
     double raw = (15.0 * L - (double)q) / (15.0 * L);
-    if (raw < 0.0) raw = 0.0; // 下限为 0
-    return raw;               // 不设上限
+    if (raw < 0.0) raw = 0.0;
+    return raw;
 }
 
 int main(int argc, char* argv[]) {
@@ -48,8 +45,8 @@ int main(int argc, char* argv[]) {
     int nsum = 0;
     cout << T << endl;
 
-    double minScoreBoundedPct = 100.0; // 记录所有测试中的最小有界分（百分制）
-    double minRatioUnbounded  = 0.0;   // 记录所有测试中的最小无界比例（下限0、无上限）
+    double minScoreBoundedPct = 100.0;
+    double minRatioUnbounded  = 0.0;
     bool firstCase = true;
 
     int totalQueries = 0;
@@ -63,7 +60,6 @@ int main(int argc, char* argv[]) {
 
         cout << n << endl;
 
-        // 找到 n 的位置
         int posN = -1;
         for (int i = 1; i <= n; i++) {
             if (p[i] == n) {
@@ -98,9 +94,9 @@ int main(int argc, char* argv[]) {
                     quitf(_wa, "wrong position on test %d: expected %d, got %d",
                           tc + 1, posN, x);
                 }
-                // 有界与无界得分/比例
-                double boundedPct = perCaseScoreBounded(queries, n);     // 0..100
-                double unboundedRatio = perCaseRatioUnbounded(queries, n); // [0, +inf)
+
+                double boundedPct = perCaseScoreBounded(queries, n);
+                double unboundedRatio = perCaseRatioUnbounded(queries, n);
 
                 if (firstCase) {
                     minScoreBoundedPct = boundedPct;
@@ -119,10 +115,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 最终按最小 case 计分
-    double score_ratio = minScoreBoundedPct / 100.0; // [0,1]
-    // 无界比例按“下限为0算”，不封顶
-    double unbounded_ratio = minRatioUnbounded;      // [0, +inf)
+    double score_ratio = minScoreBoundedPct / 100.0;
+    double unbounded_ratio = minRatioUnbounded;
 
     quitp(score_ratio,
           "all %d tests passed; Ratio: %.4f; RatioUnbounded: %.4f; total queries = %d",
