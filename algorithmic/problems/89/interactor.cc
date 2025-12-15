@@ -237,15 +237,16 @@ int main(int argc, char* argv[]) {
                 // Full score if Q <= 3000, zero if Q > 1,200,000, otherwise linear interpolation.
                 const long long Q_full = 3000;
                 const long long Q_zero = 1200000;
-                double ratio = 0.0;
-                if (query_count <= Q_full) ratio = 1.0;
+                double ratio = 0.0, unbounded_ratio = 0.0;
+                if (query_count <= Q_full) ratio = 1.0, unbounded_ratio = 1.0;
                 else if (query_count > Q_zero) ratio = 0.0;
                 else {
                     ratio = double(Q_zero - query_count) / double(Q_zero - Q_full);
                     if (ratio < 0.0) ratio = 0.0;
+                    unbounded_ratio = max(0.0, ratio);
                     if (ratio > 1.0) ratio = 1.0;
                 }
-                quitp(ratio, "Ratio: %.4f.", ratio);
+                quitp(ratio, "Ratio: %.4f, RatioUnbounded: %.4f.", ratio, unbounded_ratio);
             }
 
             break;

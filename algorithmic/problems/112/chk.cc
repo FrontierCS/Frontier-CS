@@ -84,9 +84,11 @@ int main(int argc, char* argv[]) {
     
     // Calculate score
     double score_ratio = claimed_min_dist / ref_answer;
+    if (score_ratio < 0) score_ratio = 0.0;
+    double unbounded_ratio = max(0.0, score_ratio);
     score_ratio = min(1.0, score_ratio);
     
-    quitp(score_ratio, "Min distance: %.10f. Ratio: %.6f", claimed_min_dist, score_ratio);
+    quitp(score_ratio, "Min distance: %.10f. Ratio: %.6f, RatioUnbounded: %.6f", claimed_min_dist, score_ratio, unbounded_ratio);
     
     return 0;
 }

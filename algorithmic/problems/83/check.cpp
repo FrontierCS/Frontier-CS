@@ -54,7 +54,8 @@ int main(int argc, char* argv[]) {
         quitf(_fail, "User M=0 (impossible)");
 
     double ratio = (double)M_std / (double)M_user;
+    double unbounded_ratio = max(0.0, ratio);
     double score = max(0.0, min(1.0, ratio));
 
-    quitp(score, "User M=%lld, Std M=%lld, Ratio: %.4f", M_user, M_std, score);
+    quitp(score, "User M=%lld, Std M=%lld, Ratio: %.4f, RatioUnbounded: %.4f", M_user, M_std, score, unbounded_ratio);
 }

@@ -190,15 +190,15 @@ int main(int argc, char* argv[]) {
                 quitp(0.0, "Wrong reconstruction. Ratio: 0.0000");
             } else {
                 // Map query count to ratio per problem's 0–100 scale
-                double ratio;
-                if (query_count <= 45000) ratio = 1.0;
-                else if (query_count >= 200000) ratio = 0.0;
+                double ratio, unbounded_ratio;
+                if (query_count >= 200000) ratio = 0.0;
                 else ratio = (200000.0 - (double)query_count) / 155000.0;
-
+                
+                unbounded_ratio = max(0.0, ratio);
                 ratio = max(0.0, min(1.0, ratio));
 
-                quitp(ratio, "Correct reconstruction in %lld queries. Ratio: %.4f",
-                      query_count, ratio);
+                quitp(ratio, "Correct reconstruction in %lld queries. Ratio: %.4f, RatioUnbounded: %.4f",
+                      query_count, ratio, unbounded_ratio);
             }
             break;
 

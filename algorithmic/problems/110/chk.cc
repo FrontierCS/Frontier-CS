@@ -166,7 +166,8 @@ int main(int argc, char* argv[]) {
 
     double ratio = (Best == 0 ? 0.0 : (double)Your / (double)Best);
     if (ratio < 0) ratio = 0;
+    double unbounded_ratio = max(0.0, ratio);
     if (ratio > 1) ratio = 1;
 
-    quitp(ratio, "Valid grid. Your=%lld Best=%lld Ratio: %.8f", Your, Best, ratio);
+    quitp(ratio, "Valid grid. Your=%lld Best=%lld Ratio: %.8f, RatioUnbounded: %.8f", Your, Best, ratio, unbounded_ratio);
 }

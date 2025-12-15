@@ -116,10 +116,11 @@ int main(int argc, char* argv[]) {
 
                 double score_ratio = your_value / best_value;
                 if (score_ratio < 0.0) score_ratio = 0.0;
+                double unbounded_ratio = max(0.0, score_ratio);
                 if (score_ratio > 1.0) score_ratio = 1.0;
 
-                quitp(score_ratio, "Correct guess in %lld questions. Ratio: %.4f",
-                      your_queries, score_ratio);
+                quitp(score_ratio, "Correct guess in %lld questions. Ratio: %.4f, RatioUnbounded: %.4f",
+                      your_queries, score_ratio, unbounded_ratio);
             } else {
                 cout << ":(" << endl;
                 if (guess_count == MAX_GUESSES) {

@@ -159,15 +159,17 @@ int main(int argc, char* argv[]) {
     int opt_score  = score_on_grid(opt,  t, seqs);
 
     // ratio
-    double score_ratio;
+    double score_ratio, unbounded_ratio;
     if (opt_score == 0) {
         score_ratio = (part_score == 0 ? 1.0 : 0.0);
+        unbounded_ratio = score_ratio;
     } else {
         score_ratio = (double)part_score / (double)opt_score;
         if (score_ratio < 0.0) score_ratio = 0.0;
+        unbounded_ratio = score_ratio;
         if (score_ratio > 1.0) score_ratio = 1.0;
     }
 
     long long participant_value = part_score; // match required message format
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f", participant_value, score_ratio);
+    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", participant_value, score_ratio, unbounded_ratio);
 }

@@ -102,9 +102,11 @@ int main(int argc, char* argv[]) {
             } else {
                 long long your_queries = query_count;
                 double score_ratio = (double)(ref_queries + 1) / (your_queries + 1);
+                if (score_ratio < 0.0) score_ratio = 0.0;
+                double unbounded_ratio = std::max(0.0, score_ratio);
                 score_ratio = std::min(1.0, score_ratio);
                 
-                quitp(score_ratio, "Correct guess in %lld queries. Ratio: %.4f", your_queries, score_ratio);
+                quitp(score_ratio, "Correct guess in %lld queries. Ratio: %.4f, RatioUnbounded: %.4f", your_queries, score_ratio, unbounded_ratio);
             }
             break;
             

@@ -142,9 +142,9 @@ int main(int argc, char* argv[]) {
 
     int queries = 0; // number of answered '?' queries
 
-    auto finalize_with_ratio = [&](double ratio, const string &fmt, auto... args) {
+    auto finalize_with_ratio = [&](double ratio, double unbounded_ratio, const string &fmt, auto... args) {
         string base = format(fmt.c_str(), args...);
-        quitp(ratio, "%s Ratio: %.6f", base.c_str(), ratio);
+        quitp(ratio, "%s Ratio: %.6f, RatioUnbounded: %.6f", base.c_str(), ratio, unbounded_ratio);
     };
 
     while (true) {
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
 
             if (queries > QUERY_LIMIT) {
                 cout << -1 << ' ' << -1 << '\n' << flush;
-                finalize_with_ratio(0.0, "Query limit exceeded: %d > %d.", queries, QUERY_LIMIT);
+                finalize_with_ratio(0.0, 0.0, "Query limit exceeded: %d > %d.", queries, QUERY_LIMIT);
             }
 
             // Answer: a0[i] a1[i]
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
 
             if (gi != diamondIndex) {
                 // Wrong answer -> ratio 0.0
-                finalize_with_ratio(0.0,
+                finalize_with_ratio(0.0, 0.0,
                                     "Wrong answer: reported index %d, diamond is at %d. Queries used: %d.",
                                     gi, diamondIndex, queries);
             }
@@ -198,15 +198,18 @@ int main(int argc, char* argv[]) {
             double best_score = (double)best_raw_nonneg;
 
             double ratio;
+            double unbounded_ratio;
             if (best_score <= 0.0) {
                 ratio = (your_score <= 0.0) ? 1.0 : 0.0;
+                unbounded_ratio = ratio;
             } else {
                 ratio = your_score / best_score;
                 if (ratio < 0.0) ratio = 0.0;
+                unbounded_ratio = ratio;
                 if (ratio > 1.0) ratio = 1.0;
             }
 
-            finalize_with_ratio(ratio,
+            finalize_with_ratio(ratio, unbounded_ratio,
                                 "Accepted. Queries used: %d. Your score = 5000 - %d = %d. "
                                 "Optimal queries: %d. Best score = 5000 - %d = %d.",
                                 queries, queries, your_raw_nonneg,

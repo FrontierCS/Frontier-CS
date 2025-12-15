@@ -53,9 +53,9 @@ int main(int argc, char* argv[]) {
 
     int queries = 0; // number of answered '?' queries
 
-    auto finalize_with_ratio = [&](double ratio, const string &fmt, auto... args) {
+    auto finalize_with_ratio = [&](double ratio, double unbounded_ratio, const string &fmt, auto... args) {
         string base = format(fmt.c_str(), args...);
-        quitp(ratio, "%s Ratio: %.4f", base.c_str(), ratio);
+        quitp(ratio, "%s Ratio: %.4f, RatioUnbounded: %.4f", base.c_str(), ratio, unbounded_ratio);
     };
 
     while (true) {
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
 
             if (queries > QUERY_LIMIT) {
                 cout << -1 << '\n' << flush;
-                finalize_with_ratio(0.0, "Query limit exceeded: %d > %d.", queries, QUERY_LIMIT);
+                finalize_with_ratio(0.0, 0.0, "Query limit exceeded: %d > %d.", queries, QUERY_LIMIT);
             }
 
             int answ = p[i] | p[j];
@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
             for (int i = 1; i <= n; ++i) ++cg[guess[i]];
             for (int v = 0; v < n; ++v) {
                 if (cg[v] != 1) {
-                    finalize_with_ratio(0.0,
+                    finalize_with_ratio(0.0, 0.0,
                                         "Final sequence is not a permutation of [0..%d]: value %d occurs %d times. Queries used: %d.",
                                         n - 1, v, cg[v], queries);
                 }
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
                 if (guess[i] != p[i]) { first_bad = i; break; }
             }
             if (first_bad != -1) {
-                finalize_with_ratio(0.0,
+                finalize_with_ratio(0.0, 0.0,
                                     "Wrong permutation at position %d: got %d, expected %d. Queries used: %d.",
                                     first_bad, guess[first_bad], p[first_bad], queries);
             }
@@ -132,16 +132,17 @@ int main(int argc, char* argv[]) {
             double ai_score  = ai_raw_nonneg  / 10.0;
             double opt_score = opt_raw_nonneg / 10.0;
 
-            double ratio;
+            double ratio, unbounded_ratio = 1.0;
             if (opt_score <= 0.0) {
                 ratio = (ai_score <= 0.0) ? 1.0 : 0.0;
             } else {
                 ratio = ai_score / opt_score;
                 if (ratio < 0.0) ratio = 0.0;
+                unbounded_ratio = max(0.0, ratio);
                 if (ratio > 1.0) ratio = 1.0;
             }
 
-            finalize_with_ratio(ratio,
+            finalize_with_ratio(ratio, unbounded_ratio,
                                 "Accepted. Queries used: %d. Your score = (4269 - %d) / 10 = %.1f. "
                                 "Optimal queries: %d. Optimal score = (4269 - %d) / 10 = %.1f.",
                                 queries, queries, ai_score,

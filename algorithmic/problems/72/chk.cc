@@ -336,10 +336,11 @@ int main(int argc, char* argv[]) {
     }
     
     double score_ratio = (double)(participant_min_steps + 1) / (ref_min_steps + 1);
+    double unbounded_ratio = score_ratio;
     score_ratio = min(1.0, score_ratio);
     
-    quitp(score_ratio, "New puzzle min steps: %d (ref: %d). Ratio: %.6f", 
-          participant_min_steps, ref_min_steps, score_ratio);
+    quitp(score_ratio, "New puzzle min steps: %d (ref: %d). Ratio: %.6f, RatioUnbounded: %.6f", 
+          participant_min_steps, ref_min_steps, score_ratio, unbounded_ratio);
     
     return 0;
 }

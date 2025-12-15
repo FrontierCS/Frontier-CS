@@ -59,7 +59,9 @@ int main(int argc, char ** argv){
 			}
 
 			double ratio = q <= 402 ? 1 : 1 - .7 * (q - 402) / (10000 - 402);
-			quitp(ratio, "Correct guess. Ratio: %.4f", ratio);
+			double unbounded_ratio = 1 - .7 * (q - 402) / (10000 - 402);
+			if (ratio < 0) ratio = 0.0;
+			quitp(ratio, "Correct guess. Ratio: %.4f, RatioUnbounded: %.4f", ratio, unbounded_ratio);
 		} else {
 			quitf(_wa, "Invalid action type: expected ? or !, but got %s", op.c_str());
 		}

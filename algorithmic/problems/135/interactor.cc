@@ -150,9 +150,10 @@ int main(int argc, char* argv[]) {
 
                 // Scoring (problem’s formula), message matches the sample’s wording/format:
                 double ratio = (double)(kMax - query_count) / 7800.0;
+                double unbounded_ratio = max(0.0, ratio);
                 ratio = max(0.0, min(1.0, ratio));
 
-                quitp(ratio, "Correct guess in %lld queries. Ratio: %.4f", query_count, ratio);
+                quitp(ratio, "Correct guess in %lld queries. Ratio: %.4f, RatioUnbounded: %.4f", query_count, ratio, unbounded_ratio);
                 break; // unreachable
             }
             else {

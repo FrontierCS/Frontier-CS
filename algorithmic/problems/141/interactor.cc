@@ -99,8 +99,9 @@ int main(int argc, char* argv[]) {
             long long your_cost = (long long)reset_count * n + query_count + 1;
 
             double score_ratio = std::min(1.0, (double)ref_cost / your_cost);
-            quitp(score_ratio, "Correct in %d queries and %d resets. Cost: %lld. Ratio: %.4f", 
-                  query_count, reset_count, your_cost, score_ratio);
+            double unbounded_ratio = (double)ref_cost / your_cost;
+            quitp(score_ratio, "Correct in %d queries and %d resets. Cost: %lld. Ratio: %.4f, RatioUnbounded: %.4f", 
+                  query_count, reset_count, your_cost, score_ratio, unbounded_ratio);
             break;
 
         } else {

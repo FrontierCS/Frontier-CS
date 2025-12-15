@@ -53,9 +53,10 @@ int main(int argc, char *argv[]) {
       long long answer = ouf.readLong();
       if(answer == d){
         double score = (30000.0-1.0*(i-1.0))/(30000.0-4000.0);
+        double unbounded_ratio = max(0.0, (30000.0-1.0*(i-1.0))/(30000.0-4000.0));
         score = min(score, 1.0);
         score = max(score, 0.0);
-        quitp(score, "Ratio: %.3lf", score);
+        quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_ratio);
       }
       else{
         quitf(_wa, "Incorrect d");

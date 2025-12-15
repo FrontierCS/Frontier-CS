@@ -44,9 +44,10 @@ int main(int argc, char* argv[]) {
             
             // Calculate score: min((ref_queries + 1) / (your_queries + 1), 1)
             double score_ratio = (double)(ref_queries + 1) / (double)(query_count + 1);
+            double unbounded_ratio = score_ratio;
             score_ratio = std::min(1.0, score_ratio);
             
-            quitp(score_ratio, "Correct answer in %d queries. Ratio: %.4f", query_count, score_ratio);
+            quitp(score_ratio, "Correct answer in %d queries. Ratio: %.4f, RatioUnbounded: %.4f", query_count, score_ratio, unbounded_ratio);
             break;
         }
 

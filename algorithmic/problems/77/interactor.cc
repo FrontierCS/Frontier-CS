@@ -40,7 +40,8 @@ int main(int argc, char *argv[]) {
     minwrongpred = min(minwrongpred, WrongPred[i]);
   }
   double score = (2.0*minwrongpred-1.0*wrongpred)/(1.0*minwrongpred);
+  double unbounded_score = max(0.0, score);
   score = min(score, 1.0);
   score = max(score, 0.0);
-  quitp(score, "Ratio: %.3lf", score);
+  quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_score);
 }

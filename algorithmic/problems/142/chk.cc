@@ -119,9 +119,10 @@ int main(int argc, char* argv[]) {
     
     // Calculate score
     double score_ratio = (double)(ref_ops + 1) / (participant_ops + 1);
+    double unbounded_ratio = score_ratio;
     score_ratio = min(1.0, score_ratio);
     
-    quitp(score_ratio, "Operations: %d. Ratio: %.6f", participant_ops, score_ratio);
+    quitp(score_ratio, "Operations: %d. Ratio: %.6f, RatioUnbounded: %.6f", participant_ops, score_ratio, unbounded_ratio);
     
     return 0;
 }

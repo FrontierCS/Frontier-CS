@@ -125,13 +125,14 @@ int main(int argc, char* argv[]) {
             }
 
             double ratio = k == 0 ? 1.0 : (double)found / (double)k;
+            double unbounded_ratio = max(0.0, ratio);
             ratio = max(0.0, min(1.0, ratio)); // clamp
 
             if (found == k) {
-                quitp(1.0, "All mineral deposits found. Ratio: 1.0000");
+                quitp(1.0, "All mineral deposits found. Ratio: 1.0000, RatioUnbounded: 1.0000");
             } else {
-                quitp(ratio, "Found %d of %d mineral deposits. Ratio: %.4f",
-                      found, k, ratio);
+                quitp(ratio, "Found %d of %d mineral deposits. Ratio: %.4f, RatioUnbounded: %.4f",
+                      found, k, ratio, unbounded_ratio);
             }
             break;
 

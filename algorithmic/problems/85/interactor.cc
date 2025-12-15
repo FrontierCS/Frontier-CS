@@ -46,9 +46,10 @@ int main(int argc, char *argv[]) {
           cout<<1<<endl;
           cout.flush();
           double score = (5000.0/querycnt);// can be more strict
+          double unbounded_ratio = max(0.0, (5000.0/querycnt));
           score = min(score, 1.0);
           score = max(score, 0.0);
-          quitp(score, "Ratio: %.3lf", score);
+          quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_ratio);
         }
         else{
           cout<<0<<endl;

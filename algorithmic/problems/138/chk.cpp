@@ -113,9 +113,10 @@ int main(int argc, char* argv[]) {
     double score;
     const double L = 10000.0;
     const double R = 500000.0;
+    double unbounded_score = max(0.0, R - r) / (R - L) * 100.0;
     if (r <= (long long)L) score = 100.0;
     else score = max(0.0, 100.0 * (R - r) / (R - L));
 
     double res = score / 100.0;
-    quitp(res, "Ratio: %.4f", res);
+    quitp(res, "Ratio: %.4f, RatioUnbounded: %.4f", res, unbounded_score / 100.0);
 }
