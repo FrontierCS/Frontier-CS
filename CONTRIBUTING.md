@@ -1,11 +1,5 @@
 # Contributing to Frontier-CS
 
-<p align="">
-  <a href="https://frontier-cs.org">
-    <img src="assets/teaser.png" alt="Frontier-CS Logo" width="2000"/>
-  </a>
-</p>
-
 Frontier-CS is currently an **invitation-only** project for new problems. 
 Please create a GitHub pull request (PR) with your proposed problem following the guidelines below. After your PR is reviewed and merged, please send any hidden test data and reference solutions to the contact email provided at the end of this document.
 
@@ -81,9 +75,14 @@ The problem statement should include:
 
 Evaluator for scoring logic
 
-(**NOTE**) the current judge returns the partial score by parsing the message returned by `testlib.h`, making sure your `quitp` follows the following format:
+#### NOTE 
+the current judge returns the partial score by parsing the message returned by `testlib.h`, making sure your `quitp` follows the following format:
 ```cpp
 quitp(score, "Ratio: %.9f [additional message str]", score, ...);
+```
+To support raw score, use:
+```cpp
+quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, unbounded_ratio);
 ```
 #### testdata/
 
