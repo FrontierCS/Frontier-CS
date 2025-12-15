@@ -225,7 +225,8 @@ int main(int argc, char* argv[]) {
     long long best_value = ans.readLong();
 
     double score_ratio = max(0.0, min(1.0, (double)(score - baseline_value) / (best_value - baseline_value)));
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f", score, score_ratio);
+    double unbounded_ratio = max(0.0, (double)(score - baseline_value) / (best_value - baseline_value));
+    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, unbounded_ratio);
     // quitf(_wa, "score (%lld)", score);
     return 0;
 }

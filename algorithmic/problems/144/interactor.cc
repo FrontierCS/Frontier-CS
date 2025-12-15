@@ -72,10 +72,11 @@ int main(int argc, char* argv[]) {
                           (val1 == target2 && val2 == target1);
 
             if (correct) {
+                double unbounded_ratio = (double)ref_queries / query_count;
                 double score_ratio = std::min(1.0, (double)ref_queries / query_count);
-                quitp(score_ratio, "Correct in %d queries. Ratio: %.4f", query_count, score_ratio);
+                quitp(score_ratio, "Correct in %d queries. Ratio: %.4f, RatioUnbounded: %.4f", query_count, score_ratio, unbounded_ratio);
             } else {
-                quitp(0.0, "Wrong answer. Ratio: 0.0000");
+                quitp(0.0, "Wrong answer. Ratio: 0.0000, RatioUnbounded: 0.0000");
             }
             break;
 
