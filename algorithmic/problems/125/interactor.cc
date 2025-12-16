@@ -70,25 +70,27 @@ int main(int argc, char* argv[]) {
         return distinctKinds;
     };
 
-    auto compute_ratio = [&](int q_used, int q_opt) -> double {
+    auto compute_ratio_unbounded = [&](int q_used, int q_opt) -> double {
         long long denom = 1000000LL - (long long)q_opt;
         long long numer = 1000000LL - (long long)q_used;
         if (denom <= 0) return (q_used <= 1000000 ? 1.0 : 0.0);
         double r = (double)numer / (double)denom;
         if (r < 0.0) r = 0.0;
-        if (r > 1.0) r = 1.0;
+        // if (r > 1.0) r = 1.0;
         return r;
     };
 
     auto accept_with_ratio = [&](int q_used) {
-        double ratio = compute_ratio(q_used, optimal_queries);
+        double ratio_unbounded = compute_ratio_unbounded(q_used, optimal_queries);
+        double ratio = std::min(1.0, ratio_unbounded);
+
         long long your_score = 1000000LL - (long long)q_used;
         long long opt_score  = 1000000LL - (long long)optimal_queries;
         quitp(ratio,
               "Accepted. Queries used: %d. Your score = 1000000 - %d = %lld. "
-              "Optimal queries: %d. Optimal score = 1000000 - %d = %lld. Ratio: %.4f",
+              "Optimal queries: %d. Optimal score = 1000000 - %d = %lld. Ratio: %.4f, RatioUnbounded: %.4f",
               q_used, q_used, your_score,
-              optimal_queries, optimal_queries, opt_score, ratio);
+              optimal_queries, optimal_queries, opt_score, ratio, ratio_unbounded);
     };
 
     // ---- Final answer tracking ----
