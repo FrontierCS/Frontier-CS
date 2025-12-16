@@ -90,7 +90,7 @@ jobs:
           pairs = []
           if solutions_dir.exists():
               for sol_dir in solutions_dir.iterdir():
-                  if sol_dir.is_dir() and (sol_dir / 'solution.py').exists():
+                  if sol_dir.is_dir() and (sol_dir / 'solve.sh').exists():
                       # Try to infer problem from solution name
                       # Format: {model}_{problem}_{variant} or {model}_{problem}
                       name = sol_dir.name
