@@ -75,7 +75,7 @@ class Evaluator:
         else:
             # Fallback to resources/datasets if mounted directory doesn't exist
             self.datasets_dir = os.path.join(self.resources_dir, "datasets")
-        ordered_names = ["routerbench_0shot.csv"]
+        ordered_names = ["routerbench_0shot_test.csv"]
         self.trace_files = [
             os.path.join(self.datasets_dir, name)
             for name in ordered_names
@@ -83,7 +83,7 @@ class Evaluator:
         ]
 
     def evaluate(self, solution_module_path: str) -> dict:
-        LAMBDA = 20.0
+        LAMBDA = 150.0
         CANDIDATE_MODELS = ["cheap", "mid", "expensive"]
 
         # update based on dataset config
