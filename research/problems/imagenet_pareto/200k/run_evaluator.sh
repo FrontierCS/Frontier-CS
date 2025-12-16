@@ -3,7 +3,7 @@ echo "DEBUG: run_evaluator.sh started!" >&2
 set -euo pipefail
 
 PROBLEM_DIR=$(pwd)
-EXEC_ROOT="/work/Frontier-CS/execution_env"
+EXEC_ROOT="/work/execution_env"
 VENV_DIR="$EXEC_ROOT/.venv"
 
 echo "[run_evaluator] Current directory: $PROBLEM_DIR" >&2

@@ -6,7 +6,7 @@ set -euo pipefail
 # Thin wrapper that calls evaluator.py with standardized arguments
 
 PROBLEM_DIR=$(pwd)
-EXEC_ROOT="/work/Frontier-CS/execution_env"
+EXEC_ROOT="/work/execution_env"
 VENV_DIR="$EXEC_ROOT/.venv"
 
 echo "[run_evaluator] Current directory: $(pwd)" >&2

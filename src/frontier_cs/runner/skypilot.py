@@ -404,9 +404,9 @@ class SkyPilotRunner(Runner):
                         ./set_up_env.sh
                     fi
 
-                    # Copy solution to expected location
-                    mkdir -p /work/Frontier-CS/execution_env/solution_env
-                    cp /work/solution/solution.py /work/Frontier-CS/execution_env/solution_env/
+                    # Copy solution to execution environment
+                    mkdir -p /work/execution_env/solution_env
+                    cp /work/solution/solution.py /work/execution_env/solution_env/
 
                     # Run evaluation
                     chmod +x evaluate.sh

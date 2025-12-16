@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-EXEC_ROOT="/work/Frontier-CS/execution_env"
+EXEC_ROOT="/work/execution_env"
 if [[ ! -d "$EXEC_ROOT" ]]; then
   echo "Error: execution_env directory not found at $EXEC_ROOT" >&2
   exit 1

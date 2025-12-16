@@ -5,7 +5,7 @@ set -euo pipefail
 # run_evaluator.sh for vdb_design (recall80_latency)
 
 PROBLEM_DIR=$(pwd)
-EXEC_ROOT="/work/Frontier-CS/execution_env"
+EXEC_ROOT="/work/execution_env"
 VENV_DIR="$EXEC_ROOT/.venv"
 
 echo "[run_evaluator] Current directory: $(pwd)" >&2

@@ -10,7 +10,7 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 
 PROBLEM_DIR=$(pwd)
-EXEC_ROOT="/work/Frontier-CS/execution_env"
+EXEC_ROOT="/work/execution_env"
 mkdir -p "$EXEC_ROOT"
 
 CONFIG_LINES=()
