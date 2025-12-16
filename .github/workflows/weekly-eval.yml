@@ -1,0 +1,138 @@
+name: Weekly Batch Evaluation
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      problems:
+        description: 'Comma-separated problem IDs (leave empty for all)'
+        required: false
+        default: ''
+      max_concurrent:
+        description: 'Max concurrent evaluations'
+        required: false
+        default: '4'
+
+env:
+  SKYPILOT_CLOUD: gcp
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install skypilot[gcp]
+
+      - name: Set up GCP credentials
+        run: |
+          echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/gcp-key.json
+          # Support both service account and authorized_user credentials
+          if grep -q '"type": "service_account"' /tmp/gcp-key.json; then
+            gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          else
+            gcloud auth login --cred-file=/tmp/gcp-key.json --quiet
+          fi
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure SkyPilot
+        run: |
+          mkdir -p ~/.sky
+          cat > ~/.sky/config.yaml << 'EOF'
+          gcp:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+          jobs:
+            controller:
+              resources:
+                cloud: gcp
+                cpus: 4+
+                memory: 8+
+          EOF
+
+      - name: Generate pairs file (incremental)
+        run: |
+          # Get list of already evaluated pairs from results
+          python -c "
+          import json
+          from pathlib import Path
+
+          # Read existing results
+          results_dir = Path('results/batch')
+          evaluated = set()
+          if results_dir.exists():
+              for f in results_dir.glob('*.json'):
+                  try:
+                      data = json.loads(f.read_text())
+                      if data.get('status') == 'success':
+                          evaluated.add(data.get('pair_id', ''))
+                  except:
+                      pass
+
+          # Read all possible pairs from solutions/
+          solutions_dir = Path('solutions')
+          pairs = []
+          if solutions_dir.exists():
+              for sol_dir in solutions_dir.iterdir():
+                  if sol_dir.is_dir() and (sol_dir / 'solution.py').exists():
+                      # Try to infer problem from solution name
+                      # Format: {model}_{problem}_{variant} or {model}_{problem}
+                      name = sol_dir.name
+                      # This is a simplified heuristic - adjust as needed
+                      pairs.append(f'{name}:inferred')
+
+          # Filter out already evaluated
+          new_pairs = [p for p in pairs if p not in evaluated]
+
+          # Write pairs file
+          Path('pairs_to_eval.txt').write_text('\n'.join(new_pairs))
+          print(f'Total pairs: {len(pairs)}, New pairs to evaluate: {len(new_pairs)}')
+          "
+
+      - name: Run batch evaluation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Skip if no pairs to evaluate
+          if [ ! -s pairs_to_eval.txt ]; then
+            echo "No new pairs to evaluate"
+            exit 0
+          fi
+
+          MAX_CONCURRENT="${{ github.event.inputs.max_concurrent || '4' }}"
+
+          frontier-eval batch \
+            --pairs-file pairs_to_eval.txt \
+            --skypilot \
+            --max-concurrent $MAX_CONCURRENT \
+            --results-dir results/batch
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results-${{ github.run_id }}
+          path: results/
+          retention-days: 90
+
+      - name: Commit results (optional)
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add results/
+          git diff --staged --quiet || git commit -m "chore: update evaluation results [skip ci]"
+          git push
