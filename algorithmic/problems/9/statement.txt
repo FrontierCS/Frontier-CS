@@ -16,7 +16,7 @@ For each test case: The first line contains a single integer m (m>=0) meaning th
 Then m lines follow, where each line starts with an integer 0<=ki<n, denoting the number of edges in the matching you select in the i-th operation. Then ki integers t_{i,1}, t_{i,2}, ..., t_{i,ki} follow, denoting the indexes of edges you select.
 
 Scoring
-For each test case i (1<=i<=T), your score s_i = clamp(0, 1, (base_value-m)/(base_value-best_value))
+For each test case i (1<=i<=T), your score s_i = max(0, (base_value-m)/(base_value-best_value))
 your score on each subtask is 0 if any subtask failed to get the correct result, or the average of all s_i
 
 Example

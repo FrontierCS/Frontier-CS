@@ -3,13 +3,12 @@
 using namespace std;
 int q[1100];
 int query_count = 0, R, H, get_count = 0;
-constexpr int query_limit=75, full_score=1, max_position=1000;
+constexpr int query_limit=75, max_position=1000;
 int vis[1100],wait_ans[1100];
 
 double cal_score(int rmax){
     double score=0.0;
-    if(rmax<=26) score=100;
-    else if(26<rmax<=30) score=-1.0*20/3*rmax+1.0*820/3;
+    if(rmax<=30) score=-1.0*20/3*rmax+1.0*820/3;
     else if(30<rmax<=35) score=-1.0*4*rmax+1.0*580/3;
     else if(35<rmax<=40) score=-1.0*8/3*rmax+1.0*440/3;
     else if(40<rmax<=60) score=-1.0*4/3*rmax+1.0*280/3;
@@ -61,7 +60,8 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-    double score=full_score*cal_score(query_count);
-    quitp(score, "qurey count: %d, Ratio: %.4f",query_count, score);
+    double unbounded_ratio=cal_score(query_count);
+    double score_ratio = std::min(1.0, unbounded_ratio);
+    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", (long long)(score_ratio*100), score_ratio, unbounded_ratio);
     return 0;
 }

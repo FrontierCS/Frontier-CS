@@ -7,7 +7,7 @@ struct node{
 };
 namespace {
 
-    int query_count = 0, query_limit = 0, guess_count = 0, full_score = 1;
+    int query_count = 0, query_limit = 0, guess_count = 0;
     int ans_id,n,cnt_f,cnt_t;
     std::vector<node> v,vf,vt;
 
@@ -44,7 +44,7 @@ namespace {
 int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
     int T=inf.readInt(),max_query_count=0;
-    double score=full_score;
+    double score_ratio=-1;
     
     println(T);
     while(T){
@@ -111,12 +111,15 @@ int main(int argc, char* argv[]) {
                 determin_ans();
             }else{
                 if (fl==0) quitf(_wa, "No correct guess");
-                score = std::min(score, full_score*std::min(1.0,std::max(0.0,1.0*(query_limit-query_count)/(query_limit))));
+                if(score_ratio < 0) score_ratio = std::max(0.0,1.0*(query_limit-query_count)/(query_limit - 1));
+                else score_ratio = std::min(score_ratio, std::max(0.0,1.0*(query_limit-query_count)/(query_limit - 1)));
                 max_query_count=std::max(max_query_count, query_count);
                 break;
             }
         }
     }
-    quitp(score, "max qurey: %d, Ratio: %.4f",max_query_count, score);
+    double unbounded_ratio = score_ratio;
+    score_ratio = std::min(1.0, score_ratio);
+    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", (long long)(score_ratio*100), score_ratio, unbounded_ratio);
     return 0;
 }

@@ -18,8 +18,7 @@ After printing a query do not forget to output the end of line and flush the out
 
 Grading
 your actual score depends on the number rmax of robots sent out. Specifically,
-rmax<=26, score=100;
-26<rmax<=30, score=-20/3*rmax+820/3;
+rmax<=30, score=-20/3*rmax+820/3;
 30<rmax<=35, score=-4*rmax+580/3;
 35<rmax<=40, score=-8/3*rmax+440/3;
 40<rmax<=60, score=-4/3*rmax+280/3;

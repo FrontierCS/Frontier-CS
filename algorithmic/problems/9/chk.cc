@@ -43,17 +43,20 @@ double subtask(){
     for(int i=1;i<=n;i++){
         if(p[i]!=i) quitf(_wa, "wrong answer, node %d dismatch", i);
     }
-    double score=max(0.0,min(1.0,1.0*(base_value-m)/(base_value-best_value)));
-    return score;
+    double score_unbounded=max(0.0,1.0*(base_value-m)/(base_value-best_value));
+    return score_unbounded;
 }
 int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
     int T=inf.readInt();
-    double sum=0.0,tot=T;
+    double sum=0.0,sum_unbounded=0.0,sub_score,tot=T;
     while(T){
         T--;
-        sum+=subtask();
+        sub_score=subtask();
+        sum+=min(1.0,sub_score);
+        sum_unbounded+=sub_score;
     }
-    double score=sum/tot;
-    quitp(score, "Ratio: %.4f",  score);
+    double score_ratio=sum/tot;
+    double unbounded_ratio=sum_unbounded/tot;
+    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", (long long)(score_ratio*100), score_ratio, unbounded_ratio);
 }
