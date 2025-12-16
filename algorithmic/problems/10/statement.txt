@@ -16,10 +16,22 @@ can choose two vertices u, v (1 \leq u, v \leq n, u \neq v), and we will tell yo
 vertices (i.e., the sum of the edge weights on the simple path connecting these two vertices).
 
 Now, Little Cyan Fish wants you to determine all the edges and their weights within queries as less as you can. 
-You can receive 100/100 if number of your queries is less than 5n.
-Scoring: 
-clamp(1.0 - (your value - best) / (baseline - best value), 0, 1)
-where baseline = n * n / 3, and best = 5 * n
+
+Scoring (if bounded)
+
+Let Q be the number of queries you used.
+Let Z = floor(n^2 / 3) be the zero-score threshold.
+
+- If Q <= 5n, you will receive 100 points.
+- If Q >= Z, you will receive 0 points.
+- If 5n < Q < Z, your score is calculated linearly:
+  Score = 100 * (Z - Q) / (Z - 5n)
+(Note: For small n where floor(n^2 / 3) <= 5n, you get 100 points if Q <= 5n, otherwise 0 points.)
+
+Scoring (if unbounded)
+The score is calculated based on the linear formula determined by the range [5n, Z]:
+- Score = 100 * (Z - Q) / (Z - 5n)
+
 
 Interaction Protocol
 

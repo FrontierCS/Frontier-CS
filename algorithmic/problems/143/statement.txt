@@ -147,6 +147,12 @@ Let W be the final average profit per hand printed by the judge (the SCORE value
   score = 82 + round(3 × (W − 14)).
 - If W ≥ 20.0: score = 100.
 
+Unbounded feedback
+- For diagnostics, the checker also reports `RatioUnbounded`, which continues the final linear segment without the `score = 100` cap:
+  `score_unbounded = round(82 + 3 × (W − 14))` for W ≥ 14 (and the earlier segments stay identical), so any improvement beyond W = 20 still increases the unbounded number.
+- The bounded ratio shown on the leaderboard remains score / 100 in [0, 1]; 
+
+
 Interpretation:
 - Around W ≥ 11 indicates you beat a simple baseline (roughly “Small Task”).
 - Around W ≥ 16 indicates a strong strategy (roughly “Large Task”).

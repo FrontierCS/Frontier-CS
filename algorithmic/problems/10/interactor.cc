@@ -110,6 +110,7 @@ int main(int argc, char* argv[]) {
 
     // Score accumulation: average by group
     double total_ratio = 0.0;
+    double total_unbounded_ratio = 0.0;
     bool flag_error = false;
 
     for (int tc = 1; tc <= T; ++tc) {
@@ -206,22 +207,23 @@ int main(int argc, char* argv[]) {
                     quitf(_wa, "Error is test %d: %s", tc, err.c_str());
                 } else {
                     // Calculate score for this group (ratio in [0,1])
-                    // - q <= 7n: ratio = 1
+                    // - q <= 5n: ratio = 1
                     // - q >= n^2 / 3: ratio = 0
                     // - Linear interpolation
                     long long q = query_count;
                     long long full_thr = 5LL * n;
                     long long zero_thr = (long long)n * (long long)n / 3LL;
-                    double ratio = 0.0;
-                    if (q <= full_thr) ratio = 1.0;
-                    else if (q >= zero_thr) ratio = 0.0;
-                    else {
+                    double raw_ratio = 0.0;
+                    if (zero_thr <= full_thr) {
+                        raw_ratio = (q <= full_thr) ? 1.0 : 0.0;
+                    } else {
                         double denom = (double)(zero_thr - full_thr);
-                        ratio = 1.0 - (double)(q - full_thr) / denom;
-                        if (ratio < 0.0) ratio = 0.0;
-                        if (ratio > 1.0) ratio = 1.0;
+                        raw_ratio = 1.0 - (double)(q - full_thr) / denom;
                     }
+                    double ratio = std::min(1.0, std::max(0.0, raw_ratio));
+                    double unbounded_ratio = std::max(0.0, raw_ratio);
                     total_ratio += ratio;
+                    total_unbounded_ratio += unbounded_ratio;
                 }
 
                 // Move to next group
@@ -233,9 +235,10 @@ int main(int argc, char* argv[]) {
     }
 
     final_ratio = flag_error ? 0 : total_ratio / (double)T;
-    // final_ratio = 1;
+    double final_unbounded_ratio = flag_error ? 0 : total_unbounded_ratio / (double)T;
+    long long score_value = llround(final_unbounded_ratio * 10000.0);
     // Output score ratio [0,1] with human-readable info (not sent to player, only for judge log)
-    quitp(final_ratio, "Final Ratio: %.4f (%.2f / 100).", final_ratio, final_ratio * 100.0);
+    quitp(final_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score_value, final_ratio, final_unbounded_ratio);
 
     return 0;
 }

@@ -410,6 +410,20 @@ int compute_points_from_W(double W) {
     return 100;
 }
 
+double compute_points_unbounded(double W) {
+    if (W <= 8.0) return 0.0;
+    if (W <= 11.0) {
+        double x = 13.3 * (W - 8.0);
+        return (double) llround(x);
+    }
+    if (W <= 14.0) {
+        double x = 40.0 + 14.0 * (W - 11.0);
+        return (double) llround(x);
+    }
+    double x = 82.0 + 3.0 * (W - 14.0);
+    return (double) llround(x);
+}
+
 int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
@@ -584,6 +598,9 @@ int main(int argc, char* argv[]) {
     println(fmt1("SCORE", W));
     int points = compute_points_from_W(W);
     double ratio = points / 100.0;
-    quitp(ratio, "Average profit W: %.6f, points: %d, Ratio: %.4f", W, points, ratio);
+    double points_unbounded = compute_points_unbounded(W);
+    double ratio_unbounded = points_unbounded / 100.0;
+    quitp(ratio, "Average profit W: %.6f, points: %d, Ratio: %.4f, RatioUnbounded: %.4f",
+          W, points, ratio, ratio_unbounded);
     return 0;
 }

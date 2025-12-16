@@ -122,8 +122,11 @@ int main(int argc, char** argv) {
     // Degenerate baseline: if L_base == 0, only zero-cost path can get full score
     if (L_base <= 0.0) {
         double eps = 1e-12;
-        if (L_you <= L_base + eps) quitp(1.0, "Score: 1.0000");
-        else quitp(0.0, "Score: 0.0000");
+        if (L_you <= L_base + eps) {
+            quitp(1.0, "Ratio: 1.0000 (degenerate baseline). RatioUnbounded: 1.0000");
+        } else {
+            quitp(0.0, "Ratio: 0.0000 (degenerate baseline). RatioUnbounded: 0.0000");
+        }
     }
 
     // Compute r and s
@@ -137,33 +140,42 @@ int main(int argc, char** argv) {
     const double tau = 1.25; // convexify tail to widen differences among strong solutions
 
     // part1: linear up to r1
-    double part1 = W1 * clamp01(r / r1);
+    double part1_raw = r1 > 0 ? (r / r1) : 0.0;
+    double part1 = W1 * clamp01(part1_raw);
+    double part1_unbounded = W1 * max(0.0, part1_raw);
 
     // part2: logarithmic tail, widened span
     double part2 = 0.0;
+    double part2_unbounded = 0.0;
     double s_full = pow((double)N, 0.6); // larger than sqrt(N) to make full score harder
 
     if (s_full > s_start + 1e-12) {
         double num = log(max(s, 1.0)) - log(s_start);
         double den = log(s_full) - log(s_start);
-        double frac = clamp01(num / den);
-        part2 = W2 * pow(frac, tau);
+        double frac_raw = (den > 0) ? (num / den) : 0.0;
+        double frac = clamp01(frac_raw);
+        part2 = W2 * pow(max(frac, 0.0), tau);
+        part2_unbounded = W2 * pow(max(frac_raw, 0.0), tau);
     } else if (s_full > 1.0 + 1e-12) {
         double num = log(max(s, 1.0));
         double den = log(s_full);
-        double frac = clamp01(num / den);
-        part2 = W2 * pow(frac, tau);
+        double frac_raw = (den > 0) ? (num / den) : 0.0;
+        double frac = clamp01(frac_raw);
+        part2 = W2 * pow(max(frac, 0.0), tau);
+        part2_unbounded = W2 * pow(max(frac_raw, 0.0), tau);
     } else {
         part2 = 0.0;
+        part2_unbounded = 0.0;
     }
 
-    double ratio_base = min(1.0, part1 + part2);
+    double ratio_base_unbounded = part1_unbounded + part2_unbounded;
+    double ratio_base = min(1.0, max(0.0, part1 + part2));
 
     // Visibility remap: widen mid-range (40–60 -> 30–95 approx.)
     double ratio = remapVisibility(ratio_base);
     // double ratio = ratio_base;
 
-    quitp(ratio, "Ratio: %.4f (base=%.4f)", ratio, ratio_base);
+    quitp(ratio, "Ratio: %.4f (base=%.4f). RatioUnbounded: %.4f", ratio, ratio_base, ratio_base_unbounded);
     return 0;
 }
 
