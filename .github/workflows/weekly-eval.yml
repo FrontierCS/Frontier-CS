@@ -55,8 +55,10 @@ jobs:
       - name: Configure SkyPilot
         run: |
           mkdir -p ~/.sky
-          # SkyPilot uses GCP project from gcloud config or ADC, not from sky config
-          sky check gcp || true
+          # SkyPilot uses GCP project from gcloud config or ADC
+          uv run sky check gcp || true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
       - name: Generate pairs file (incremental)
         run: |
@@ -116,6 +118,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           # Skip if no pairs to evaluate
           if [ ! -s pairs_to_eval.txt ]; then
