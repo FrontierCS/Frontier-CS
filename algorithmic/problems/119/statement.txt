@@ -46,8 +46,5 @@ Subtasks
     -   If your program exceeds time limit, memory limit, or returns
         incorrect answer → score=0.
     -   Otherwise, your score depends on Q:
-        -   If Q ≤ 40, score = 7.
-        -   If 40 < Q ≤ 43, score = 7 - (Q - 40).
-        -   If 43 < Q ≤ 60, score = 3.
-        -   If 60 < Q ≤ 188, score = 2.
-        -   If 188 < Q ≤ 600, score = 1.
+        -   score(Q) = 41 / (Q + 1)
+        -   In other words, a solution with Q ≤ 40 is awarded the full score.

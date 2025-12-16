@@ -43,14 +43,7 @@ Contestant prints     | Interactor replies
 Constraints  
 - All test instances have exactly 100 vertices.  
 - Let Q = the number of queries you make.  
-  - If Q > 161700, or your answer is incorrect, or you perform an illegal interaction, you will receive 0 points.  
-  - Otherwise your score is determined as follows:
-
-| Q range                      | Score                     |
-|------------------------------|---------------------------|
-| 9900 ≤ Q ≤ 161700             | 10 + 10 × (161700 − Q)/(161700 − 9900) |
-| 4950 ≤ Q < 9900               | 20 + 10 × (9900 − Q)/(9900 − 4950)     |
-| Q < 3400                      | 100                             |
-
-- Time limit: 1 second  
-- Memory limit: 512 MB  
+  - If your program exceeds time limit, memory limit, or returns incorrect answer → score=0.
+  - Otherwise, your score depends on Q:
+    - score(Q) = 3400 / (Q + 1)
+    - In other words, a solution with Q < 3400 is awarded the full score.

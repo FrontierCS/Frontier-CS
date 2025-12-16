@@ -50,9 +50,14 @@ Note
 
 Please note that if you receive a Time Limit Exceeded verdict, it is possible that your query is invalid or the number of queries exceeds the limit.
 
-Time limit: 3 seconds
-
-Memory Limit: 1024 MB
+Constraints  
+- Time limit: 3 seconds
+- Memory Limit: 1024 MB
+- Let Q be the query cost you make.
+  - If your program exceeds time limit, memory limit, or returns incorrect answer → score=0.
+  - Otherwise, your score depends on Q:
+    - score(Q) = 1000001 / (Q + 1)
+    - In other words, a solution with Q <= 1000000 is awarded the full score.
 
 Example input (you to interactor):
 0 6 2 15 7 27 8 30

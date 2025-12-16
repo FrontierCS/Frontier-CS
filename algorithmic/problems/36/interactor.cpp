@@ -38,8 +38,10 @@ int main(int argc, char* argv[]) {
 			println(collisions);
 		} else if (action_type == 1) {
 			if (ouf.readInt() == n) {
-				double ratio = tot <= 110000 ? 1 : std::log(1e6 / (tot - 9e4)) / std::log(50);
-				quitp(ratio, "Correct guess in %d queries. Ratio: %.4f", tot, ratio);
+				double ratio_unbounded = (1000000.0 + 1) / (tot + 1);
+				double ratio = std::min(1.0, ratio_unbounded);
+
+				quitp(ratio, "Correct guess in %d queries. Ratio: %.4f, RatioUnbounded: %.4f", tot, ratio, ratio_unbounded);
 			} else {
 				quitp(0., "Wrong guess. Ratio: 0.0000");
 			}

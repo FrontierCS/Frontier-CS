@@ -41,17 +41,9 @@ int main(int argc, char ** argv){
 				guess[i] = ouf.readWord();
 			}
 			if (guess == adj) {
-				double ratio;
-				if (q < 3400) {
-					ratio = 1;
-				} else if (q <= 4950) {
-					ratio = .3 + .1 * (4950 - q) / (4950 - 3400);
-				} else if (q <= 9900) {
-					ratio = .2 + .1 * (9900 - q) / (9900 - 4950);
-				} else {
-					ratio = .1 + .1 * (161700 - q) / (161700 - 9900);
-				}
-				quitp(ratio, "Correct guess. Ratio: %.4f", ratio);
+				double ratio_unbounded = 3400.0 / (q + 1);
+				double ratio = std::min(1.0, ratio_unbounded);
+				quitp(ratio, "Correct guess. Ratio: %.4f, RatioUnbounded: %.4f", ratio, ratio_unbounded);
 			} else {
 				quitp(0., "Wrong guess. Ratio: 0.0000");
 			}

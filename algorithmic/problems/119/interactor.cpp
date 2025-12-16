@@ -37,21 +37,9 @@ int main(int argc, char ** argv){
 			}
 
 			if (guess == o) {
-				int score;
-				if (q <= 40) {
-					score = 7;
-				} else if (q <= 43) {
-					score = 47 - q;
-				} else if (q <= 60) {
-					score = 3;
-				} else if (q <= 188) {
-					score = 2;
-				} else {
-					score = 1;
-				}
-
-				double ratio = 1. * score / 7;
-				quitp(ratio, "Correct guess. Ratio: %.4f", ratio);
+				double ratio_unbounded = (40.0 + 1) / (q + 1);
+				double ratio = std::min(1.0, ratio_unbounded);
+				quitp(ratio, "Correct guess. Ratio: %.4f, RatioUnbounded: %.4f", ratio, ratio_unbounded);
 			} else {
 				quitp(0., "Wrong guess. Ratio: 0.0000");
 			}
