@@ -508,7 +508,8 @@ Examples:
     # Model selection
     model_group = parser.add_argument_group("Model selection")
     model_exclusive = model_group.add_mutually_exclusive_group()
-    model_exclusive.add_argument("--model", help="Target model identifier")
+    model_exclusive.add_argument("--model", dest="models", nargs="+",
+                                 help="Target model identifier(s), e.g. --model gpt-5 gpt-5.1")
     model_exclusive.add_argument("--models-file", help="Newline-delimited model list")
 
     # API configuration
@@ -752,10 +753,14 @@ Examples:
 
     # Resolve model selection
     models_source_desc = ""
-    if args.model:
-        models_list = [args.model]
-        print(f"Using model from --model: {args.model}")
-        models_source_desc = f"--model ({args.model})"
+    if args.models:
+        models_list = args.models
+        if len(models_list) == 1:
+            print(f"Using model from --model: {models_list[0]}")
+            models_source_desc = f"--model ({models_list[0]})"
+        else:
+            print(f"Using {len(models_list)} models from --model: {', '.join(models_list)}")
+            models_source_desc = f"--model ({len(models_list)} models)"
     else:
         models_path = Path(args.models_file) if args.models_file else base_dir / "models.txt"
         if not models_path.is_absolute():
