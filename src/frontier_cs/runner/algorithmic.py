@@ -55,6 +55,14 @@ class AlgorithmicRunner(Runner):
         pid = str(problem_id)
         start_time = time.time()
 
+        # Check for empty code
+        if not solution_code or not solution_code.strip():
+            return EvaluationResult(
+                problem_id=pid,
+                status=EvaluationStatus.ERROR,
+                message="Empty code submission - please provide valid code",
+            )
+
         # Submit solution
         sid = self._submit(pid, solution_code, lang)
         if sid is None:
