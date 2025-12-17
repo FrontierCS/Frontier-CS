@@ -761,10 +761,23 @@ Examples:
         else:
             print(f"Using {len(models_list)} models from --model: {', '.join(models_list)}")
             models_source_desc = f"--model ({len(models_list)} models)"
-    else:
-        models_path = Path(args.models_file) if args.models_file else base_dir / "models.txt"
+    elif args.models_file:
+        # User explicitly specified --models-file, must exist
+        models_path = Path(args.models_file)
         if not models_path.is_absolute():
             models_path = base_dir / models_path
+        if not models_path.is_file():
+            print(f"ERROR: Models file not found: {models_path}")
+            sys.exit(1)
+        models_list = read_models_file(models_path)
+        if not models_list:
+            print(f"ERROR: Models file is empty: {models_path}")
+            sys.exit(1)
+        print(f"Detected {len(models_list)} models from {models_path}.")
+        models_source_desc = f"--models-file ({models_path})"
+    else:
+        # Default: try models.txt, fallback to gpt-4o if not found
+        models_path = base_dir / "models.txt"
         models_list = read_models_file(models_path)
         if models_list:
             print(f"Detected {len(models_list)} models from {models_path}.")
