@@ -776,16 +776,18 @@ Examples:
         print(f"Detected {len(models_list)} models from {models_path}.")
         models_source_desc = f"--models-file ({models_path})"
     else:
-        # Default: try models.txt, fallback to gpt-4o if not found
+        # Default: use models.txt
         models_path = base_dir / "models.txt"
+        if not models_path.is_file():
+            print(f"ERROR: No model specified and {models_path} not found.")
+            print("Use --model <model> or create models.txt")
+            sys.exit(1)
         models_list = read_models_file(models_path)
-        if models_list:
-            print(f"Detected {len(models_list)} models from {models_path}.")
-            models_source_desc = f"models.txt ({models_path})"
-        else:
-            print(f"WARNING: Models file {models_path} not found or empty; falling back to 'gpt-4o'.")
-            models_list = ["gpt-4o"]
-            models_source_desc = "fallback (gpt-4o)"
+        if not models_list:
+            print(f"ERROR: Models file is empty: {models_path}")
+            sys.exit(1)
+        print(f"Detected {len(models_list)} models from {models_path}.")
+        models_source_desc = f"models.txt ({models_path})"
 
     # Build key pools
     provider_key_pools = build_key_pools(default_api_key)
