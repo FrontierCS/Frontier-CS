@@ -163,15 +163,15 @@ Evaluation Details
 - All 9 regions (2 traces)
 
 
-- Task duration: 48 hours
-- Deadline: 52 hours (4-hour slack)
-- Restart overhead: 0.2 hours
+- Task duration: 24 hours
+- Deadline: 36 hours (12-hour slack)
+- Restart overhead: 0.05 hours (3 minutes)
 - Price of on-demand is 3.06$/hr
 - Price of Spot is 0.9701$/hr
 
 - Notice your solution will be tested on real traces with high Spot availability.
 
-Your program has a total time limit of 300 seconds. You may be evaluated for up to 52 × 60 × 60 = 187200 time steps. Please ensure that your code is efficient under python.
+Your program has a total time limit of 300 seconds. You may be evaluated for up to 36 × 60 × 60 = 129600 time steps. Please ensure that your code is efficient under python.
 
 Implementation Notes
 ---------------------

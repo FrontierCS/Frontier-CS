@@ -138,14 +138,14 @@ Evaluation Details
 ------------------
 - Tested on 720 real Spot instance traces
 - Task duration: 24 hours
-- Deadline: 52 hours (4-hour slack)
-- Restart overhead: 0.2 hours
+- Deadline: 70 hours (22-hour slack)
+- Restart overhead: 0.05 hours (3 minutes)
 - Price of on-demand is 3.06$/hr
 - Price of Spot is 0.9701$/hr
 - 0 = Cost of full on-demand
 - 100 = Cost of optimal spot strategy
 
-Your program has a total time limit of 300 seconds. You may be evaluated for up to 52 × 60 × 60 = 187200 time steps. Please ensure that your code is efficient under python.
+Your program has a total time limit of 300 seconds. You may be evaluated for up to 70 × 60 × 60 = 252000 time steps. Please ensure that your code is efficient under python.
 
 Implementation Notes
 ---------------------
