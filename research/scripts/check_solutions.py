@@ -413,7 +413,12 @@ def main():
     parser.add_argument(
         "--pairs-file",
         type=Path,
-        help="Pairs file to check (optional)",
+        help="Pairs file to check (default: eval_targets.txt if exists)",
+    )
+    parser.add_argument(
+        "--no-pairs",
+        action="store_true",
+        help="Skip eval_targets.txt check even if it exists",
     )
     parser.add_argument(
         "--no-color",
@@ -424,6 +429,13 @@ def main():
 
     if args.no_color:
         Colors.disable()
+
+    # Default pairs file to eval_targets.txt if not specified
+    pairs_file = args.pairs_file
+    if pairs_file is None and not args.no_pairs:
+        default_pairs = repo_root / "eval_targets.txt"
+        if default_pairs.exists():
+            pairs_file = default_pairs
 
     # Read config files
     problems = read_problem_list(args.problems_file) if args.problems_file.exists() else []
@@ -442,7 +454,7 @@ def main():
     actual = collect_actual(args.solutions_dir)
 
     # Read pairs
-    declared = read_pairs_file(args.pairs_file) if args.pairs_file else []
+    declared = read_pairs_file(pairs_file) if pairs_file else []
 
     # Analyze
     result = analyze(expected, actual, declared)
@@ -453,10 +465,10 @@ def main():
     if expected:
         print_coverage_report(result, models)
 
-    if args.pairs_file:
-        print_pairs_report(result, args.pairs_file)
+    if pairs_file:
+        print_pairs_report(result, pairs_file)
 
-    print_summary(result, args.pairs_file)
+    print_summary(result, pairs_file)
 
     # Exit code
     has_errors = (
