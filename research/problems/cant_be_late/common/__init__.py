@@ -24,10 +24,11 @@ ALL_REGIONS = HIGH_AVAILABILITY_REGIONS + LOW_AVAILABILITY_REGIONS
 TIGHT_DEADLINE_CONFIG = [{"duration": 48, "deadline": 52}]  # 4 hours slack
 LOOSE_DEADLINE_CONFIG = [{"duration": 48, "deadline": 70}]  # 22 hours slack
 
-# Default overhead
-DEFAULT_CHANGEOVER_DELAYS = [0.02]
+# Overhead configs
+SMALL_OVERHEAD = [0.05]  # 3 minutes restart overhead
+LARGE_OVERHEAD = [0.20]  # 12 minutes restart overhead
 
 # Legacy ADRS configs (for backwards compatibility)
 ADRS_ENV_PATHS = ALL_REGIONS
 ADRS_JOB_CONFIGS = TIGHT_DEADLINE_CONFIG + LOOSE_DEADLINE_CONFIG
-ADRS_CHANGEOVER_DELAYS = DEFAULT_CHANGEOVER_DELAYS
+ADRS_CHANGEOVER_DELAYS = SMALL_OVERHEAD

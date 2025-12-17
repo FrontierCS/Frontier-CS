@@ -1,0 +1,43 @@
+{
+  "description": "Implement a scheduling strategy for cloud spot instances.",
+  "solution_interface": {
+    "file": "solution.py",
+    "class_name": "Solution",
+    "base_class": "sky_spot.strategies.strategy.Strategy",
+    "required_methods": {
+      "solve": {
+        "signature": "solve(self, spec_path: str) -> Solution",
+        "description": "Initialize the solution from spec_path config. Must call super().__init__(args) with a Namespace containing deadline_hours, task_duration_hours, restart_overhead_hours. Returns self."
+      },
+      "_step": {
+        "signature": "_step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType",
+        "description": "Decision logic called at each simulation step. Returns SPOT, ON_DEMAND, or NONE."
+      }
+    }
+  },
+  "spec_path_format": {
+    "deadline": "Job deadline in hours (float)",
+    "duration": "Job duration in hours (float)",
+    "overhead": "Restart overhead in hours (float)",
+    "trace_file": "Path to trace file (str)"
+  },
+  "available_imports": [
+    "from sky_spot.strategies.strategy import Strategy",
+    "from sky_spot.utils import ClusterType",
+    "from argparse import Namespace",
+    "import json"
+  ],
+  "strategy_context": {
+    "self.env": "Simulation environment with elapsed_seconds, gap_seconds, cluster_type",
+    "self.task_duration": "Total job duration in seconds",
+    "self.deadline": "Job deadline in seconds",
+    "self.restart_overhead": "Time lost when preempted (seconds)",
+    "self.task_done_time": "List of completed work segments (seconds)"
+  },
+  "cluster_types": {
+    "ClusterType.SPOT": "Cheaper but can be preempted",
+    "ClusterType.ON_DEMAND": "More expensive but guaranteed",
+    "ClusterType.NONE": "No cluster (wait)"
+  },
+  "notes": "Goal: minimize cost while completing jobs before deadline."
+}
