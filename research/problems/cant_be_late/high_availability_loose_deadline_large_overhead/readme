@@ -145,7 +145,7 @@ Evaluation Details
 - 0 = Cost of full on-demand
 - 100 = Cost of optimal spot strategy
   
-- Notice your solution will be tested on real traces with high Spot availability.
+- Notice your solution will be tested on real traces with high Spot availability (43-78% availability regions).
 
 Your program has a total time limit of 300 seconds. You may be evaluated for up to 70 × 60 × 60 = 252000 time steps. Please ensure that your code is efficient under python.
 

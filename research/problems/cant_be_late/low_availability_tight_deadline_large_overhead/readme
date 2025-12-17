@@ -142,8 +142,7 @@ Evaluation Details
 - Restart overhead: 0.20 hours (12 minutes)
 - Price of on-demand is 3.06$/hr
 - Price of Spot is 0.9701$/hr
-- 0 = Cost of full on-demand
-- 100 = Cost of optimal spot strategy
+- Notice your solution will be tested on real traces with low Spot availability (4-40% availability regions).
 
 Your program has a total time limit of 300 seconds. You may be evaluated for up to 52 × 60 × 60 = 187200 time steps. Please ensure that your code is efficient under python.
 
