@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Iterable, Type
+from typing import Type
 
 
 # Common directory (where this file lives)
@@ -50,7 +50,7 @@ if not hasattr(wandb, "run"):
 
 from sky_spot import simulate
 from sky_spot.env import TraceEnv
-from sky_spot.task import ChainedTask, SingleTask, Task
+from sky_spot.task import SingleTask
 from sky_spot.strategies import strategy as strategy_lib
 
 _OUTPUT_BASE = Path(
@@ -69,19 +69,6 @@ class SimulationFailure(Exception):
     error_msg: str
     def __str__(self) -> str:  # pragma: no cover - repr helper
         return self.error_msg
-
-
-class _PresetArgumentParser(argparse.ArgumentParser):
-    """Parser that replays a precomputed argv when strategies parse args."""
-
-    def __init__(self, *args, preset_args: Iterable[str] | None = None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._preset_args = list(preset_args or [])
-
-    def parse_known_args(self, args=None, namespace=None):  # pragma: no cover - passthrough
-        if args is None:
-            args = list(self._preset_args)
-        return super().parse_known_args(args=args, namespace=namespace)
 
 
 def _load_strategy_class(module_path: str) -> Type[strategy_lib.Strategy]:
@@ -126,31 +113,6 @@ def _first_strategy_class(module: ModuleType, module_path: str) -> Type[strategy
     raise SimulationFailure(f"No Solution or Strategy subclass found in {module_path}")
 
 
-def _build_parser(cli_args: list[str]) -> _PresetArgumentParser:
-    parser = _PresetArgumentParser(preset_args=cli_args)
-    parser.add_argument("--deadline-hours", type=float, default=52.0)
-    parser.add_argument("--task-duration-hours", type=float, nargs="+", default=[48.0])
-    parser.add_argument("--restart-overhead-hours", type=float, nargs="+", default=[0.0])
-    parser.add_argument("--env-start-hours", type=float, default=0.0)
-    parser.add_argument("--output-dir", type=str, default=str(_OUTPUT_BASE))
-    parser.add_argument("--trace-file", type=str)
-    parser.add_argument("--strategy-file", type=str)
-    parser.add_argument("--checkpoint-size-gb", type=float, default=50.0)
-    parser.add_argument("--strategy", type=str, default="custom")
-    parser.add_argument("--env", type=str, default="trace")
-    parser.add_argument("--silent", action="store_true")
-    return parser
-
-
-def _build_task(args: argparse.Namespace) -> Task:
-    durations = list(args.task_duration_hours)
-    checkpoint = getattr(args, "checkpoint_size_gb", 50.0)
-    if len(durations) == 1:
-        return SingleTask({"duration": durations[0], "checkpoint_size_gb": checkpoint})
-    sub_tasks = [{"duration": dur} for dur in durations]
-    return ChainedTask({"sub_tasks": sub_tasks, "checkpoint_size_gb": checkpoint})
-
-
 def run_single_simulation(program_path: str, trace_file: str, config: dict):
     """Run a single simulation inside the worker process.
 
@@ -161,37 +123,40 @@ def run_single_simulation(program_path: str, trace_file: str, config: dict):
     program_path = os.path.abspath(program_path)
     trace_file = os.path.abspath(trace_file)
 
-    cli_args = [
-        "--deadline-hours",
-        str(config["deadline"]),
-        "--task-duration-hours",
-        str(config["duration"]),
-        "--restart-overhead-hours",
-        str(config["overhead"]),
-        "--trace-file",
-        trace_file,
-        "--strategy-file",
-        program_path,
-        "--output-dir",
-        str(_OUTPUT_BASE),
-        "--env",
-        "trace",
-        "--env-start-hours",
-        "0",
-        "--silent",
-    ]
-
     try:
+        # Load the Solution class
         strategy_cls = _load_strategy_class(program_path)
-        parser = _build_parser(cli_args)
-        strategy = strategy_cls._from_args(parser)
-        args = strategy.args
 
-        env_start = getattr(args, "env_start_hours", 0.0)
-        envs = TraceEnv.create_env(trace_file, env_start_hours=env_start)
-        task = _build_task(args)
+        # Write config to a temp spec file
+        spec_data = {
+            "deadline": config["deadline"],
+            "duration": config["duration"],
+            "overhead": config["overhead"],
+            "trace_file": trace_file,
+        }
+        spec_fd, spec_path = tempfile.mkstemp(suffix=".json", prefix="spec_")
+        try:
+            with os.fdopen(spec_fd, "w") as f:
+                json.dump(spec_data, f)
 
-        output_dir = getattr(args, "output_dir", str(_OUTPUT_BASE))
+            # Create instance via solve(spec_path)
+            strategy = strategy_cls.__new__(strategy_cls)
+            strategy.solve(spec_path)
+        finally:
+            try:
+                os.remove(spec_path)
+            except OSError:
+                pass
+
+        # Get config values for simulation
+        deadline_hours = float(config["deadline"])
+        duration_hours = float(config["duration"])
+        overhead_hours = float(config["overhead"])
+
+        envs = TraceEnv.create_env(trace_file, env_start_hours=0.0)
+        task = SingleTask({"duration": duration_hours, "checkpoint_size_gb": 50.0})
+
+        output_dir = str(_OUTPUT_BASE)
         os.makedirs(output_dir, exist_ok=True)
         temp_name = f"eval_{os.getpid()}_{uuid.uuid4().hex}.json"
 
@@ -200,11 +165,11 @@ def run_single_simulation(program_path: str, trace_file: str, config: dict):
             strategy=strategy,
             task=task,
             trace_file=trace_file,
-            deadline_hours=args.deadline_hours,
-            restart_overhead_hours=args.restart_overhead_hours,
-            env_start_hours=env_start,
+            deadline_hours=deadline_hours,
+            restart_overhead_hours=[overhead_hours],
+            env_start_hours=0.0,
             output_dir=output_dir,
-            kwargs=vars(args),
+            kwargs={},
             output_filename=temp_name,
             silent=True,
             dump_history=False,

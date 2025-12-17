@@ -51,7 +51,7 @@ from sky_spot.strategies.strategy import Strategy
 
 def load_and_validate_solution(solution_path: Path, spec_path: Path) -> Path:
     """
-    Load solution, call solve(), validate it's a Strategy, return the path.
+    Load solution, validate it's a Strategy with required methods, return the path.
 
     The solution.py file must define:
         class Solution(Strategy):
@@ -79,20 +79,15 @@ def load_and_validate_solution(solution_path: Path, spec_path: Path) -> Path:
     if not issubclass(SolutionCls, Strategy):
         raise TypeError("Solution must inherit from sky_spot.strategies.strategy.Strategy")
 
+    # Validate it has solve method
+    if not hasattr(SolutionCls, "solve") or not callable(getattr(SolutionCls, "solve")):
+        raise AttributeError("Solution must implement solve(self, spec_path)")
+
     # Validate it has _step method
     if not hasattr(SolutionCls, "_step") or not callable(getattr(SolutionCls, "_step")):
         raise AttributeError("Solution must implement _step(self, last_cluster_type, has_spot)")
 
-    # Call solve() for initialization if it exists
-    if hasattr(SolutionCls, "solve"):
-        solution_obj = SolutionCls.__new__(SolutionCls)
-        # Don't call __init__ yet - solve() should handle initialization
-        result = solution_obj.solve(str(spec_path))
-        # solve() should return self or the class
-        if result is not None and result is not solution_obj and result is not SolutionCls:
-            # If solve() returns something else, warn but continue
-            pass
-
+    # Note: solve() is NOT called here - it will be called by sim_worker with runtime config
     # Return the solution path - workers will load the Solution class directly
     return solution_path
 

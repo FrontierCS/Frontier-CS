@@ -4,15 +4,16 @@ Example solution for cant-be-late problem.
 Solution interface:
     class Solution(Strategy):
         def solve(self, spec_path: str) -> "Solution":
-            # Optional: read spec for configuration
+            # Read config from spec_path and initialize
             return self
 
         def _step(self, last_cluster_type, has_spot) -> ClusterType:
             # Decision logic at each simulation step
             ...
 """
-import argparse
+import json
 import math
+from argparse import Namespace
 
 from sky_spot.strategies.strategy import Strategy
 from sky_spot.utils import ClusterType
@@ -24,8 +25,18 @@ class Solution(Strategy):
     NAME = "greedy_safety"
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize the solution. Can read spec for configuration if needed."""
-        # For this simple strategy, no configuration needed
+        """Initialize the solution from spec_path config."""
+        with open(spec_path) as f:
+            config = json.load(f)
+
+        # Create args object for Strategy base class
+        args = Namespace(
+            deadline_hours=float(config["deadline"]),
+            task_duration_hours=[float(config["duration"])],
+            restart_overhead_hours=[float(config["overhead"])],
+            inter_task_overhead=[0.0],
+        )
+        super().__init__(args)
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
@@ -53,9 +64,3 @@ class Solution(Strategy):
 
         # Otherwise, prefer spot if available
         return ClusterType.SPOT if has_spot else ClusterType.NONE
-
-    @classmethod
-    def _from_args(cls, parser: argparse.ArgumentParser) -> "Solution":
-        parser.add_argument_group("Solution")
-        args, _ = parser.parse_known_args()
-        return cls(args)
