@@ -202,16 +202,33 @@ def evaluate_solution(
     }
 
 
-def evaluate(solution_path: Path, spec_path: Path) -> dict:
+def evaluate(
+    solution_path: Path,
+    spec_path: Path,
+    env_paths: Optional[list] = None,
+    job_configs: Optional[list] = None,
+    changeover_delays: Optional[list] = None,
+) -> dict:
     """Full evaluation: load solution, validate, run simulations."""
     # Validate solution and call solve() for initialization
     validated_path = load_and_validate_solution(solution_path, spec_path)
 
     # Run evaluation
-    return evaluate_solution(validated_path)
+    return evaluate_solution(
+        validated_path,
+        env_paths=env_paths,
+        job_configs=job_configs,
+        changeover_delays=changeover_delays,
+    )
 
 
-def main(resources_dir: str, default_solution: str = "../../execution_env/solution_env/solution.py"):
+def main(
+    resources_dir: str,
+    default_solution: str = "../../execution_env/solution_env/solution.py",
+    env_paths: Optional[list] = None,
+    job_configs: Optional[list] = None,
+    changeover_delays: Optional[list] = None,
+):
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Evaluate cant-be-late solution")
     parser.add_argument("--solution", default=default_solution, help="Path to solution.py")
@@ -219,7 +236,13 @@ def main(resources_dir: str, default_solution: str = "../../execution_env/soluti
     args = parser.parse_args()
 
     try:
-        payload = evaluate(Path(args.solution).resolve(), Path(args.spec).resolve())
+        payload = evaluate(
+            Path(args.solution).resolve(),
+            Path(args.spec).resolve(),
+            env_paths=env_paths,
+            job_configs=job_configs,
+            changeover_delays=changeover_delays,
+        )
     except Exception as e:
         print(json.dumps({"error": str(e), "score": 0}))
         raise
