@@ -150,5 +150,26 @@ Some problems are adapted from [ALE-bench](https://github.com/SakanaAI/ALE-Bench
 If you use Frontier-CS in your research, please cite:
 
 ```bibtex
-
+@misc{mang2025frontiercsevolvingchallengesevolving,
+      title={FrontierCS: Evolving Challenges for Evolving Intelligence}, 
+      author = {Qiuyang Mang and Wenhao Chai and Zhifei Li and Huanzhi Mao and
+                Shang Zhou and Alexander Du and Hanchen Li and Shu Liu and
+                Edwin Chen and Yichuan Wang and Xieting Chu and Zerui Cheng and
+                Yuan Xu and Tian Xia and Zirui Wang and Tianneng Shi and
+                Jianzhu Yao and Yilong Zhao and Qizheng Zhang and Charlie Ruan and
+                Zeyu Shen and Kaiyuan Liu and Runyuan He and Dong Xing and
+                Zerui Li and Zirong Zeng and Yige Jiang and Lufeng Cheng and
+                Ziyi Zhao and Youran Sun and Wesley Zheng and Meiyuwang Zhang and
+                Ruyi Ji and Xuechang Tu and Zihan Zheng and Zexing Chen and
+                Kangyang Zhou and Zhaozi Wang and Jingbang Chen and
+                Aleksandra Korolova and Peter Henderson and Pramod Viswanath and
+                Vijay Ganesh and Saining Xie and Zhuang Liu and Dawn Song and
+                Sewon Min and Ion Stoica and Joseph E. Gonzalez and
+                Jingbo Shang and Alvin Cheung},
+      year={2025},
+      eprint={2512.15699},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2512.15699}, 
+}
 ```
