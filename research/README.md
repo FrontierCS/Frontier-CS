@@ -218,15 +218,18 @@ The script generates solutions for **all combinations** of problems × models (C
 ### Examples
 
 ```bash
-# All problems × all models
+# All problems × all models (from models.txt)
 python research/scripts/generate_solutions.py
 
 # All problems × one model
 python research/scripts/generate_solutions.py --model gpt-5
 
-# Wildcard problems × multiple models
-python research/scripts/generate_solutions.py --problem "gemm_*" --model gpt-5 claude-sonnet-4-5
-# → gpt5_gemm_squares, gpt5_gemm_rectangles, claude_gemm_squares, ...
+# Wildcard problems × one model
+python research/scripts/generate_solutions.py --problem "gemm_*" --model gpt-5
+
+# Multiple models: use --models-file
+echo -e "gpt-5\nclaude-sonnet-4-5" > models.txt
+python research/scripts/generate_solutions.py --problem "gemm_*" --models-file models.txt
 
 # Retry failed generations (just run again)
 python research/scripts/generate_solutions.py --model gpt-5
@@ -237,13 +240,15 @@ python research/scripts/generate_solutions.py --model gpt-5
 | Option | Description |
 |--------|-------------|
 | `--problem PATTERN` | Problem name pattern (wildcards supported), repeatable |
-| `--model MODEL ...` | Model(s) to use, e.g. `gpt-5 claude-sonnet-4-5` |
+| `--model MODEL` | Single model to use |
+| `--models-file FILE` | File with one model per line (for multiple models) |
 | `--dryrun` | Preview what would be generated |
 | `--force` | Regenerate existing solutions |
 | `--variants N` | Generate N solutions per (problem, model) pair |
 | `--concurrency N` | Max parallel API calls |
 | `--timeout SECONDS` | API timeout (default: 600s) |
 | `--temperature TEMP` | Sampling temperature (default: 0.7) |
+| `--reasoning-model` | Force reasoning mode (for o1/o3 style models) |
 
 ### Output
 

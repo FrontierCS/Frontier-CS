@@ -517,7 +517,7 @@ Examples:
     api_group.add_argument("--api-key-env", help="Environment variable for API key")
     api_group.add_argument("--api-base", default=os.getenv("MODEL_API_BASE", "https://api.openai.com/v1"),
                            help="Base URL for the API")
-    api_group.add_argument("--timeout", type=float, default=float(os.getenv("MODEL_API_TIMEOUT", "180")),
+    api_group.add_argument("--timeout", type=float, default=600.0,
                            help="Request timeout in seconds")
 
     # Generation parameters
