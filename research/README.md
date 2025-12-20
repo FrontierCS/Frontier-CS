@@ -184,3 +184,79 @@ class Solution:
 ### Other Problems
 
 Check each problem's `readme` for the specific `solve()` signature and return type.
+
+## Generating Solutions with LLMs
+
+Use `generate_solutions.py` to automatically generate solutions using LLMs like GPT-5, Claude, or Gemini.
+
+### Basic Usage
+
+```bash
+# Generate solution for a single problem
+python research/scripts/generate_solutions.py research/problems/flash_attn --model gpt-5
+
+# Generate solutions for multiple problems using wildcards
+python research/scripts/generate_solutions.py --problem "gemm_*" --model gpt-5
+
+# Use multiple models
+python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5 claude-sonnet-4-5
+
+# Dry run to preview what would be generated
+python research/scripts/generate_solutions.py --problem "cant_be_late*" --model gpt-5 --dryrun
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--problem PATTERN` | Problem name pattern (supports wildcards), repeatable |
+| `--problems-file FILE` | File containing problem directories |
+| `--model MODEL [MODEL ...]` | Target model(s), e.g. `gpt-5`, `claude-sonnet-4-5`, `gemini-2.5-pro` |
+| `--models-file FILE` | Newline-delimited model list |
+| `--api-key KEY` | API key (or use env vars like `OPENAI_API_KEY`) |
+| `--timeout SECONDS` | Request timeout (default: 600s) |
+| `--temperature TEMP` | Sampling temperature (default: 0.7) |
+| `--variants N` | Number of solutions per model (default: 1) |
+| `--concurrency N` | Max parallel generations |
+| `--force` | Regenerate existing solutions |
+| `--dryrun` | Show what would be generated without running |
+
+### Regenerating Existing Solutions
+
+```bash
+# Regenerate specific solutions
+python research/scripts/generate_solutions.py --solution "gpt5_flash*" --model gpt-5
+
+# From a solutions file
+python research/scripts/generate_solutions.py --solutions-file solutions.txt
+```
+
+### Output
+
+Generated solutions are saved to `solutions/{model}_{problem}/`:
+
+```
+solutions/
+├── gpt5_flash_attn/
+│   ├── config.yaml
+│   ├── prepare_env.sh
+│   ├── solve.sh
+│   └── resources/
+│       └── solution.py
+└── gpt5_gemm_optimization_squares/
+    └── ...
+```
+
+Generation logs are saved to `generation_logs/`.
+
+### API Keys
+
+Set API keys via environment variables:
+
+```bash
+export OPENAI_API_KEY=sk-...      # For GPT models
+export ANTHROPIC_API_KEY=sk-...   # For Claude models
+export GOOGLE_API_KEY=...         # For Gemini models
+```
+
+Or use `--api-key` / `--api-key-env` flags.
