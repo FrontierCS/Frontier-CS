@@ -161,26 +161,21 @@ def evaluate_kernel_performance(chunk_scan_func: Any, metadata: Dict[str, Any] =
             target_time_100 = geo_mean_gpu_time / 200.0
             # Target time for 0 points: gpu_time (1x GPU baseline)
             target_time_0 = geo_mean_gpu_time
-            
-            if geo_mean_answer_time >= target_time_0:
-                # Slower than or equal to GPU baseline: score = 0
-                score = 0.0
-            elif geo_mean_answer_time <= target_time_100:
-                # Faster than 200x GPU baseline: score = 100
-                score = 100.0
-            else:
-                # Linear interpolation between 1x GPU baseline and 200x GPU baseline
-                score = 100.0 * (target_time_0 - geo_mean_answer_time) / (target_time_0 - target_time_100)
+
+            # Linear interpolation between 1x GPU baseline and 200x GPU baseline
+            score_unbounded = 100.0 * (target_time_0 - geo_mean_answer_time) / (target_time_0 - target_time_100)
+            score = max(0, min(100, score_unbounded))
         else:
             # Fallback: use speedup vs GPU if times not available
-            raw_score = min(geometric_mean_speedup, 200.0)
-            score = max(0, (raw_score - 1.0) / 199.0 * 100)
-        
+            score_unbounded = (geometric_mean_speedup - 1.0) / 199.0 * 100
+            score = max(0, min(100, score_unbounded))
+
         return {
             "geometric_mean_speedup": geometric_mean_speedup,
             "arithmetic_mean_speedup": arithmetic_mean_speedup,
             "median_speedup": median_speedup,
             "score": score,
+            "score_unbounded": score_unbounded,
             "pass_all": pass_all,
             "total_tests": len(result["rows"]),
             "passed_tests": sum(1 for r in result["rows"] if r["close_passed"]),

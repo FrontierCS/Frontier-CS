@@ -300,15 +300,18 @@ def evaluate_vector_addition(add_func: Any) -> Dict[str, Any]:
         target = max(2.0 * gm_pytorch_vs_cpu, 1.0 + 1e-12)
         numerator = max(0.0, gm_custom_vs_cpu - 1.0)
         denominator = max(target - 1.0, 1e-12)
-        normalized = max(0.0, min(1.0, numerator / denominator))
-        score = normalized * 100.0
-        
+        normalized_unbounded = numerator / denominator
+        normalized = max(0.0, min(1.0, normalized_unbounded))
+        score_unbounded = normalized_unbounded * 100.0
+        score = max(0.0, min(100.0, score_unbounded))
+
         return {
             "geometric_mean_bandwidth_ratio": geometric_mean_bandwidth_ratio,
             "arithmetic_mean_bandwidth_ratio": arithmetic_mean_bandwidth_ratio,
             "geometric_mean_custom_vs_cpu": gm_custom_vs_cpu,
             "geometric_mean_pytorch_vs_cpu": gm_pytorch_vs_cpu,
             "score": score,
+            "score_unbounded": score_unbounded,
             "pass_all": True,
             "total_tests": len(results),
             "passed_tests": sum(1 for r in results if r["is_correct"]),

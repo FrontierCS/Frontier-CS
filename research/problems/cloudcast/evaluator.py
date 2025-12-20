@@ -116,10 +116,12 @@ def evaluate_search_algorithm(program_module: ModuleType, config_files: List[Pat
 
     cost_score = 1.0 / (1.0 + total_cost)
     combined_score = cost_score
-    score = combined_score * 100
+    score_unbounded = combined_score * 100
+    score = score_unbounded
 
     return {
         "score": score,
+        "score_unbounded": score_unbounded,
         "combined_score": combined_score,
         "runs_successfully": 1.0,
         "cost_score": cost_score,

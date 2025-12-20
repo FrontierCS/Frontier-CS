@@ -134,18 +134,20 @@ def ensure_predictions(
     return np.asarray(evaluated, dtype=float).ravel().tolist()
 
 
-def compute_score(mse_value: float, complexity: int, ref: ReferenceMetrics) -> float:
+def compute_score(mse_value: float, complexity: int, ref: ReferenceMetrics) -> tuple[float, float]:
     if math.isnan(mse_value):
-        return 0.0
+        return 0.0, 0.0
     # Handle degenerate denominator per specification
     denom = ref.m_base - ref.m_ref
     if abs(denom) < 1e-12:
-        base_component = 1.0 if mse_value <= ref.m_ref else 0.0
+        base_component_unbounded = 1.0 if mse_value <= ref.m_ref else 0.0
     else:
-        base_component = (ref.m_base - mse_value) / denom
-    base_component = max(0.0, min(1.0, base_component))
+        base_component_unbounded = (ref.m_base - mse_value) / denom
+    base_component = max(0.0, min(1.0, base_component_unbounded))
     complexity_penalty = 0.99 ** max(complexity - ref.c_ref, 0)
-    return 100.0 * base_component * complexity_penalty
+    score_unbounded = 100.0 * base_component_unbounded * complexity_penalty
+    score = max(0.0, min(100.0, score_unbounded))
+    return score, score_unbounded
 
 
 # ---------------------------------------------------------------------------
@@ -192,13 +194,14 @@ def evaluate(
         else:
             complexity = int(complexity)
 
-        score = compute_score(mse_value, complexity, ref_metrics)
+        score, score_unbounded = compute_score(mse_value, complexity, ref_metrics)
 
         results[name] = {
             "mse": mse_value,
             "expression": str(expr_raw),
             "complexity": complexity,
             "score": score,
+            "score_unbounded": score_unbounded,
             "m_base": ref_metrics.m_base,
             "m_ref": ref_metrics.m_ref,
             "C_ref": ref_metrics.c_ref,

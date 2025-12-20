@@ -155,21 +155,25 @@ class Evaluator:
             return {"score": 0.0, "runs_successfully": 0.0, "error": "No datasets found"}
 
         avg_runtime = total_runtime / len(self.trace_files)
-        
+
         # Check runtime threshold first
         if avg_runtime > 1.0:
             score = 0.0
+            score_unbounded = 0.0
         else:
             # Calculate individual scores per dataset and average them
             individual_scores = []
+            individual_scores_unbounded = []
             for i, hit_rate in enumerate(hit_rates):
-                dataset_score = ((hit_rate - baseline_hit) / (1.0 - baseline_hit)) * 100
-                dataset_score = max(0, min(100, dataset_score))
+                dataset_score_unbounded = ((hit_rate - baseline_hit) / (1.0 - baseline_hit)) * 100
+                dataset_score = max(0, min(100, dataset_score_unbounded))
                 individual_scores.append(dataset_score)
-            score = sum(individual_scores) / len(individual_scores)
+                individual_scores_unbounded.append(dataset_score_unbounded)
+            score_unbounded = sum(individual_scores_unbounded) / len(individual_scores_unbounded)
+            score = max(0, min(100, score_unbounded))
             avg_hit = sum(hit_rates) / len(self.trace_files)
-        
-        return {"score": score, "runs_successfully": 1.0, "avg_hit_rate": sum(hit_rates) / len(self.trace_files) * 100 if hit_rates else 0.0, "total_runtime": total_runtime, "avg_runtime": avg_runtime, "runtime_threshold": 1.0}
+
+        return {"score": score, "score_unbounded": score_unbounded, "runs_successfully": 1.0, "avg_hit_rate": sum(hit_rates) / len(self.trace_files) * 100 if hit_rates else 0.0, "total_runtime": total_runtime, "avg_runtime": avg_runtime, "runtime_threshold": 1.0}
 
 
 def main():

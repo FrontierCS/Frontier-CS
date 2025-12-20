@@ -197,7 +197,9 @@ def evaluate_stage1(program_path: str) -> dict:
             return {
                 "runs_successfully": 0.0,
                 "score": FAILED_SCORE,
+                "score_unbounded": FAILED_SCORE,
                 "combined_score": FAILED_SCORE,
+                "combined_score_unbounded": FAILED_SCORE,
                 "error": "Missing Strategy/_step",
             }
         return {"runs_successfully": 1.0}
@@ -205,14 +207,18 @@ def evaluate_stage1(program_path: str) -> dict:
         return {
             "runs_successfully": 0.0,
             "score": FAILED_SCORE,
+            "score_unbounded": FAILED_SCORE,
             "combined_score": FAILED_SCORE,
+            "combined_score_unbounded": FAILED_SCORE,
             "error": f"Syntax error: {exc}",
         }
     except Exception as exc:  # pragma: no cover
         return {
             "runs_successfully": 0.0,
             "score": FAILED_SCORE,
+            "score_unbounded": FAILED_SCORE,
             "combined_score": FAILED_SCORE,
+            "combined_score_unbounded": FAILED_SCORE,
             "error": str(exc),
         }
 
@@ -241,7 +247,9 @@ def evaluate_stage2(
         return {
             "runs_successfully": 0.0,
             "score": 0.0,
+            "score_unbounded": 0.0,
             "combined_score": FAILED_SCORE,
+            "combined_score_unbounded": FAILED_SCORE,
             "error": "No trace files found",
         }
 
@@ -326,7 +334,9 @@ def evaluate_stage2(
             return {
                 "runs_successfully": 0.0,
                 "score": 0.0,
+                "score_unbounded": 0.0,
                 "combined_score": FAILED_SCORE,
+                "combined_score_unbounded": FAILED_SCORE,
                 "error": "No evaluations scheduled (trace pool empty)",
             }
 
@@ -386,7 +396,9 @@ def evaluate_stage2(
                     return {
                         "runs_successfully": 0.0,
                         "score": 0.0,
+                        "score_unbounded": 0.0,
                         "combined_score": FAILED_SCORE,
+                        "combined_score_unbounded": FAILED_SCORE,
                         "error": f"Not all runs successful: {error_msg}",
                     }
             except Exception as exc:  # pragma: no cover
@@ -396,7 +408,9 @@ def evaluate_stage2(
                 return {
                     "runs_successfully": 0.0,
                     "score": 0.0,
+                    "score_unbounded": 0.0,
                     "combined_score": FAILED_SCORE,
+                    "combined_score_unbounded": FAILED_SCORE,
                     "error": str(exc),
                 }
     finally:
@@ -408,8 +422,10 @@ def evaluate_stage2(
 
     avg_cost = float(np.mean(all_costs)) if all_costs else 0.0
     std_cost = float(np.std(all_costs)) if all_costs else 0.0
-    score = -avg_cost
-    combined_score = score - 0.25 * std_cost
+    score_unbounded = -avg_cost
+    score = score_unbounded
+    combined_score_unbounded = score_unbounded - 0.25 * std_cost
+    combined_score = combined_score_unbounded
 
     logger.info("All %d simulations completed successfully!", len(all_costs))
     logger.info("Average cost: $%.2f", avg_cost)
@@ -444,7 +460,9 @@ def evaluate_stage2(
     metrics = {
         "runs_successfully": 1.0,
         "score": score,
+        "score_unbounded": score_unbounded,
         "combined_score": combined_score,
+        "combined_score_unbounded": combined_score_unbounded,
         "avg_cost": avg_cost,
         "cost_std": std_cost,
         "scenario_stats": scenario_stats,

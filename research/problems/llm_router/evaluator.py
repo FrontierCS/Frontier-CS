@@ -165,9 +165,11 @@ class Evaluator:
         oracle_accuracy = oracle_correct / total_queries
         oracle_avg_cost = oracle_cost / total_queries
         oracle_raw_score = oracle_accuracy - (LAMBDA * oracle_avg_cost)
-        score = (raw_score / oracle_raw_score) * 100 if oracle_raw_score > 0 else 0.0
+        score_unbounded = (raw_score / oracle_raw_score) * 100 if oracle_raw_score > 0 else 0.0
+        score = score_unbounded
 
         return {"runs_successfully": 1.0,
+                "score_unbounded": score_unbounded,
                 "total_queries": total_queries,
                 "score": score, 
                 "raw_score": raw_score,

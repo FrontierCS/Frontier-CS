@@ -375,12 +375,21 @@ def evaluate(solution_path: Path, k: int = 1) -> dict:
     
     # Compute final score
     score = compute_score(metrics)
+    # Compute unbounded score by temporarily removing score limits
+    config_unbounded = dict(SCORE_CONFIG)
+    config_unbounded["scoring"] = dict(config_unbounded["scoring"])
+    config_unbounded["scoring"]["max_score"] = float('inf')
+    config_unbounded["scoring"]["min_score"] = float('-inf')
+    score_unbounded = compute_score(metrics, config_unbounded)
+
     pareto = assess_pareto(metrics)
     print(f"[evaluator] Final score: {score:.2f}", file=sys.stderr)
+    print(f"[evaluator] Unbounded score: {score_unbounded:.2f}", file=sys.stderr)
     print(f"[evaluator] Pareto status vs {pareto['reference']}: {pareto['status']}", file=sys.stderr)
-    
+
     return {
         'score': score,
+        'score_unbounded': score_unbounded,
         'metrics': metrics,
         'build_time_seconds': build_time,
         'index_class': IndexClass.__name__,

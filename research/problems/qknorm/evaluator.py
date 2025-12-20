@@ -145,16 +145,15 @@ def evaluate_kernel_performance(qknorm_func: Any) -> Dict[str, Any]:
                 "passed_tests": sum(1 for r in result["rows"] if r["close_passed"]),
             }
         
-        if geometric_mean_speedup < 1.0:
-            score = 100 * geometric_mean_speedup
-        else:
-            score = 100
-        
+        score_unbounded = 100 * geometric_mean_speedup
+        score = max(0, min(100, score_unbounded))
+
         return {
             "geometric_mean_speedup": geometric_mean_speedup,
             "arithmetic_mean_speedup": arithmetic_mean_speedup,
             "median_speedup": median_speedup,
             "score": score,
+            "score_unbounded": score_unbounded,
             "pass_all": pass_all,
             "total_tests": len(result["rows"]),
             "passed_tests": sum(1 for r in result["rows"] if r["close_passed"]),

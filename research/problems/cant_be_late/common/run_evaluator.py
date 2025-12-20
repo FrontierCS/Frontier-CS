@@ -121,7 +121,7 @@ def evaluate_solution(
     # Stage 1: syntax/import check
     stage1_result = evaluate_stage1(solution_path_str)
     if stage1_result.get("runs_successfully", 0) != 1.0:
-        return {"score": 0, "avg_cost": 0, "error": stage1_result.get("error", "Stage 1 failed")}
+        return {"score": 0, "score_unbounded": 0, "avg_cost": 0, "error": stage1_result.get("error", "Stage 1 failed")}
 
     # Stage 2: full evaluation
     try:
@@ -145,7 +145,7 @@ def evaluate_solution(
     scen_json = artifacts.get("scenario_stats_json")
 
     if not scen_json:
-        return {"score": 0, "avg_cost": avg_cost, "od_anchor": None, "spot_anchor": None}
+        return {"score": 0, "score_unbounded": 0, "avg_cost": avg_cost, "od_anchor": None, "spot_anchor": None}
 
     try:
         scenario_stats = json.loads(scen_json)
@@ -182,19 +182,21 @@ def evaluate_solution(
         total_weight += count
 
     if total_weight <= 0 or od_sum <= 0:
-        return {"score": 0, "avg_cost": avg_cost, "od_anchor": None, "spot_anchor": None}
+        return {"score": 0, "score_unbounded": 0, "avg_cost": avg_cost, "od_anchor": None, "spot_anchor": None}
 
     od_anchor = od_sum / total_weight
     spot_anchor = spot_sum / total_weight
     denom = od_anchor - spot_anchor
     if denom <= 1e-9:
-        return {"score": 0, "avg_cost": avg_cost, "od_anchor": od_anchor, "spot_anchor": spot_anchor}
+        return {"score": 0, "score_unbounded": 0, "avg_cost": avg_cost, "od_anchor": od_anchor, "spot_anchor": spot_anchor}
 
-    norm = (od_anchor - avg_cost) / denom
-    norm = max(0.0, min(1.0, norm))
+    norm_unbounded = (od_anchor - avg_cost) / denom
+    norm = max(0.0, min(1.0, norm_unbounded))
+    score_unbounded = norm_unbounded * 100
     score = round(norm * 100)
     return {
         "score": score,
+        "score_unbounded": score_unbounded,
         "avg_cost": avg_cost,
         "od_anchor": od_anchor,
         "spot_anchor": spot_anchor,

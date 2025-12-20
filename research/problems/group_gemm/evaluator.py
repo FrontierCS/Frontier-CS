@@ -151,14 +151,15 @@ def evaluate_kernel_performance(bmm_func: Any, metadata: Dict[str, Any] = None) 
         
         # Calculate score (0-100 scale)
         # Map 1x-5x speedup to 0-100 points
-        raw_score = min(geometric_mean_speedup, 5.0)
-        score = max(0, (raw_score - 1.0) / 4.0 * 100)
-        
+        score_unbounded = (geometric_mean_speedup - 1.0) / 4.0 * 100
+        score = max(0, min(100, score_unbounded))
+
         return {
             "geometric_mean_speedup": geometric_mean_speedup,
             "arithmetic_mean_speedup": arithmetic_mean_speedup,
             "median_speedup": median_speedup,
             "score": score,
+            "score_unbounded": score_unbounded,
             "pass_all": pass_all,
             "total_tests": len(result["rows"]),
             "passed_tests": sum(1 for r in result["rows"] if r["close_passed"]),

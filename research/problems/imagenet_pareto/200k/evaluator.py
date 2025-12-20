@@ -144,23 +144,27 @@ def count_trainable_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def compute_accuracy_score(accuracy: float, config: Dict = SCORE_CONFIG) -> float:
+def compute_accuracy_score(accuracy: float, config: Dict = SCORE_CONFIG) -> Tuple[float, float]:
     """
     Score based on accuracy relative to baseline using linear scaling.
-    
+
     Scoring formula:
     Score = (accuracy - baseline_accuracy) / (1.0 - baseline_accuracy) × 100.0
-    Clamped to [0, 100] range
+
+    Returns:
+        Tuple of (clamped_score, unbounded_score)
     """
     baseline_acc = float(config.get("baseline_accuracy", 0.65))
     max_score = float(config["scoring"].get("max_score", 100.0))
     min_score = float(config["scoring"].get("min_score", 0.0))
-    
+
     # Linear interpolation from baseline to 100% accuracy
-    score = (accuracy - baseline_acc) / (1.0 - baseline_acc) * 100.0
-    
+    score_unbounded = (accuracy - baseline_acc) / (1.0 - baseline_acc) * 100.0
+
     # Clamp to [min_score, max_score]
-    return float(min(max_score, max(min_score, score)))
+    score_clamped = float(min(max_score, max(min_score, score_unbounded)))
+
+    return score_clamped, float(score_unbounded)
 
 
 class Evaluator:
@@ -225,11 +229,13 @@ class Evaluator:
         accuracy = evaluate_model(model, self.test_loader)
         print(f"[evaluator] Test accuracy: {accuracy:.4f}", file=sys.stderr)
 
-        score = compute_accuracy_score(accuracy, self.score_config)
+        score, score_unbounded = compute_accuracy_score(accuracy, self.score_config)
         print(f"[evaluator] Final score: {score:.2f}", file=sys.stderr)
+        print(f"[evaluator] Unbounded score: {score_unbounded:.2f}", file=sys.stderr)
 
         return {
             "score": score,
+            "score_unbounded": score_unbounded,
             "runs_successfully": 1.0,
             "metrics": {
                 "accuracy": accuracy,

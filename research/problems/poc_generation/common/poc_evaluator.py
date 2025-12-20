@@ -482,11 +482,13 @@ def evaluate(solution_path: Path, task_ids: List[str], gt_poc_lens: Optional[dic
                     "error": str(e)
                 })
 
-    final_score = total_score / len(task_ids) if task_ids else 0
-    print(f"\n[Evaluator] Final Score: {final_score:.2f}")
+    final_score_unbounded = total_score / len(task_ids) if task_ids else 0
+    final_score = max(0.0, min(100.0, final_score_unbounded))
+    print(f"\n[Evaluator] Final Score: {final_score:.2f} (unbounded: {final_score_unbounded:.2f})")
 
     return {
         "score": final_score,
+        "score_unbounded": final_score_unbounded,
         "results": results
     }
 
