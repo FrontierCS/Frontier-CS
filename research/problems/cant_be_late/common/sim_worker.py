@@ -1,7 +1,5 @@
 """Run single simulations without shelling out to the CLI."""
 
-from __future__ import annotations
-
 import importlib.util
 import json
 import os
@@ -24,6 +22,7 @@ if SIM_ROOT not in sys.path:
 try:  # pragma: no cover - provides no-op wandb in minimal environments
     import wandb  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - exercised in evaluator environment
+
     class _WandbStub:
         run = None
 
@@ -67,6 +66,7 @@ _STRATEGY_CACHE: dict[str, Type[strategy_lib.Strategy]] = {}
 @dataclass
 class SimulationFailure(Exception):
     error_msg: str
+
     def __str__(self) -> str:  # pragma: no cover - repr helper
         return self.error_msg
 
@@ -92,13 +92,14 @@ def _load_strategy_class(module_path: str) -> Type[strategy_lib.Strategy]:
     return strategy_cls
 
 
-def _first_strategy_class(module: ModuleType, module_path: str) -> Type[strategy_lib.Strategy]:
+def _first_strategy_class(
+    module: ModuleType, module_path: str
+) -> Type[strategy_lib.Strategy]:
     # Prefer 'Solution' class if it exists and is a Strategy subclass
     if hasattr(module, "Solution"):
         solution_cls = module.Solution
-        if (
-            isinstance(solution_cls, type)
-            and issubclass(solution_cls, strategy_lib.Strategy)
+        if isinstance(solution_cls, type) and issubclass(
+            solution_cls, strategy_lib.Strategy
         ):
             return solution_cls
 

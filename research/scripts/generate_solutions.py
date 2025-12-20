@@ -508,7 +508,8 @@ Examples:
     # Model selection
     model_group = parser.add_argument_group("Model selection")
     model_exclusive = model_group.add_mutually_exclusive_group()
-    model_exclusive.add_argument("--model", help="Target model identifier")
+    model_exclusive.add_argument("--model", dest="models", nargs="+",
+                                 help="Target model identifier(s), e.g. --model gpt-5 gpt-5.1")
     model_exclusive.add_argument("--models-file", help="Newline-delimited model list")
 
     # API configuration
@@ -659,17 +660,42 @@ Examples:
         problems_dir = repo_root / "research" / "problems"
         all_problems = []
         if problems_dir.is_dir():
+            def find_problems_recursive(directory: Path, depth: int = 0, max_depth: int = 3) -> List[Path]:
+                """Recursively find problem directories (those with readme files)."""
+                if depth > max_depth:
+                    return []
+
+                excluded = {'common', 'resources', '__pycache__', 'data'}
+
+                # Check if this directory has a readme
+                has_readme = (directory / "readme").exists() or (directory / "README.md").exists()
+
+                # Find subdirectories (potential variants/categories)
+                subdirs = [sub for sub in directory.iterdir()
+                           if sub.is_dir() and not sub.name.startswith('.')
+                           and sub.name not in excluded]
+
+                # Recursively find problems in subdirs
+                sub_problems = []
+                for sub in subdirs:
+                    sub_problems.extend(find_problems_recursive(sub, depth + 1, max_depth))
+
+                if sub_problems:
+                    # Subdirectories have problems - use those (don't use parent readme)
+                    return sub_problems
+                elif has_readme:
+                    # This directory is a problem (leaf with readme)
+                    return [directory]
+                elif subdirs:
+                    # Has subdirs but no readme anywhere - error
+                    print(f"ERROR: {directory.name}/ has subdirectories but no readme files found")
+                    sys.exit(1)
+                else:
+                    return []
+
             for category in problems_dir.iterdir():
                 if category.is_dir() and not category.name.startswith('.'):
-                    # Check if this is a problem dir (has readme) or a category with sub-problems
-                    if (category / "readme").exists() or (category / "README.md").exists():
-                        all_problems.append(category)
-                    else:
-                        # Look for sub-problems
-                        for sub in category.iterdir():
-                            if sub.is_dir() and not sub.name.startswith('.'):
-                                if (sub / "readme").exists() or (sub / "README.md").exists():
-                                    all_problems.append(sub)
+                    all_problems.extend(find_problems_recursive(category))
 
         for pattern in args.problem_patterns:
             matched = False
@@ -727,22 +753,41 @@ Examples:
 
     # Resolve model selection
     models_source_desc = ""
-    if args.model:
-        models_list = [args.model]
-        print(f"Using model from --model: {args.model}")
-        models_source_desc = f"--model ({args.model})"
-    else:
-        models_path = Path(args.models_file) if args.models_file else base_dir / "models.txt"
+    if args.models:
+        models_list = args.models
+        if len(models_list) == 1:
+            print(f"Using model from --model: {models_list[0]}")
+            models_source_desc = f"--model ({models_list[0]})"
+        else:
+            print(f"Using {len(models_list)} models from --model: {', '.join(models_list)}")
+            models_source_desc = f"--model ({len(models_list)} models)"
+    elif args.models_file:
+        # User explicitly specified --models-file, must exist
+        models_path = Path(args.models_file)
         if not models_path.is_absolute():
             models_path = base_dir / models_path
+        if not models_path.is_file():
+            print(f"ERROR: Models file not found: {models_path}")
+            sys.exit(1)
         models_list = read_models_file(models_path)
-        if models_list:
-            print(f"Detected {len(models_list)} models from {models_path}.")
-            models_source_desc = f"models.txt ({models_path})"
-        else:
-            print(f"WARNING: Models file {models_path} not found or empty; falling back to 'gpt-4o'.")
-            models_list = ["gpt-4o"]
-            models_source_desc = "fallback (gpt-4o)"
+        if not models_list:
+            print(f"ERROR: Models file is empty: {models_path}")
+            sys.exit(1)
+        print(f"Detected {len(models_list)} models from {models_path}.")
+        models_source_desc = f"--models-file ({models_path})"
+    else:
+        # Default: use models.txt
+        models_path = base_dir / "models.txt"
+        if not models_path.is_file():
+            print(f"ERROR: No model specified and {models_path} not found.")
+            print("Use --model <model> or create models.txt")
+            sys.exit(1)
+        models_list = read_models_file(models_path)
+        if not models_list:
+            print(f"ERROR: Models file is empty: {models_path}")
+            sys.exit(1)
+        print(f"Detected {len(models_list)} models from {models_path}.")
+        models_source_desc = f"models.txt ({models_path})"
 
     # Build key pools
     provider_key_pools = build_key_pools(default_api_key)

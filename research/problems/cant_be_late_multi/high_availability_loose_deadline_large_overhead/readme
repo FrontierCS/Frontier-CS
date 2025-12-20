@@ -37,61 +37,64 @@ The evaluation uses many real spot-availability traces.
 API Specification
 -----------------
 
-Implement a `Solution` class:
+Implement a `Solution` class that extends `MultiRegionStrategy`:
 
 ```python
-class Solution:
-    def solve(self, spec_path: str = None) -> str | dict:
-        """
-        Returns a multi-region scheduling strategy.
-        
-        Returns one of:
-        - Python code string implementing a MultiRegionStrategy subclass
-        - {"code": "python_code_string"}
-        - {"program_path": "path/to/strategy.py"}
-        """
-        # Your implementation
-        pass
-```
+import json
+from argparse import Namespace
 
-Your strategy code must implement:
-
-```python
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
-class YourStrategy(MultiRegionStrategy):
-    NAME = "your_strategy_name"  # REQUIRED: Add unique identifier
-    
-    def __init__(self, args=None):  # REQUIRED: Must accept args parameter
+
+class Solution(MultiRegionStrategy):
+    """Your multi-region scheduling strategy."""
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
+
+    def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
+        with open(spec_path) as f:
+            config = json.load(f)
+
+        args = Namespace(
+            deadline_hours=float(config["deadline"]),
+            task_duration_hours=[float(config["duration"])],
+            restart_overhead_hours=[float(config["overhead"])],
+            inter_task_overhead=[0.0],
+        )
         super().__init__(args)
-    
-    def _is_behind_schedule(self) -> bool:  # REQUIRED: Must be implemented
-        """Check if we're behind schedule based on progress vs deadline."""
-        # Implement your logic here
-        pass
-    
+        return self
+
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-        
+
         Available attributes:
-        - self.env.get_current_region(): Get current region index (0-8)
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
         - self.env.switch_region(idx): Switch to region by index
         - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed
-        - self.deadline: Deadline time
-        - self._is_behind_schedule(): Check if job is behind schedule
-        
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Implement your decision logic
-        pass
-    
-    @classmethod
-    def _from_args(cls, parser):  # REQUIRED: For evaluator instantiation
-        args, _ = parser.parse_known_args()
-        return cls(args)
+        # Your decision logic here
+        if has_spot:
+            return ClusterType.SPOT
+        return ClusterType.ON_DEMAND
 ```
 
 Parameters:
@@ -171,15 +174,15 @@ Evaluation Details
 
 - Notice your solution will be tested on real traces with high Spot availability.
 
-Your program has a total time limit of 300 seconds. You may be evaluated for up to 48 × 60 × 60 = 172800 time steps. Please ensure that your code is efficient under python.
+Your program has a total time limit of 300 seconds. You may be evaluated for up to 36 × 60 × 60 = 129600 time steps. Please ensure that your code is efficient under python.
 
 Implementation Notes
 ---------------------
 **Required Elements (Missing these will cause evaluation failures):**
-- `NAME` attribute must be defined on your Strategy class (avoids "Name abstract already exists" error)
-- `_from_args` classmethod must be implemented (avoids JSON decode errors)
-- Ensure proper handling of ClusterType.NONE return values (avoids "Timestamp X out of range X" error)
-- `__init__(self, args)` must match the Strategy base class (changed from `__init__(self, args=None)`)
+- `NAME` attribute must be defined on your Solution class
+- `solve(self, spec_path)` method must initialize the strategy and return `self`
+- `_step(self, last_cluster_type, has_spot)` method must return a ClusterType
+- Ensure proper handling of ClusterType.NONE return values
 
 
 

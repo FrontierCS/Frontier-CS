@@ -7,8 +7,6 @@ per-dataset metrics (MSE, complexity, score), and writes a JSON report.
 The final numeric score (mean across datasets) is printed to stdout.
 """
 
-from __future__ import annotations
-
 import argparse
 import importlib.util
 import json
@@ -69,15 +67,17 @@ def mse(y_true: Iterable[float], y_pred: Iterable[float]) -> float:
     y_true = np.asarray(list(y_true), dtype=float).ravel()
     y_pred = np.asarray(list(y_pred), dtype=float).ravel()
     if y_true.shape != y_pred.shape:
-        raise ValueError(f"Mismatched prediction shape: {y_pred.shape}, expected {y_true.shape}")
+        raise ValueError(
+            f"Mismatched prediction shape: {y_pred.shape}, expected {y_true.shape}"
+        )
     return float(np.mean((y_true - y_pred) ** 2))
 
 
 def parse_expression(expr: str, n_features: int) -> sp.Expr:
     if not isinstance(expr, str) or not expr.strip():
         raise ValueError("Expression must be a non-empty string.")
-    symbols = sp.symbols(" ".join(f"x{i+1}" for i in range(n_features)))
-    locals_dict = {f"x{i+1}": symbols[i] for i in range(n_features)}
+    symbols = sp.symbols(" ".join(f"x{i + 1}" for i in range(n_features)))
+    locals_dict = {f"x{i + 1}": symbols[i] for i in range(n_features)}
     allowed_funcs = {"sin": sp.sin, "cos": sp.cos, "exp": sp.exp, "log": sp.log}
     locals_dict.update(allowed_funcs)
     try:
@@ -126,7 +126,11 @@ def ensure_predictions(
         if values.shape == (X.shape[0],):
             return values.tolist()
     # Fallback: evaluate expression via lambdify
-    fn = sp.lambdify(feature_symbols, expression, modules={"sin": np.sin, "cos": np.cos, "exp": np.exp, "log": np.log})
+    fn = sp.lambdify(
+        feature_symbols,
+        expression,
+        modules={"sin": np.sin, "cos": np.cos, "exp": np.exp, "log": np.log},
+    )
     try:
         evaluated = fn(*[X[:, i] for i in range(X.shape[1])])
     except Exception as exc:
@@ -177,14 +181,16 @@ def evaluate(
         solution = SolutionCls()
         output = solution.solve(X, y)
         if not isinstance(output, dict):
-            raise TypeError(f"Solution.solve must return dict, got {type(output).__name__}")
+            raise TypeError(
+                f"Solution.solve must return dict, got {type(output).__name__}"
+            )
 
         expr_raw = output.get("expression", "")
         predictions_raw = output.get("predictions")
         details = output.get("details") or {}
 
         parsed_expr = parse_expression(expr_raw, X.shape[1])
-        symbols = sp.symbols(" ".join(f"x{i+1}" for i in range(X.shape[1])))
+        symbols = sp.symbols(" ".join(f"x{i + 1}" for i in range(X.shape[1])))
         preds = ensure_predictions(predictions_raw, parsed_expr, X, symbols)
         mse_value = mse(y, preds)
 
@@ -211,11 +217,27 @@ def evaluate(
 
 
 def main(argv: List[str] | None = None) -> float:
-    parser = argparse.ArgumentParser(description="Evaluate symbolic regression solution.")
-    parser.add_argument("--solution-path", type=Path, required=True, help="Path to contestant solution.py")
-    parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing CSV datasets")
-    parser.add_argument("--reference-path", type=Path, required=True, help="Reference metrics JSON path")
-    parser.add_argument("--output-path", type=Path, required=True, help="Where to write evaluation report JSON")
+    parser = argparse.ArgumentParser(
+        description="Evaluate symbolic regression solution."
+    )
+    parser.add_argument(
+        "--solution-path",
+        type=Path,
+        required=True,
+        help="Path to contestant solution.py",
+    )
+    parser.add_argument(
+        "--data-dir", type=Path, required=True, help="Directory containing CSV datasets"
+    )
+    parser.add_argument(
+        "--reference-path", type=Path, required=True, help="Reference metrics JSON path"
+    )
+    parser.add_argument(
+        "--output-path",
+        type=Path,
+        required=True,
+        help="Where to write evaluation report JSON",
+    )
     args = parser.parse_args(argv)
 
     references = load_reference_metrics(args.reference_path)
@@ -228,15 +250,22 @@ def main(argv: List[str] | None = None) -> float:
 
     datasets = {p.name: p for p in data_files if p.name in references}
     if not datasets:
-        raise ValueError("No datasets matched the reference metrics; check dataset names.")
+        raise ValueError(
+            "No datasets matched the reference metrics; check dataset names."
+        )
 
     missing_reference = sorted(set(references.keys()) - set(datasets.keys()))
     if missing_reference:
-        raise ValueError(f"Reference metrics provided for missing datasets: {missing_reference}")
+        raise ValueError(
+            f"Reference metrics provided for missing datasets: {missing_reference}"
+        )
 
     ignored = sorted(set(p.name for p in data_files) - set(datasets.keys()))
     for name in ignored:
-        print(f"[symbolic_regression evaluator] Skipping unreferenced dataset {name}", file=sys.stderr)
+        print(
+            f"[symbolic_regression evaluator] Skipping unreferenced dataset {name}",
+            file=sys.stderr,
+        )
 
     solution_module = load_solution_module(args.solution_path)
     results = evaluate(solution_module, datasets, references)

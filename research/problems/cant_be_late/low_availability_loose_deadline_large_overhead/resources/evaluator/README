@@ -1,2 +1,10 @@
-Contains the canonical evaluator for cant-be-late benchmark (evaluator_real30.py).
-This module dynamically locates the simulator at ../cant-be-late-simulator.
+Evaluator for cant-be-late benchmark.
+
+This variant uses the shared evaluator from ../../common/:
+- evaluator.py: Thin wrapper that imports from common/run_evaluator.py
+- Simulator and data: ../../../common/cant-be-late-simulator/
+
+Variant configuration:
+- Regions: LOW_AVAILABILITY_REGIONS (4-40% spot availability)
+- Deadline: 70 hours (22-hour slack, loose)
+- Overhead: 0.20 hours (12 minutes, large)
