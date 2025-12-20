@@ -65,10 +65,9 @@ COPY judge/include/ /lib/testlib/
 RUN chmod +x entrypoint.sh && sed -i 's/\r$//' entrypoint.sh
 
 # --- 6. Set default environment variables ---
+# Note: JUDGE_WORKERS and GJ_PARALLELISM default to $(nproc) at runtime in entrypoint.sh
 ENV PORT=8081 \
-    GJ_ADDR=http://127.0.0.1:5050 \
-    JUDGE_WORKERS=$(nproc) \
-    GJ_PARALLELISM=$(nproc)
+    GJ_ADDR=http://127.0.0.1:5050
 
 # --- 7. Set container entry point ---
 ENTRYPOINT ["/app/entrypoint.sh"]
