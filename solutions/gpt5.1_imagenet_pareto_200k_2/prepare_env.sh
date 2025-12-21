@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "[gpt5.1_imagenet_pareto_200k_2] No additional environment preparation required."

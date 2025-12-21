@@ -1,0 +1,5 @@
+class Solution:
+    def solve(self, src_path: str) -> bytes:
+        header = b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x00\x00'
+        compressed = b'\xdf\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        return header + compressed

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "[deepseekreasoner_cant_be_late_mixed_availability_tight_deadline_small_overhead_4] No additional environment preparation required."

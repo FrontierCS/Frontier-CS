@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "[grok4fastreasoning_imagenet_pareto_1m_4] No additional environment preparation required."
