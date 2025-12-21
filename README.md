@@ -108,9 +108,21 @@ Frontier-CS supports unbounded scoring for algorithmic problems, enabling open-e
 frontier-eval --algorithmic --unbounded 1 <your_solution.cpp> 
 ```
 
-#### Note 
+#### Note
 1. We currently support C++17 only for algorithmic problem solutions.
 2. Reference solutions and hidden tests are withheld; full evaluation and leaderboard inclusion require submission.
+
+#### Cloud Evaluation
+For environments where Docker privileged mode is unavailable (e.g., gVisor), use SkyPilot to run the judge on a cloud VM:
+
+```bash
+# Auto-launch cloud judge (recommended)
+frontier-eval --algorithmic --skypilot 1 <your_solution.cpp>
+
+# Or manually launch and connect
+sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
+frontier-eval --algorithmic --judge-url http://$(sky status --ip algo-judge):8081 1 <your_solution.cpp>
+```
 
 See [algorithmic/README.md](algorithmic/README.md) for full documentation.
 

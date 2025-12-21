@@ -74,6 +74,18 @@ frontier-eval --algorithmic 1 solution.cpp
 frontier-eval --algorithmic 1 solution.cpp --unbounded
 ```
 
+### Cloud Evaluation (SkyPilot)
+
+For environments where Docker privileged mode is unavailable (e.g., gVisor, Cloud Run):
+
+```bash
+# Auto-launch cloud judge
+frontier-eval --algorithmic --skypilot 1 solution.cpp
+
+# Or manually launch
+sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
+frontier-eval --algorithmic --judge-url http://$(sky status --ip algo-judge):8081 1 solution.cpp
+```
 
 ### Customized Problems
 

@@ -166,6 +166,17 @@ Examples:
         help="Cloud region for SkyPilot",
     )
     backend_group.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=10,
+        help="Minutes of idleness before SkyPilot cluster autostops (default: 10)",
+    )
+    backend_group.add_argument(
+        "--keep-cluster",
+        action="store_true",
+        help="Keep SkyPilot cluster running after evaluation (disables autostop)",
+    )
+    backend_group.add_argument(
         "--judge-url",
         type=str,
         default="http://localhost:8081",
@@ -282,6 +293,17 @@ Each solution directory should have a config.yaml with:
         "--skypilot",
         action="store_true",
         help="Use SkyPilot for cloud evaluation",
+    )
+    batch_backend.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=10,
+        help="Minutes of idleness before SkyPilot cluster autostops (default: 10)",
+    )
+    batch_backend.add_argument(
+        "--keep-cluster",
+        action="store_true",
+        help="Keep SkyPilot cluster running after evaluation (disables autostop)",
     )
     batch_backend.add_argument(
         "--max-concurrent",
@@ -436,12 +458,16 @@ def run_batch(args: argparse.Namespace) -> int:
     # Create batch evaluator
     backend = "skypilot" if args.skypilot else "docker"
     bucket_url = getattr(args, "bucket_url", None)
+    keep_cluster = getattr(args, "keep_cluster", False)
+    idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
     batch = BatchEvaluator(
         results_dir=args.results_dir,
         backend=backend,
         max_concurrent=args.max_concurrent,
         timeout=args.timeout,
         bucket_url=bucket_url,
+        keep_cluster=keep_cluster,
+        idle_timeout=idle_timeout,
     )
 
     # Handle status command
@@ -607,11 +633,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Create evaluator
     backend = "skypilot" if args.skypilot else "docker"
+    idle_timeout = None if args.keep_cluster else getattr(args, 'idle_timeout', 10)
     evaluator = FrontierCSEvaluator(
         backend=backend,
         judge_url=args.judge_url,
         cloud=args.cloud,
         region=args.region,
+        keep_cluster=getattr(args, 'keep_cluster', False),
+        idle_timeout=idle_timeout,
     )
 
     # Handle info commands

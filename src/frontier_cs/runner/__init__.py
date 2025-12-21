@@ -21,6 +21,8 @@ __all__ = [
 # SkyPilotRunner is optional (requires skypilot)
 try:
     from .skypilot import SkyPilotRunner
+    from .algorithmic_skypilot import AlgorithmicSkyPilotRunner
     __all__.append("SkyPilotRunner")
+    __all__.append("AlgorithmicSkyPilotRunner")
 except ImportError:
     pass

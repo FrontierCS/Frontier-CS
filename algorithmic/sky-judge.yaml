@@ -1,0 +1,73 @@
+# SkyPilot config for launching go-judge service
+#
+# Usage:
+#   sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
+#   sky status --ip algo-judge  # Get IP
+#   frontier-eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp
+#
+#   # When done (or let autostop handle it):
+#   sky down algo-judge
+
+resources:
+  cloud: gcp
+  cpus: 4+
+  memory: 8+
+  disk_size: 50
+  ports: 8081
+
+workdir: .
+
+file_mounts:
+  ~/algorithmic: .
+
+setup: |
+  set -euo pipefail
+
+  # Install Docker
+  if ! command -v docker &>/dev/null; then
+    curl -fsSL https://get.docker.com | sudo sh
+    sudo usermod -aG docker $USER
+    sudo systemctl start docker
+    sudo systemctl enable docker
+  fi
+
+  # Install docker-compose
+  if ! command -v docker-compose &>/dev/null; then
+    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+      -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+  fi
+
+run: |
+  set -euo pipefail
+  cd ~/algorithmic
+
+  # Build and start go-judge service
+  echo "Building and starting go-judge..."
+  sudo docker-compose up --build -d
+
+  # Wait for service to be ready
+  echo "Waiting for judge service to be ready..."
+  for i in {1..30}; do
+    if curl -s http://localhost:8081/problems >/dev/null 2>&1; then
+      echo "Judge service is ready!"
+      break
+    fi
+    sleep 2
+  done
+
+  # Show status
+  echo ""
+  echo "=========================================="
+  echo "Go-Judge service is running on port 8081"
+  echo "=========================================="
+  echo ""
+  echo "To get the IP address:"
+  echo "  sky status --ip algo-judge"
+  echo ""
+  echo "To evaluate:"
+  echo "  frontier-eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp"
+  echo ""
+
+  # Keep running (tail logs)
+  sudo docker-compose logs -f

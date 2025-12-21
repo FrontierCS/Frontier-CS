@@ -46,6 +46,8 @@ class FrontierCSEvaluator:
         judge_url: str = "http://localhost:8081",
         cloud: str = "gcp",
         region: Optional[str] = None,
+        keep_cluster: bool = False,
+        idle_timeout: Optional[int] = 10,
     ):
         """
         Initialize FrontierCSEvaluator.
@@ -56,15 +58,20 @@ class FrontierCSEvaluator:
             judge_url: URL of the algorithmic judge server
             cloud: Cloud provider for SkyPilot ("gcp", "aws", "azure")
             region: Cloud region for SkyPilot
+            keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
+            idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
         self.default_backend = backend
         self.base_dir = base_dir
         self.judge_url = judge_url
         self.cloud = cloud
         self.region = region
+        self.keep_cluster = keep_cluster
+        self.idle_timeout = idle_timeout
 
         # Lazy-initialized runners
         self._algorithmic_runner: Optional[AlgorithmicRunner] = None
+        self._algorithmic_skypilot_runner: Optional[Runner] = None
         self._docker_runner: Optional[DockerRunner] = None
         self._skypilot_runner: Optional[Runner] = None
 
@@ -74,6 +81,20 @@ class FrontierCSEvaluator:
         if self._algorithmic_runner is None:
             self._algorithmic_runner = AlgorithmicRunner(judge_url=self.judge_url)
         return self._algorithmic_runner
+
+    @property
+    def algorithmic_skypilot_runner(self) -> Runner:
+        """Get or create the algorithmic SkyPilot runner."""
+        if self._algorithmic_skypilot_runner is None:
+            from .runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
+            self._algorithmic_skypilot_runner = AlgorithmicSkyPilotRunner(
+                base_dir=self.base_dir,
+                cloud=self.cloud,
+                region=self.region,
+                keep_cluster=self.keep_cluster,
+                idle_timeout=self.idle_timeout,
+            )
+        return self._algorithmic_skypilot_runner
 
     @property
     def docker_runner(self) -> DockerRunner:
@@ -91,15 +112,20 @@ class FrontierCSEvaluator:
                 base_dir=self.base_dir,
                 cloud=self.cloud,
                 region=self.region,
+                keep_cluster=self.keep_cluster,
+                idle_timeout=self.idle_timeout,
             )
         return self._skypilot_runner
 
     def _get_runner(self, track: TrackType, backend: Optional[BackendType] = None) -> Runner:
         """Get the appropriate runner for a track and backend."""
+        effective_backend = backend or self.default_backend
+
         if track == "algorithmic":
+            if effective_backend == "skypilot":
+                return self.algorithmic_skypilot_runner
             return self.algorithmic_runner
 
-        effective_backend = backend or self.default_backend
         if effective_backend == "skypilot":
             return self.skypilot_runner
         return self.docker_runner

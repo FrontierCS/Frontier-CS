@@ -55,6 +55,7 @@ class SkyPilotRunner(Runner):
     DEFAULT_DISK_SIZE = 50
     DEFAULT_GPU = "L4:1"
     DEFAULT_TIMEOUT = 1800  # 30 minutes
+    DEFAULT_IDLE_TIMEOUT = 10  # 10 minutes
 
     def __init__(
         self,
@@ -62,6 +63,7 @@ class SkyPilotRunner(Runner):
         cloud: str = DEFAULT_CLOUD,
         region: Optional[str] = None,
         keep_cluster: bool = False,
+        idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
         bucket_url: Optional[str] = None,
     ):
         """
@@ -71,7 +73,8 @@ class SkyPilotRunner(Runner):
             base_dir: Base directory of Frontier-CS repo
             cloud: Cloud provider (gcp, aws, azure)
             region: Cloud region (optional)
-            keep_cluster: Keep cluster running after evaluation
+            keep_cluster: Keep cluster running after evaluation (disables autostop)
+            idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
                        If provided, results are written to bucket instead of fetched via scp
         """
@@ -80,6 +83,7 @@ class SkyPilotRunner(Runner):
         self.cloud = cloud
         self.region = region
         self.keep_cluster = keep_cluster
+        self.idle_timeout = idle_timeout if not keep_cluster else None
         self.bucket_url = bucket_url
 
     def _find_base_dir(self) -> Path:
@@ -239,7 +243,11 @@ class SkyPilotRunner(Runner):
 
             # Launch and wait
             try:
-                request_id = sky.launch(task, cluster_name=cluster_name)
+                request_id = sky.launch(
+                    task,
+                    cluster_name=cluster_name,
+                    idle_minutes_to_autostop=self.idle_timeout,
+                )
                 result = sky.stream_and_get(request_id)
 
                 job_id = result[0] if isinstance(result, tuple) and len(result) > 0 else None
@@ -290,7 +298,8 @@ class SkyPilotRunner(Runner):
                 )
 
             finally:
-                if not self.keep_cluster:
+                # Only down immediately if no autostop and not keeping cluster
+                if not self.keep_cluster and self.idle_timeout is None:
                     try:
                         down_request = sky.down(cluster_name)
                         sky.stream_and_get(down_request)

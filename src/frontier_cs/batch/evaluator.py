@@ -61,6 +61,8 @@ class BatchEvaluator:
         max_concurrent: int = 1,
         timeout: Optional[int] = None,
         bucket_url: Optional[str] = None,
+        keep_cluster: bool = False,
+        idle_timeout: Optional[int] = 10,
     ):
         """
         Initialize batch evaluator.
@@ -74,6 +76,8 @@ class BatchEvaluator:
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
                        Only used with skypilot backend. Results are written directly
                        to the bucket and synced incrementally.
+            keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
+            idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
@@ -102,6 +106,8 @@ class BatchEvaluator:
             self._runner = SkyPilotRunner(
                 base_dir=self.base_dir,
                 bucket_url=bucket_url,
+                keep_cluster=keep_cluster,
+                idle_timeout=idle_timeout,
             )
 
     def _find_base_dir(self) -> Path:
