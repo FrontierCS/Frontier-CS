@@ -5,8 +5,8 @@ using namespace std;
 int main(int argc, char* argv[]) {
   registerTestlibCmd(argc, argv);
 
-  int n = inf.readInt(1, 2000);
-  int m = inf.readInt(0, 1000000);
+  int n = inf.readInt(1, 3000);
+  int m = inf.readInt(0, 2000000);
 
   vector<array<int,3>> clauses(m);
   for (int i = 0; i < m; i++) {
