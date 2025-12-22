@@ -24,7 +24,7 @@ Each time Alice returns a value a, Eve generates a random number b using this ge
 and returns to Bob the value a xor b (bitwise XOR, i.e. ^ in C++).
 
 You are Bob, and you have somehow obtained P and n, but you do not know seed.
-You need to find y within 100 queries.
+You need to find y within 100 queries and minmize the number of queries as possible.
 
 ### Implementation Details
 
