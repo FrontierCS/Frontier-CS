@@ -40,7 +40,7 @@ setup: |
 
 run: |
   set -euo pipefail
-  cd ~/algorithmic
+  cd ~/algorithmic/algorithmic
 
   # Build and start go-judge service
   echo "Building and starting go-judge..."
@@ -62,12 +62,5 @@ run: |
   echo "Go-Judge service is running on port 8081"
   echo "=========================================="
   echo ""
-  echo "To get the IP address:"
-  echo "  sky status --ip algo-judge"
+  echo "Service logs: sudo docker-compose -f ~/algorithmic/algorithmic/docker-compose.yml logs -f"
   echo ""
-  echo "To evaluate:"
-  echo "  frontier-eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp"
-  echo ""
-
-  # Keep running (tail logs)
-  sudo docker-compose logs -f

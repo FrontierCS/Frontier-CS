@@ -44,6 +44,9 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
             keep_cluster: Keep cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
+        # Initialize parent class
+        super().__init__(judge_url="http://localhost:8081")  # Placeholder, will be updated
+        
         self.base_dir = base_dir or self._find_base_dir()
         self.cloud = cloud
         self.region = region
@@ -110,15 +113,17 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
             cmd.extend(["--idle-minutes-to-autostop", str(self.idle_timeout)])
 
         try:
-            # Launch in background-ish mode (don't wait for logs to finish)
+            # Run synchronously - sky launch waits for cluster to be ready
+            print(f"Launching cluster {self.CLUSTER_NAME}... (this may take a few minutes)")
             result = subprocess.run(
                 cmd,
-                capture_output=True,
                 text=True,
-                timeout=600,  # 10 minutes max for launch
+                timeout=1800,  # 30 minutes max for launch
             )
+            print(f"Launch command completed with return code {result.returncode}")
             return result.returncode == 0
         except subprocess.TimeoutExpired:
+            print("Launch timed out after 30 minutes")
             return False
 
     def _wait_for_service(self, ip: str, timeout: int = 120) -> bool:
@@ -153,16 +158,17 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         if ip:
             # Cluster exists, check if service is ready
-            if self._wait_for_service(ip, timeout=10):
+            print(f"Found existing cluster at {ip}")
+            if self._wait_for_service(ip, timeout=30):
                 self._judge_url = f"http://{ip}:8081"
                 self._initialized = True
                 return self._judge_url
 
         # Need to launch cluster
-        print(f"Launching {self.CLUSTER_NAME} cluster on {self.cloud}...")
         if not self._launch_cluster():
             raise RuntimeError("Failed to launch algo-judge cluster")
 
+        # sky launch is synchronous, so cluster should be ready
         # Get IP and wait for service
         ip = self._get_cluster_ip()
         if not ip:
