@@ -38,10 +38,10 @@ frontier-eval flash_attn <your_solution.py> --skypilot
 For evaluating multiple solutions at once, create a pairs file mapping solutions to problems:
 
 ```
-# pairs.txt format: solution_path:problem_id
-solutions/my_flash_attn_v1.py:flash_attn
-solutions/my_flash_attn_v2.py:flash_attn
-solutions/my_cross_entropy.py:cross_entropy
+# pairs.txt format: solution_file:problem_id
+flash_attn.gpt5.py:flash_attn
+flash_attn.gpt5_1.py:flash_attn
+cross_entropy.claude.py:cross_entropy
 ```
 
 Then run:
@@ -210,16 +210,16 @@ Generates **problems × models × variants** (Cartesian product):
 - Models: `--model` list or `--models-file` (default: `models.txt`)
 - Variants: `--variants N` (default: from `num_solutions.txt`, currently 5)
 
-Solution naming: `{model_prefix}_{problem}` for variant 0, `{model_prefix}_{problem}_{i}` for variant i.
+Solution naming: `{problem}.{model}.py` for variant 0, `{problem}.{model}_{i}.py` for variant i.
 
 **Solution mode** (regenerate existing solutions):
 
 ```bash
-python research/scripts/generate_solutions.py --solution "gpt5_flash*" --force
+python research/scripts/generate_solutions.py --solution "flash_attn.gpt5*" --force
 ```
 
 - Matches existing solutions in `solutions/` by pattern
-- Model inferred from solution name prefix (e.g., `gpt5_` → `gpt-5`)
+- Model inferred from solution filename (e.g., `flash_attn.gpt5.py` → model `gpt5`)
 - Requires `--force` since solutions already exist
 - Still needs `models.txt` or `--model` to map prefix to model name
 
@@ -239,18 +239,31 @@ python research/scripts/generate_solutions.py --solution "gpt5_flash*" --force
 
 ### Output
 
+Solutions are saved as flat files in `solutions/`:
+
 ```
-solutions/{model_prefix}_{problem}[_{variant}]/
-├── config.yaml
-├── prepare_env.sh
-├── solve.sh
-└── resources/solution.py
+solutions/
+├── flash_attn.gpt5.py
+├── flash_attn.gpt5_1.py
+├── flash_attn.claude.py
+└── cross_entropy.gpt5.py
 ```
 
 ### API Keys
 
+Set environment variables for the providers you need. Multiple keys per provider are supported for load balancing (e.g., `OPENAI_API_KEY`, `OPENAI_API_KEY2`, `OPENAI_API_KEY_2`).
+
+| Provider | Environment Variables | Models |
+|----------|----------------------|--------|
+| OpenAI | `OPENAI_API_KEY` | gpt-4o, gpt-5, o1, o3, ... |
+| Anthropic | `ANTHROPIC_API_KEY` | claude-sonnet-4-5, claude-opus-4, ... |
+| Google | `GOOGLE_API_KEY`, `GEMINI_API_KEY` | gemini-2.5-pro, gemini-2.5-flash, ... |
+| xAI | `XAI_API_KEY`, `GROK_API_KEY` | grok-3, grok-3-mini, ... |
+| DeepSeek | `DEEPSEEK_API_KEY` | deepseek-r1, deepseek-chat, ... |
+| OpenRouter | `OPENROUTER_API_KEY` | openrouter/* models |
+
 ```bash
-export OPENAI_API_KEY=sk-...      # GPT models
-export ANTHROPIC_API_KEY=sk-...   # Claude models
-export GOOGLE_API_KEY=...         # Gemini models
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-...
+export GOOGLE_API_KEY=...
 ```
