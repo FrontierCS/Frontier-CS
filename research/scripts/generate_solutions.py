@@ -324,22 +324,23 @@ def build_tasks(
         if args.variants is not None:
             # Explicit count
             variant_indices = list(range(args.variants))
-        elif args.variants_file is not None:
+        elif args.solution_indices_file is not None:
             # Explicit file
-            variants_path = Path(args.variants_file)
-            if not variants_path.is_absolute():
-                variants_path = base_dir / variants_path
-            if not variants_path.is_file():
-                print(f"ERROR: Variants file not found: {variants_path}")
+            indices_path = Path(args.solution_indices_file)
+            if not indices_path.is_absolute():
+                indices_path = base_dir / indices_path
+            if not indices_path.is_file():
+                print(f"ERROR: Solution indices file not found: {indices_path}")
                 sys.exit(1)
-            variant_indices = read_variant_indices_file(variants_path)
+            variant_indices = read_variant_indices_file(indices_path)
+            print(f"Loaded {len(variant_indices)} solution indices from {indices_path}")
         else:
-            # Default: num_solutions.txt
-            variants_file = base_dir / "num_solutions.txt"
-            try:
-                variant_indices = read_variant_indices_file(variants_file)
-            except Exception as exc:
-                print(f"WARNING: Failed to read {variants_file}: {exc}; defaulting to [0]")
+            # Default: solution_indices.txt or just [0]
+            indices_path = base_dir / "solution_indices.txt"
+            if indices_path.is_file():
+                variant_indices = read_variant_indices_file(indices_path)
+                print(f"Loaded {len(variant_indices)} solution indices from {indices_path}")
+            else:
                 variant_indices = [0]
 
         for problem_path_real, display_path in normalized_problems:
@@ -461,8 +462,8 @@ Examples:
     exec_group.add_argument("--dryrun", action="store_true", help="Show what would be generated")
     exec_group.add_argument("--variants", type=int, default=None,
                             help="Number of variants per (problem, model)")
-    exec_group.add_argument("--variants-file", default=None,
-                            help="File with variant indices (default: num_solutions.txt)")
+    exec_group.add_argument("--solution-indices", dest="solution_indices_file", default=None,
+                            help="File with solution indices (default: solution_indices.txt)")
     exec_group.add_argument("--concurrency", type=int, default=4,
                             help="Maximum parallel generations")
 

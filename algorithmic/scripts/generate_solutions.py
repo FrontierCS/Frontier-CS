@@ -5,9 +5,10 @@ Generate LLM solutions for algorithmic (C++) problems.
 Fetches problem statements from the judge server and generates C++ solutions.
 
 Usage:
-    python generate_solutions.py --model gpt-5
-    python generate_solutions.py --problem 1 --model claude-sonnet-4-5
+    python generate_solutions.py 1 --model gpt-5
+    python generate_solutions.py 1 2 3 --model claude-sonnet-4-5
     python generate_solutions.py --problems-file problems.txt --model gpt-5
+    python generate_solutions.py --variants 4  # Generate 4 solutions per problem/model
     python generate_solutions.py --dryrun  # Show what would be generated
 """
 
@@ -156,6 +157,18 @@ def extract_cpp_code(response_text: str) -> str:
     return code
 
 
+def read_solution_indices(path: Path) -> List[int]:
+    """Read solution indices from file (one integer per line)."""
+    if not path.is_file():
+        return [0]
+    indices = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            indices.append(int(line))
+    return indices or [0]
+
+
 def generate_code(
     statement: str,
     *,
@@ -245,6 +258,8 @@ def main():
     )
 
     # Problem selection
+    parser.add_argument("problem_ids", nargs="*",
+                        help="Problem ID(s) to generate solutions for")
     parser.add_argument("--problem", dest="problems", nargs="+",
                         help="Problem ID(s) to generate solutions for")
     parser.add_argument("--problems-file", dest="problems_file",
@@ -263,8 +278,10 @@ def main():
     # Generation parameters
     parser.add_argument("--timeout", type=float, default=600.0,
                         help="LLM request timeout in seconds")
-    parser.add_argument("--variants", type=int, default=1,
+    parser.add_argument("--variants", type=int, default=None,
                         help="Number of variants per (problem, model)")
+    parser.add_argument("--solution-indices", dest="solution_indices_file",
+                        help="File with solution indices to generate (default: solution_indices.txt)")
 
     # Execution control
     parser.add_argument("--force", action="store_true",
@@ -287,8 +304,10 @@ def main():
         print("Start the judge with: cd algorithmic && docker compose up -d")
         sys.exit(1)
 
-    # Get problem list
-    if args.problems:
+    # Get problem list (positional args take precedence)
+    if args.problem_ids:
+        problem_ids = args.problem_ids
+    elif args.problems:
         problem_ids = args.problems
     elif args.problems_file:
         problems_path = Path(args.problems_file)
@@ -316,7 +335,7 @@ def main():
             if problem_ids:
                 print(f"Loaded {len(problem_ids)} problems from {problems_path}")
         else:
-            print(f"{red('ERROR:')} Specify --problem <id> or --problems-file, or create problems.txt")
+            print(f"{red('ERROR:')} Specify problem ID(s) or --problems-file, or create problems.txt")
             sys.exit(1)
 
     # Get model list
@@ -348,6 +367,29 @@ def main():
     # Build key pools
     provider_key_pools = build_key_pools()
 
+    # Determine solution indices
+    if args.variants is not None:
+        # Explicit count
+        solution_indices = list(range(args.variants))
+    elif args.solution_indices_file is not None:
+        # Explicit file
+        indices_path = Path(args.solution_indices_file)
+        if not indices_path.is_absolute():
+            indices_path = script_dir / indices_path
+        if not indices_path.is_file():
+            print(f"{red('ERROR:')} Solution indices file not found: {indices_path}")
+            sys.exit(1)
+        solution_indices = read_solution_indices(indices_path)
+        print(f"Loaded {len(solution_indices)} solution indices from {indices_path}")
+    else:
+        # Default: solution_indices.txt or just [0]
+        indices_path = script_dir / "solution_indices.txt"
+        if indices_path.is_file():
+            solution_indices = read_solution_indices(indices_path)
+            print(f"Loaded {len(solution_indices)} solution indices from {indices_path}")
+        else:
+            solution_indices = [0]
+
     # Create output and logs directories
     logs_dir = script_dir / "generation_logs"
     if not args.dryrun:
@@ -369,7 +411,7 @@ def main():
             provider = detect_provider(model)
             reasoning = is_reasoning_model(model)
 
-            for variant_idx in range(args.variants):
+            for variant_idx in solution_indices:
                 # New flat format: {problem}.{model}.cpp or {problem}.{model}_{variant}.cpp
                 variant_suffix = "" if variant_idx == 0 else f"_{variant_idx}"
                 model_with_variant = f"{model_prefix}{variant_suffix}"
@@ -388,7 +430,7 @@ def main():
                     reasoning_model=reasoning,
                     variant_index=variant_idx,
                     solution_name=sol_filename,
-                    total_variants=args.variants,
+                    total_variants=len(solution_indices),
                 ))
 
     # Print plan
@@ -402,7 +444,7 @@ def main():
     print(f"{bold('Configuration:')}")
     print(f"  Problems: {blue(str(len(problem_ids)))}")
     print(f"  Models: {blue(str(len(models_list)))}")
-    print(f"  Variants: {blue(str(args.variants))}")
+    print(f"  Solutions: {blue(str(len(solution_indices)))} (indices: {solution_indices})")
     print(f"  Output: {blue(str(output_dir))}")
     print()
 
