@@ -358,28 +358,23 @@ def build_tasks(
                 )
             )
     else:
-        # Problem list mode
-        if args.variants is not None:
+        # Problem list mode - determine solution indices
+        if args.indices is not None:
             # Explicit count
-            variant_indices = list(range(args.variants))
-        elif args.solution_indices_file is not None:
+            variant_indices = list(range(args.indices))
+        elif args.indices_file is not None:
             # Explicit file
-            indices_path = Path(args.solution_indices_file)
+            indices_path = Path(args.indices_file)
             if not indices_path.is_absolute():
                 indices_path = base_dir / indices_path
             if not indices_path.is_file():
-                print(f"ERROR: Solution indices file not found: {indices_path}")
+                print(f"ERROR: Indices file not found: {indices_path}")
                 sys.exit(1)
             variant_indices = read_variant_indices_file(indices_path)
-            print(f"Loaded {len(variant_indices)} solution indices from {indices_path}")
+            print(f"Loaded {len(variant_indices)} indices from {indices_path}")
         else:
-            # Default: solution_indices.txt or just [0]
-            indices_path = base_dir / "solution_indices.txt"
-            if indices_path.is_file():
-                variant_indices = read_variant_indices_file(indices_path)
-                print(f"Loaded {len(variant_indices)} solution indices from {indices_path}")
-            else:
-                variant_indices = [0]
+            # Default: [0]
+            variant_indices = [0]
 
         for problem_path_real, display_path in normalized_problems:
             if not problem_path_real.is_dir():
@@ -472,6 +467,8 @@ Examples:
     problem_group.add_argument("problem_path", nargs="?", help="Path to a single problem dir")
     problem_group.add_argument("--problem", dest="problem_patterns", action="append", default=[],
                                help="Problem name pattern (wildcards supported), repeatable")
+    problem_group.add_argument("--problems-file", dest="problems_file", default=None,
+                               help="File containing problem directories (default: auto-discover)")
 
     # Target selection - Solution-based (regenerate existing)
     solution_group = parser.add_argument_group("Solution selection (regenerate existing)")
@@ -496,10 +493,10 @@ Examples:
     exec_group = parser.add_argument_group("Execution control")
     exec_group.add_argument("--force", action="store_true", help="Regenerate existing solutions")
     exec_group.add_argument("--dryrun", action="store_true", help="Show what would be generated")
-    exec_group.add_argument("--variants", type=int, default=None,
-                            help="Number of variants per (problem, model)")
-    exec_group.add_argument("--solution-indices", dest="solution_indices_file", default=None,
-                            help="File with solution indices (default: solution_indices.txt)")
+    exec_group.add_argument("--indices", type=int, default=None,
+                            help="Number of solutions to generate (e.g., --indices 4)")
+    exec_group.add_argument("--indices-file", dest="indices_file", default=None,
+                            help="File with solution indices to generate")
     exec_group.add_argument("--concurrency", type=int, default=4,
                             help="Maximum parallel generations")
 
@@ -509,11 +506,11 @@ Examples:
     args = parser.parse_args()
 
     # Check for mutually exclusive target groups
-    has_problem_targets = args.problem_path or args.problem_patterns
+    has_problem_targets = args.problem_path or args.problem_patterns or args.problems_file
     has_solution_targets = args.solution_patterns or args.solutions_file
 
     if has_problem_targets and has_solution_targets:
-        print("ERROR: Cannot mix problem-based (--problem) and solution-based (--solution, --solutions-file) options")
+        print("ERROR: Cannot mix problem-based (--problem, --problems-file) and solution-based (--solution, --solutions-file) options")
         sys.exit(1)
 
     # Default to auto-discovery if no targets provided
@@ -523,10 +520,6 @@ Examples:
         has_problem_targets = True
 
     # Validate args
-    if args.variants is not None and args.variants < 1:
-        print("ERROR: --variants must be >= 1")
-        sys.exit(1)
-
     if args.concurrency < 1:
         print("ERROR: --concurrency must be >= 1")
         sys.exit(1)
@@ -631,6 +624,21 @@ Examples:
                     matched = True
             if not matched:
                 print(f"WARNING: No problems matched pattern '{pattern}'")
+
+    if args.problems_file:
+        # Load problems from file
+        list_path = Path(args.problems_file)
+        if not list_path.is_absolute():
+            list_path = base_dir / list_path
+        if not list_path.is_file():
+            print(f"ERROR: Problem list file {list_path} not found")
+            sys.exit(1)
+        for raw_line in list_path.read_text(encoding="utf-8").splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            problem_sources.append((Path(stripped), stripped))
+        print(f"Loaded {len(problem_sources)} problems from {list_path}")
 
     if auto_discover:
         # Auto-discover all problems from problems/ directory

@@ -262,6 +262,8 @@ def main():
                         help="Problem ID(s) to generate solutions for")
     parser.add_argument("--problem", dest="problems", nargs="+",
                         help="Problem ID(s) to generate solutions for")
+    parser.add_argument("--problems-file", dest="problems_file", default=None,
+                        help="File containing problem IDs (default: auto-discover from judge)")
 
     # Model selection
     model_group = parser.add_mutually_exclusive_group()
@@ -276,10 +278,10 @@ def main():
     # Generation parameters
     parser.add_argument("--timeout", type=float, default=600.0,
                         help="LLM request timeout in seconds")
-    parser.add_argument("--variants", type=int, default=None,
-                        help="Number of variants per (problem, model)")
-    parser.add_argument("--solution-indices", dest="solution_indices_file",
-                        help="File with solution indices to generate (default: solution_indices.txt)")
+    parser.add_argument("--indices", type=int, default=None,
+                        help="Number of solutions to generate (e.g., --indices 4)")
+    parser.add_argument("--indices-file", dest="indices_file", default=None,
+                        help="File with solution indices to generate")
 
     # Execution control
     parser.add_argument("--force", action="store_true",
@@ -307,6 +309,21 @@ def main():
         problem_ids = args.problem_ids
     elif args.problems:
         problem_ids = args.problems
+    elif args.problems_file:
+        problems_path = Path(args.problems_file)
+        if not problems_path.is_absolute():
+            problems_path = script_dir / problems_path
+        if not problems_path.is_file():
+            print(f"{red('ERROR:')} Problems file not found: {problems_path}")
+            sys.exit(1)
+        problem_ids = [
+            line.strip() for line in problems_path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if not problem_ids:
+            print(f"{red('ERROR:')} No problems found in {problems_path}")
+            sys.exit(1)
+        print(f"Loaded {len(problem_ids)} problems from {problems_path}")
     else:
         # Default: get all problems from judge
         problem_ids = judge.get_all_problems()
@@ -345,27 +362,22 @@ def main():
     provider_key_pools = build_key_pools()
 
     # Determine solution indices
-    if args.variants is not None:
+    if args.indices is not None:
         # Explicit count
-        solution_indices = list(range(args.variants))
-    elif args.solution_indices_file is not None:
+        solution_indices = list(range(args.indices))
+    elif args.indices_file is not None:
         # Explicit file
-        indices_path = Path(args.solution_indices_file)
+        indices_path = Path(args.indices_file)
         if not indices_path.is_absolute():
             indices_path = script_dir / indices_path
         if not indices_path.is_file():
-            print(f"{red('ERROR:')} Solution indices file not found: {indices_path}")
+            print(f"{red('ERROR:')} Indices file not found: {indices_path}")
             sys.exit(1)
         solution_indices = read_solution_indices(indices_path)
-        print(f"Loaded {len(solution_indices)} solution indices from {indices_path}")
+        print(f"Loaded {len(solution_indices)} indices from {indices_path}")
     else:
-        # Default: solution_indices.txt or just [0]
-        indices_path = script_dir / "solution_indices.txt"
-        if indices_path.is_file():
-            solution_indices = read_solution_indices(indices_path)
-            print(f"Loaded {len(solution_indices)} solution indices from {indices_path}")
-        else:
-            solution_indices = [0]
+        # Default: [0]
+        solution_indices = [0]
 
     # Create output and logs directories
     logs_dir = script_dir / "generation_logs"
