@@ -596,22 +596,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # Handle subcommands first by checking if first arg is a subcommand
-    subcommands = {"batch"}
-    if argv and argv[0] in subcommands:
-        parser = create_parser()
-        args = parser.parse_args(argv)
-        if args.command == "batch":
-            return run_batch(args)
-
-    # For single evaluations, create a parser without subcommands
-    # to avoid argparse confusion with positional args
     parser = create_parser()
-    # Inject a dummy command to satisfy the subparser
-    args = parser.parse_args(argv + ["batch", "--status"]) if not any(a in argv for a in subcommands) else parser.parse_args(argv)
-    # Reset command since we used a dummy
-    args.command = None
-    args.status = False
+    args = parser.parse_args(argv)
+
+    # Route to batch command if specified
+    if args.command == "batch":
+        return run_batch(args)
 
     # Determine track
     track = "algorithmic" if args.algorithmic else "research"
