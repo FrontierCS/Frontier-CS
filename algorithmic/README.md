@@ -19,8 +19,8 @@ problems/{id}/
 #### Start Judge Server
 
 ```bash
-docker-compose up --build -d   # First time
-docker-compose up -d           # Subsequent runs
+docker compose up --build -d   # First time
+docker compose up -d           # Subsequent runs
 ```
 
 Judge runs at `http://localhost:8081`.
@@ -99,7 +99,7 @@ frontier-eval --algorithmic --judge-url http://$(sky status --ip algo-judge):808
 3. Restart judge to pick up new problems
 
 
-### Judge Sever Configuration
+### Judge Server Configuration
 
 #### config.yaml
 
