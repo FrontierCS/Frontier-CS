@@ -5,11 +5,11 @@ Generate LLM solutions for algorithmic (C++) problems.
 Fetches problem statements from the judge server and generates C++ solutions.
 
 Usage:
-    python generate_solutions.py 1 --model gpt-5
-    python generate_solutions.py 1 2 3 --model claude-sonnet-4-5
-    python generate_solutions.py --problems-file problems.txt --model gpt-5
-    python generate_solutions.py --variants 4  # Generate 4 solutions per problem/model
-    python generate_solutions.py --dryrun  # Show what would be generated
+    python generate_solutions.py --model gpt-5              # All problems from judge
+    python generate_solutions.py 1 --model gpt-5            # Single problem
+    python generate_solutions.py 1 2 3 --model gpt-5        # Multiple problems
+    python generate_solutions.py --variants 4 --model gpt-5 # Generate 4 solutions each
+    python generate_solutions.py --dryrun                   # Show what would be generated
 """
 
 import sys
@@ -257,13 +257,11 @@ def main():
         description="Generate LLM solutions for algorithmic (C++) problems",
     )
 
-    # Problem selection
+    # Problem selection (default: all problems from judge)
     parser.add_argument("problem_ids", nargs="*",
                         help="Problem ID(s) to generate solutions for")
     parser.add_argument("--problem", dest="problems", nargs="+",
                         help="Problem ID(s) to generate solutions for")
-    parser.add_argument("--problems-file", dest="problems_file",
-                        help="File containing problem IDs (one per line)")
 
     # Model selection
     model_group = parser.add_mutually_exclusive_group()
@@ -304,39 +302,18 @@ def main():
         print("Start the judge with: cd algorithmic && docker compose up -d")
         sys.exit(1)
 
-    # Get problem list (positional args take precedence)
+    # Get problem list (positional args take precedence, default: all from judge)
     if args.problem_ids:
         problem_ids = args.problem_ids
     elif args.problems:
         problem_ids = args.problems
-    elif args.problems_file:
-        problems_path = Path(args.problems_file)
-        if not problems_path.is_absolute():
-            problems_path = script_dir / problems_path
-        if not problems_path.is_file():
-            print(f"{red('ERROR:')} Problems file not found: {problems_path}")
-            sys.exit(1)
-        problem_ids = [
-            line.strip() for line in problems_path.read_text().splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        if not problem_ids:
-            print(f"{red('ERROR:')} No problems found in {problems_path}")
-            sys.exit(1)
-        print(f"Loaded {len(problem_ids)} problems from {problems_path}")
     else:
-        # Try default problems.txt
-        problems_path = script_dir / "problems.txt"
-        if problems_path.is_file():
-            problem_ids = [
-                line.strip() for line in problems_path.read_text().splitlines()
-                if line.strip() and not line.strip().startswith("#")
-            ]
-            if problem_ids:
-                print(f"Loaded {len(problem_ids)} problems from {problems_path}")
-        else:
-            print(f"{red('ERROR:')} Specify problem ID(s) or --problems-file, or create problems.txt")
+        # Default: get all problems from judge
+        problem_ids = judge.get_all_problems()
+        if not problem_ids:
+            print(f"{red('ERROR:')} No problems found on judge server")
             sys.exit(1)
+        print(f"Auto-discovered {len(problem_ids)} problems from judge")
 
     # Get model list
     if args.models:

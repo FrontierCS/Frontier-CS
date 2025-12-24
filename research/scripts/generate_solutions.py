@@ -86,6 +86,44 @@ def ensure_numpy_version(required: str) -> None:
         )
 
 
+# Directories to exclude when auto-discovering problems
+EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
+
+
+def discover_problems(problems_dir: Path) -> List[Path]:
+    """Auto-discover all problem directories by finding leaf directories.
+
+    Excludes special directories like common/, resources/, __pycache__, .venv/, etc.
+    A problem directory is a directory with no subdirectories (except excluded ones).
+    """
+    result = []
+
+    def is_excluded(p: Path) -> bool:
+        """Check if path or any parent is in exclude list."""
+        for part in p.parts:
+            if part in EXCLUDE_DIRS:
+                return True
+        return False
+
+    def has_problem_subdirs(p: Path) -> bool:
+        """Check if directory has non-excluded subdirectories."""
+        try:
+            for child in p.iterdir():
+                if child.is_dir() and child.name not in EXCLUDE_DIRS:
+                    return True
+        except PermissionError:
+            pass
+        return False
+
+    for p in problems_dir.rglob('*'):
+        if not p.is_dir():
+            continue
+        if is_excluded(p):
+            continue
+        if not has_problem_subdirs(p):
+            result.append(p)
+
+    return sorted(result)
 
 
 def generate_code(
@@ -434,8 +472,6 @@ Examples:
     problem_group.add_argument("problem_path", nargs="?", help="Path to a single problem dir")
     problem_group.add_argument("--problem", dest="problem_patterns", action="append", default=[],
                                help="Problem name pattern (wildcards supported), repeatable")
-    problem_group.add_argument("--problems-file", dest="problems_file",
-                               help="File containing problem directories")
 
     # Target selection - Solution-based (regenerate existing)
     solution_group = parser.add_argument_group("Solution selection (regenerate existing)")
@@ -473,23 +509,18 @@ Examples:
     args = parser.parse_args()
 
     # Check for mutually exclusive target groups
-    has_problem_targets = args.problem_path or args.problem_patterns or args.problems_file
+    has_problem_targets = args.problem_path or args.problem_patterns
     has_solution_targets = args.solution_patterns or args.solutions_file
 
     if has_problem_targets and has_solution_targets:
-        print("ERROR: Cannot mix problem-based (--problem, --problems-file) and solution-based (--solution, --solutions-file) options")
+        print("ERROR: Cannot mix problem-based (--problem) and solution-based (--solution, --solutions-file) options")
         sys.exit(1)
 
-    # Default to problems.txt if no targets provided
+    # Default to auto-discovery if no targets provided
+    auto_discover = False
     if not has_problem_targets and not has_solution_targets:
-        problems_default = base_dir / "problems.txt"
-        if problems_default.is_file():
-            args.problems_file = str(problems_default)
-            has_problem_targets = True
-            print(f"No targets provided; defaulting to {problems_default}.")
-        else:
-            print("ERROR: Provide --problem, --problems-file, --solution, or --solutions-file")
-            sys.exit(1)
+        auto_discover = True
+        has_problem_targets = True
 
     # Validate args
     if args.variants is not None and args.variants < 1:
@@ -601,18 +632,13 @@ Examples:
             if not matched:
                 print(f"WARNING: No problems matched pattern '{pattern}'")
 
-    if args.problems_file:
-        list_path = Path(args.problems_file)
-        if not list_path.is_absolute():
-            list_path = base_dir / list_path
-        if not list_path.is_file():
-            print(f"ERROR: Problem list file {list_path} not found")
-            sys.exit(1)
-        for raw_line in list_path.read_text(encoding="utf-8").splitlines():
-            stripped = raw_line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            problem_sources.append((Path(stripped), stripped))
+    if auto_discover:
+        # Auto-discover all problems from problems/ directory
+        discovered = discover_problems(problems_dir)
+        print(f"Auto-discovered {len(discovered)} problems from {problems_dir}")
+        for prob_path in discovered:
+            rel_path = prob_path.relative_to(problems_dir)
+            problem_sources.append((prob_path, str(rel_path)))
 
     if args.problem_path:
         problem_sources.append((Path(args.problem_path), args.problem_path))
