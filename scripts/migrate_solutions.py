@@ -50,35 +50,29 @@ def parse_old_solution_dir(dir_path: Path) -> tuple[str, str, int] | None:
     problem_flat = sanitize_problem_name(problem)
 
     # Parse directory name to extract model and variant
+    # Format: {model}_{problem_flat} or {model}_{problem_flat}_{variant}
     dir_name = dir_path.name
-
-    # Check for variant suffix (e.g., _1, _2, _3, _4)
     variant = 0
-    variant_match = re.search(r"_(\d+)$", dir_name)
-    if variant_match:
-        variant = int(variant_match.group(1))
-        dir_name_without_variant = dir_name[:variant_match.start()]
-    else:
-        dir_name_without_variant = dir_name
+    model = None
 
-    # The model prefix is everything before the problem name
-    # dir_name = {model}_{problem_flat}
-    if dir_name_without_variant.endswith(f"_{problem_flat}"):
-        model = dir_name_without_variant[:-len(f"_{problem_flat}")]
-    elif dir_name_without_variant == problem_flat:
-        # Edge case: no model prefix
-        model = "unknown"
-    else:
-        # Try to find problem at the end
-        # This handles cases where problem_flat might have been transformed
-        model = dir_name_without_variant
-        for i in range(1, len(dir_name_without_variant)):
-            potential_model = dir_name_without_variant[:i]
-            potential_problem = dir_name_without_variant[i+1:]  # Skip underscore
-            if dir_name_without_variant[i:i+1] == "_":
-                if potential_problem == problem_flat:
-                    model = potential_model
-                    break
+    # Try to match with variant suffix first (only single digit variants 1-9)
+    for v in range(1, 10):
+        suffix_with_variant = f"_{problem_flat}_{v}"
+        if dir_name.endswith(suffix_with_variant):
+            model = dir_name[:-len(suffix_with_variant)]
+            variant = v
+            break
+
+    # Try without variant suffix
+    if model is None:
+        suffix = f"_{problem_flat}"
+        if dir_name.endswith(suffix):
+            model = dir_name[:-len(suffix)]
+            variant = 0
+
+    # Fallback: couldn't parse
+    if model is None:
+        return None
 
     return (problem_flat, model, variant)
 
