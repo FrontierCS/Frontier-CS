@@ -5,11 +5,11 @@ Generate LLM solutions for algorithmic (C++) problems.
 Fetches problem statements from the judge server and generates C++ solutions.
 
 Usage:
-    python generate_solutions.py --model gpt-5              # All problems from judge
-    python generate_solutions.py 1 --model gpt-5            # Single problem
-    python generate_solutions.py 1 2 3 --model gpt-5        # Multiple problems
-    python generate_solutions.py --variants 4 --model gpt-5 # Generate 4 solutions each
-    python generate_solutions.py --dryrun                   # Show what would be generated
+    python generate_solutions.py --model gpt-5                # All problems from judge
+    python generate_solutions.py 1 --model gpt-5              # Single problem
+    python generate_solutions.py 1 2 3 --model gpt-5          # Multiple problems
+    python generate_solutions.py --model gpt-5 --variants 4   # 4 solutions per problem
+    python generate_solutions.py --dryrun --model gpt-5       # Preview mode
 """
 
 import sys
