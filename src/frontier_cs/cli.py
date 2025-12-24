@@ -442,17 +442,21 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Create batch evaluator
     backend = "skypilot" if args.skypilot else "docker"
+    track = "algorithmic" if getattr(args, "algorithmic", False) else "research"
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
+    judge_url = getattr(args, "judge_url", None)
     batch = BatchEvaluator(
         results_dir=args.results_dir,
         backend=backend,
+        track=track,
         max_concurrent=args.max_concurrent,
         timeout=args.timeout,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
         idle_timeout=idle_timeout,
+        judge_url=judge_url,
     )
 
     # Handle status command

@@ -58,11 +58,13 @@ class BatchEvaluator:
         *,
         base_dir: Optional[Path] = None,
         backend: str = "docker",
+        track: str = "research",
         max_concurrent: int = 1,
         timeout: Optional[int] = None,
         bucket_url: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
+        judge_url: Optional[str] = None,
     ):
         """
         Initialize batch evaluator.
@@ -71,6 +73,7 @@ class BatchEvaluator:
             results_dir: Directory for results and state
             base_dir: Frontier-CS base directory (auto-detected if None)
             backend: Evaluation backend ("docker" or "skypilot")
+            track: Evaluation track ("research" or "algorithmic")
             max_concurrent: Maximum concurrent evaluations
             timeout: Default timeout for evaluations (seconds)
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
@@ -78,7 +81,9 @@ class BatchEvaluator:
                        to the bucket and synced incrementally.
             keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            judge_url: URL for algorithmic judge server (default: http://localhost:8081)
         """
+        self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
         self.backend = backend
@@ -97,18 +102,32 @@ class BatchEvaluator:
 
         self.state_path = self.results_dir / self.STATE_FILE
         self.state = EvaluationState.load(self.state_path)
+        self.judge_url = judge_url or "http://localhost:8081"
 
-        # Initialize runner
-        if backend == "docker":
-            self._runner = DockerRunner(base_dir=self.base_dir)
+        # Initialize runner based on track and backend
+        if track == "algorithmic":
+            if backend == "skypilot":
+                from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
+                self._runner = AlgorithmicSkyPilotRunner(
+                    base_dir=self.base_dir,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
+            else:
+                from ..runner.algorithmic import AlgorithmicRunner
+                self._runner = AlgorithmicRunner(judge_url=self.judge_url)
         else:
-            from ..runner.skypilot import SkyPilotRunner
-            self._runner = SkyPilotRunner(
-                base_dir=self.base_dir,
-                bucket_url=bucket_url,
-                keep_cluster=keep_cluster,
-                idle_timeout=idle_timeout,
-            )
+            # research track
+            if backend == "docker":
+                self._runner = DockerRunner(base_dir=self.base_dir)
+            else:
+                from ..runner.skypilot import SkyPilotRunner
+                self._runner = SkyPilotRunner(
+                    base_dir=self.base_dir,
+                    bucket_url=bucket_url,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""

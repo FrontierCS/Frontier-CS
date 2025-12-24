@@ -258,6 +258,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         solution_path: Path,
         *,
         timeout: Optional[int] = None,
+        solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Evaluate a solution file using cloud-based go-judge."""
         if not solution_path.exists():

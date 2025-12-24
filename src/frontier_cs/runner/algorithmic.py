@@ -118,6 +118,7 @@ class AlgorithmicRunner(Runner):
         solution_path: Path,
         *,
         timeout: Optional[int] = None,
+        solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Evaluate a solution file."""
         if not solution_path.exists():
