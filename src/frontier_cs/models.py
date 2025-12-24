@@ -50,7 +50,9 @@ def get_model_prefix(model: str) -> str:
     model_lower = model.lower().strip()
 
     # Handle GPT-5 variants
-    # Keep 'gpt-5.1' distinct so its artifacts prefix as 'gpt5.1'
+    # Keep 'gpt-5.1', 'gpt-5.2' etc. distinct so their artifacts prefix correctly
+    if model_lower.startswith("gpt-5.2") or model_lower.startswith("gpt5.2"):
+        return "gpt5.2"
     if model_lower.startswith("gpt-5.1") or model_lower.startswith("gpt5.1"):
         return "gpt5.1"
     if model_lower.startswith("gpt-5") or model_lower.startswith("gpt5"):
