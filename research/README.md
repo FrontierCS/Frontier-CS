@@ -84,24 +84,24 @@ research/problems/
 
 ### File Reference
 
-| File | Purpose |
-|------|---------|
-| `config.yaml` | Runtime config (Docker image, GPU requirement, timeout) |
-| `readme` | Problem description, API spec, scoring formula |
-| `set_up_env.sh` | Environment setup (install deps, check CUDA) |
-| `download_datasets.sh` | Download datasets (for local pre-download) |
-| `evaluate.sh` | Evaluation entry point |
-| `run_evaluator.sh` | Invokes `evaluator.py` |
-| `evaluator.py` | Core evaluation logic |
-| `resources/` | Baseline code, benchmark, test data |
+| File                   | Purpose                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| `config.yaml`          | Runtime config (Docker image, GPU requirement, timeout) |
+| `readme`               | Problem description, API spec, scoring formula          |
+| `set_up_env.sh`        | Environment setup (install deps, check CUDA)            |
+| `download_datasets.sh` | Download datasets (for local pre-download)              |
+| `evaluate.sh`          | Evaluation entry point                                  |
+| `run_evaluator.sh`     | Invokes `evaluator.py`                                  |
+| `evaluator.py`         | Core evaluation logic                                   |
+| `resources/`           | Baseline code, benchmark, test data                     |
 
 ### config.yaml Example
 
 ```yaml
 dependencies:
-  uv_project: resources    # Optional: uv project in resources/
-datasets: []               # Optional: dataset URLs
-tag: hpc                   # Category: os, hpc, ai, db, pl, security
+  uv_project: resources # Optional: uv project in resources/
+datasets: [] # Optional: dataset URLs
+tag: hpc # Category: os, hpc, ai, db, pl, security
 runtime:
   docker:
     image: andylizf/triton-tlx:tlx-nv-cu122
@@ -177,7 +177,7 @@ Use `generate_solutions.py` to generate solutions using LLMs.
 
 ```bash
 # Generate one solution
-python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5 --variants 1
+python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5 --indices 1
 
 # Preview what would be generated
 python research/scripts/generate_solutions.py --dryrun
@@ -191,12 +191,13 @@ python research/scripts/generate_solutions.py --dryrun
 python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5
 ```
 
-Generates **problems × models × variants** (Cartesian product):
-- Problems: `--problem` patterns or `--problems-file` (default: `problems.txt`)
-- Models: `--model` list or `--models-file` (default: `models.txt`)
-- Variants: `--variants N` (default: from `num_solutions.txt`, currently 5)
+Generates **problems × models × indices** (Cartesian product):
 
-Solution naming: `{problem}.{model}.py` for variant 0, `{problem}.{model}_{i}.py` for variant i.
+- Problems: `--problem` patterns or `--problems-file` (default: auto-discover all problems)
+- Models: `--model` list or `--models-file` (default: `models.txt`)
+- Indices: `--indices N` or `--indices-file` (default: `indices.txt` or single solution)
+
+Solution naming: `{problem}.{model}.py` for index 0, `{problem}.{model}_{i}.py` for index i.
 
 **Solution mode** (regenerate existing solutions):
 
@@ -211,17 +212,17 @@ python research/scripts/generate_solutions.py --solution "flash_attn.gpt5*" --fo
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `--problem` / `--problems-file` | Problem pattern or file (default: `problems.txt`) |
-| `--model` / `--models-file` | Model(s) or file (default: `models.txt`) |
-| `--variants` / `--variants-file` | Variant count or file (default: `num_solutions.txt`) |
-| `--solution PATTERN` | Regenerate existing solutions by pattern (mutually exclusive with `--problem`) |
-| `--force` | Overwrite existing solutions |
-| `--dryrun` | Preview without generating |
-| `--concurrency N` | Parallel API calls |
-| `--timeout SECONDS` | API timeout (default: 600s) |
-| `--reasoning-model` | Force reasoning mode (o1/o3 models) |
+| Option                          | Description                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `--problem` / `--problems-file` | Problem pattern or file (default: auto-discover)                               |
+| `--model` / `--models-file`     | Model(s) or file (default: `models.txt`)                                       |
+| `--indices` / `--indices-file`  | Solution indices count or file (default: `indices.txt`)                        |
+| `--solution PATTERN`            | Regenerate existing solutions by pattern (mutually exclusive with `--problem`) |
+| `--force`                       | Overwrite existing solutions                                                   |
+| `--dryrun`                      | Preview without generating                                                     |
+| `--concurrency N`               | Parallel API calls                                                             |
+| `--timeout SECONDS`             | API timeout (default: 600s)                                                    |
+| `--reasoning-model`             | Force reasoning mode (o1/o3 models)                                            |
 
 ### Output
 
@@ -239,14 +240,14 @@ solutions/
 
 Set environment variables for the providers you need. Multiple keys per provider are supported for load balancing (e.g., `OPENAI_API_KEY`, `OPENAI_API_KEY2`, `OPENAI_API_KEY_2`).
 
-| Provider | Environment Variable | Models |
-|----------|---------------------|--------|
-| OpenAI | `OPENAI_API_KEY` | gpt-4o, gpt-5, o1, o3, ... |
-| Anthropic | `ANTHROPIC_API_KEY` | claude-sonnet-4-5, claude-opus-4, ... |
-| Google | `GOOGLE_API_KEY` | gemini-2.5-pro, gemini-2.5-flash, ... |
-| xAI | `XAI_API_KEY` | grok-3, grok-3-mini, ... |
-| DeepSeek | `DEEPSEEK_API_KEY` | deepseek-r1, deepseek-chat, ... |
-| OpenRouter | `OPENROUTER_API_KEY` | openrouter/* models |
+| Provider   | Environment Variable | Models                                |
+| ---------- | -------------------- | ------------------------------------- |
+| OpenAI     | `OPENAI_API_KEY`     | gpt-4o, gpt-5, o1, o3, ...            |
+| Anthropic  | `ANTHROPIC_API_KEY`  | claude-sonnet-4-5, claude-opus-4, ... |
+| Google     | `GOOGLE_API_KEY`     | gemini-2.5-pro, gemini-2.5-flash, ... |
+| xAI        | `XAI_API_KEY`        | grok-3, grok-3-mini, ...              |
+| DeepSeek   | `DEEPSEEK_API_KEY`   | deepseek-r1, deepseek-chat, ...       |
+| OpenRouter | `OPENROUTER_API_KEY` | openrouter/\* models                  |
 
 ```bash
 export OPENAI_API_KEY=sk-...

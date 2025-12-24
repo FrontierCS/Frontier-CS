@@ -1,4 +1,7 @@
 ## FrontierCS - Algorithmic Problems
+
+> **Note:** We currently support C++17 only for algorithmic problem solutions.
+
 ### Problem Structure
 
 Each problem in `problems/{id}/` contains:
@@ -13,17 +16,6 @@ problems/{id}/
 │   └── 1.ans
 └── chk.cc / interactor.cc   # Checker or interactor
 ```
-
-### Quick Start
-
-#### Start Judge Server
-
-```bash
-docker compose up --build -d   # First time
-docker compose up -d           # Subsequent runs
-```
-
-Judge runs at `http://localhost:8081`.
 
 ### How It Works
 
@@ -110,6 +102,8 @@ checker: chk.cc         # or interactor: interactor.cc
 ```
 
 #### docker-compose.yml
+
+The judge server will be auto-started when running `frontier-eval --algorithmic`.
 
 ```yaml
 environment:

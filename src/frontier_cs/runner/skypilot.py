@@ -276,10 +276,11 @@ class SkyPilotRunner(Runner):
                     )
                 else:
                     # Legacy scp mode
-                    score, logs = self._fetch_results(cluster_name, handle)
+                    score, score_unbounded, logs = self._fetch_results(cluster_name, handle)
                     return EvaluationResult(
                         problem_id=problem_id,
                         score=score,
+                        score_unbounded=score_unbounded,
                         status=EvaluationStatus.SUCCESS,
                         logs=logs,
                         duration_seconds=duration,
@@ -417,15 +418,19 @@ class SkyPilotRunner(Runner):
                     chmod +x evaluate.sh
                     ./evaluate.sh | tee /results/output.txt
 
-                    # Extract score (last numeric line)
-                    grep -E "^-?[0-9]+\\.?[0-9]*$" /results/output.txt | tail -1 > /results/score.txt || true
+                    # Extract score (last line with number(s): "85.5" or "85.5 120.3")
+                    grep -E "^-?[0-9]+\\.?[0-9]*(\\s+-?[0-9]+\\.?[0-9]*)?$" /results/output.txt | tail -1 > /results/score.txt || true
                 '
             {bucket_write}
         """)
 
-    def _fetch_results(self, cluster_name: str, handle: object) -> Tuple[Optional[float], Optional[str]]:
-        """Fetch results from remote cluster via scp."""
+    def _fetch_results(self, cluster_name: str, handle: object) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        """Fetch results from remote cluster via scp.
+
+        Returns (score, score_unbounded, logs).
+        """
         score = None
+        score_unbounded = None
         logs = None
 
         with tempfile.TemporaryDirectory(prefix="frontier_results_") as temp_dir:
@@ -444,14 +449,16 @@ class SkyPilotRunner(Runner):
                 if result.returncode == 0:
                     results_dir = temp_path / "results"
 
-                    # Read score
+                    # Read score (format: "85.5" or "85.5 120.3")
                     score_file = results_dir / "score.txt"
                     if score_file.exists():
                         score_text = score_file.read_text().strip()
                         if score_text:
+                            parts = score_text.split()
                             try:
-                                score = float(score_text)
-                            except ValueError:
+                                score = float(parts[0])
+                                score_unbounded = float(parts[1]) if len(parts) > 1 else score
+                            except (ValueError, IndexError):
                                 pass
 
                     # Read logs
@@ -462,4 +469,4 @@ class SkyPilotRunner(Runner):
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
-        return score, logs
+        return score, score_unbounded, logs

@@ -431,8 +431,9 @@ def main() -> None:
         print(f"[evaluator] Results written to {output_path}", file=sys.stderr)
         
         # Print score to stdout for evaluate.sh to capture
-        print(json.dumps(results))
-        
+        # Format: "score score_unbounded" (space-separated)
+        print(f"{results['score']} {results.get('score_unbounded', results['score'])}")
+
     except TimeoutError as e:
         print(f"[evaluator] TIMEOUT FAILURE: {e}", file=sys.stderr)
         timeout_payload = {
@@ -443,8 +444,8 @@ def main() -> None:
         }
         with output_path.open('w') as f:
             json.dump(timeout_payload, f, indent=2)
-        print(json.dumps(timeout_payload))
-        sys.exit(1) 
+        print("0")
+        sys.exit(1)
     except Exception as e:
         error_payload = {
             'score': 0.0,
@@ -454,7 +455,7 @@ def main() -> None:
         with output_path.open('w') as f:
             json.dump(error_payload, f, indent=2)
         print(f"[evaluator] ERROR: {e}", file=sys.stderr)
-        print(json.dumps(error_payload))
+        print("0")
         sys.exit(1)
 
 

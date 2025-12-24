@@ -291,7 +291,8 @@ def main() -> None:
         with output_path.open("w", encoding="utf-8") as fh:
             json.dump(results, fh, indent=2)
         print(f"[evaluator] Results written to {output_path}", file=sys.stderr)
-        print(json.dumps(results))
+        # Format: "score score_unbounded" (space-separated) as last line
+        print(f"{results['score']} {results.get('score_unbounded', results['score'])}")
     except Exception as exc:  # pylint: disable=broad-except
         error_payload = {
             "score": 0.0,
@@ -302,7 +303,7 @@ def main() -> None:
         with output_path.open("w", encoding="utf-8") as fh:
             json.dump(error_payload, fh, indent=2)
         print(f"[evaluator] ERROR: {exc}", file=sys.stderr)
-        print(json.dumps(error_payload))
+        print("0")
 
 
 if __name__ == "__main__":
