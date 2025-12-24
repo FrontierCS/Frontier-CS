@@ -293,8 +293,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Fixed output directory
-    output_dir = script_dir / "solutions"
+    # Fixed output directory (same as research side)
+    output_dir = repo_root / "solutions"
 
     # Initialize judge client
     judge = AlgorithmicJudgeClient(args.judge_url)
