@@ -280,7 +280,7 @@ def main():
                         help="LLM request timeout in seconds")
     parser.add_argument("--indices", type=int, default=None,
                         help="Number of solutions to generate (e.g., --indices 4)")
-    parser.add_argument("--indices-file", dest="indices_file", default=None,
+    parser.add_argument("--indices-file", dest="indices_file", default="indices.txt",
                         help="File with solution indices to generate")
 
     # Execution control
@@ -365,22 +365,14 @@ def main():
     if args.indices is not None:
         # Explicit count
         solution_indices = list(range(args.indices))
-    elif args.indices_file is not None:
-        # Explicit file
+    else:
+        # Use indices file (default: indices.txt)
         indices_path = Path(args.indices_file)
         if not indices_path.is_absolute():
             indices_path = script_dir / indices_path
-        if not indices_path.is_file():
-            print(f"{red('ERROR:')} Indices file not found: {indices_path}")
-            sys.exit(1)
-        solution_indices = read_solution_indices(indices_path)
-        print(f"Loaded {len(solution_indices)} indices from {indices_path}")
-    else:
-        # Default: indices.txt if exists, otherwise [0]
-        indices_path = script_dir / "indices.txt"
         if indices_path.is_file():
             solution_indices = read_solution_indices(indices_path)
-            print(f"Using default {indices_path} ({len(solution_indices)} indices)")
+            print(f"Loaded {len(solution_indices)} indices from {indices_path}")
         else:
             solution_indices = [0]
 

@@ -362,22 +362,14 @@ def build_tasks(
         if args.indices is not None:
             # Explicit count
             variant_indices = list(range(args.indices))
-        elif args.indices_file is not None:
-            # Explicit file
+        else:
+            # Use indices file (default: indices.txt)
             indices_path = Path(args.indices_file)
             if not indices_path.is_absolute():
                 indices_path = base_dir / indices_path
-            if not indices_path.is_file():
-                print(f"ERROR: Indices file not found: {indices_path}")
-                sys.exit(1)
-            variant_indices = read_variant_indices_file(indices_path)
-            print(f"Loaded {len(variant_indices)} indices from {indices_path}")
-        else:
-            # Default: indices.txt if exists, otherwise [0]
-            indices_path = base_dir / "indices.txt"
             if indices_path.is_file():
                 variant_indices = read_variant_indices_file(indices_path)
-                print(f"Using default {indices_path} ({len(variant_indices)} indices)")
+                print(f"Loaded {len(variant_indices)} indices from {indices_path}")
             else:
                 variant_indices = [0]
 
@@ -500,7 +492,7 @@ Examples:
     exec_group.add_argument("--dryrun", action="store_true", help="Show what would be generated")
     exec_group.add_argument("--indices", type=int, default=None,
                             help="Number of solutions to generate (e.g., --indices 4)")
-    exec_group.add_argument("--indices-file", dest="indices_file", default=None,
+    exec_group.add_argument("--indices-file", dest="indices_file", default="indices.txt",
                             help="File with solution indices to generate")
     exec_group.add_argument("--concurrency", type=int, default=4,
                             help="Maximum parallel generations")
