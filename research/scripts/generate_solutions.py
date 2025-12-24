@@ -88,11 +88,6 @@ def ensure_numpy_version(required: str) -> None:
 
 
 
-def is_reasoning(model: str, override: Optional[bool]) -> bool:
-    """Check if a model is a reasoning model."""
-    return is_reasoning_model(model, override)
-
-
 def generate_code(
     readme: str,
     *,
@@ -317,7 +312,7 @@ def build_tasks(
                     readme=readme_text,
                     model=model,
                     provider=provider,
-                    reasoning_model=is_reasoning(model, args.reasoning_override),
+                    reasoning_model=is_reasoning_model(model),
                     variant_index=variant_index,
                     variant_position=variant_index,
                     solution_name=sol_filename,
@@ -368,7 +363,7 @@ def build_tasks(
             problem_name = args.name or get_problem_name(relative_problem_path)
 
             for model in models_list:
-                reasoning_model = is_reasoning(model, args.reasoning_override)
+                reasoning_model = is_reasoning_model(model)
                 model_prefix = get_model_prefix(model)
                 provider = detect_provider(model)
 
@@ -459,13 +454,6 @@ Examples:
     api_group = parser.add_argument_group("API configuration")
     api_group.add_argument("--timeout", type=float, default=600.0,
                            help="Request timeout in seconds")
-
-    # Generation parameters
-    gen_group = parser.add_argument_group("Generation parameters")
-    gen_group.add_argument("--reasoning-model", dest="reasoning_override", action="store_const",
-                           const=True, default=None, help="Force reasoning mode")
-    gen_group.add_argument("--no-reasoning-model", dest="reasoning_override", action="store_const",
-                           const=False, help="Force standard mode")
 
     # Execution control
     exec_group = parser.add_argument_group("Execution control")
