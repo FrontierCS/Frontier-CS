@@ -458,7 +458,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
 
-        print(f"{cyan('▶')} Generating {solution_name(task.solution_name)} "
+        print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
               f"({dim('problem:')} {task.problem_id}, {dim('model:')} {model_name(task.model)})")
 
         pool = provider_key_pools.get(task.provider)
