@@ -376,8 +376,13 @@ def main():
         solution_indices = read_solution_indices(indices_path)
         print(f"Loaded {len(solution_indices)} indices from {indices_path}")
     else:
-        # Default: [0]
-        solution_indices = [0]
+        # Default: indices.txt if exists, otherwise [0]
+        indices_path = script_dir / "indices.txt"
+        if indices_path.is_file():
+            solution_indices = read_solution_indices(indices_path)
+            print(f"Using default {indices_path} ({len(solution_indices)} indices)")
+        else:
+            solution_indices = [0]
 
     # Create output and logs directories
     logs_dir = script_dir / "generation_logs"

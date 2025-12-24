@@ -373,8 +373,13 @@ def build_tasks(
             variant_indices = read_variant_indices_file(indices_path)
             print(f"Loaded {len(variant_indices)} indices from {indices_path}")
         else:
-            # Default: [0]
-            variant_indices = [0]
+            # Default: indices.txt if exists, otherwise [0]
+            indices_path = base_dir / "indices.txt"
+            if indices_path.is_file():
+                variant_indices = read_variant_indices_file(indices_path)
+                print(f"Using default {indices_path} ({len(variant_indices)} indices)")
+            else:
+                variant_indices = [0]
 
         for problem_path_real, display_path in normalized_problems:
             if not problem_path_real.is_dir():
