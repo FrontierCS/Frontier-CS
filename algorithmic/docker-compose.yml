@@ -10,6 +10,7 @@ services:
       GJ_ADDR: "http://127.0.0.1:5050"
       JUDGE_WORKERS: "8"          # Orchestrator concurrency
       GJ_PARALLELISM: "8"         # go-judge concurrency
+      SAVE_OUTPUTS: "true"       # Save contestant outputs to submissions/sid/case_*.out
     volumes:
       - ./problems:/app/problems
       - ./submissions:/app/submissions
