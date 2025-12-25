@@ -114,17 +114,20 @@ int main(int argc, char* argv[]) {
             if (answer_count == N) {
                 // All pairs answered, calculate score
                 long long Q = query_count;
+                long long score_value = MAX_QUERIES - Q;
                 
                 if (Q > MAX_QUERIES) {
-                    quitp(0.0, "Ratio: 0.000");
+                    quitp(0.0, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", (long long)0, 0.0, 0.0);
                 }
                 
-                // Score = (20000 - Q) / (20000 - 4000)
-                double score = (double)(MAX_QUERIES - Q) / (double)(MAX_QUERIES - PERFECT_QUERIES);
-                score = std::max(0.0, std::min(1.0, score));
+                // Unbounded ratio (can exceed 1.0)
+                double final_unbounded_ratio = (double)(MAX_QUERIES - Q) / (double)(MAX_QUERIES - PERFECT_QUERIES);
+                final_unbounded_ratio = std::max(0.0, final_unbounded_ratio);
                 
-                // 使用参考交互器的格式
-                quitp(score, "Ratio: %.3lf", score);
+                // Bounded ratio for scoring (capped at 1.0)
+                double final_ratio = std::min(1.0, final_unbounded_ratio);
+                
+                quitp(final_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score_value, final_ratio, final_unbounded_ratio);
             }
             
         } else {
