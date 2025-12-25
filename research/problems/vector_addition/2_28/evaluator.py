@@ -408,7 +408,10 @@ def main():
         if 'error' in result:
             print(f"Error: {result['error']}")
         # Print score as last line for main_loop.sh to extract
-        print(result.get('score', 0))
+        # Format: "score score_unbounded" (space-separated)
+        score = result.get('score', 0)
+        score_unbounded = result.get('score_unbounded', score)
+        print(f"{score} {score_unbounded}")
     else:
         print(f"Evaluation failed: {result.get('error', 'Unknown error')}")
         # Print error score as last line

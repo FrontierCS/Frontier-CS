@@ -88,15 +88,11 @@ class SkyPilotRunner(Runner):
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        candidates = [
-            Path(__file__).parents[4],
-            Path.cwd(),
-            Path.cwd().parent,
-        ]
-        for candidate in candidates:
-            if (candidate / "research").is_dir() and (candidate / "pyproject.toml").exists():
-                return candidate
-        raise RuntimeError("Could not find Frontier-CS base directory")
+        # src/frontier_cs/runner/skypilot.py -> repo root
+        base = Path(__file__).parents[3]
+        if not (base / "research").is_dir():
+            raise RuntimeError(f"research/ not found in {base}")
+        return base
 
     def get_problem_path(self, problem_id: str) -> Path:
         """Get the path to a research problem directory."""
@@ -260,14 +256,6 @@ class SkyPilotRunner(Runner):
 
                 duration = time.time() - start_time
 
-                if exit_code != 0:
-                    return EvaluationResult(
-                        problem_id=problem_id,
-                        status=EvaluationStatus.ERROR,
-                        message=f"Remote job failed with exit code {exit_code}",
-                        duration_seconds=duration,
-                    )
-
                 # Fetch results (bucket mode writes directly, scp mode fetches after)
                 if self.bucket_url:
                     # Results already written to bucket by run script
@@ -279,12 +267,26 @@ class SkyPilotRunner(Runner):
                         duration_seconds=duration,
                     )
                 else:
-                    # Legacy scp mode
-                    score, logs = self._fetch_results(cluster_name, handle)
+                    # Legacy scp mode - try to fetch score even if exit_code != 0
+                    score, score_unbounded, logs = self._fetch_results(cluster_name, handle)
+
+                    # If we got a score, treat as success (even if exit_code != 0)
+                    # This distinguishes "solution failed, got 0" from "infrastructure error"
+                    if score is not None:
+                        return EvaluationResult(
+                            problem_id=problem_id,
+                            score=score,
+                            score_unbounded=score_unbounded,
+                            status=EvaluationStatus.SUCCESS,
+                            logs=logs,
+                            duration_seconds=duration,
+                        )
+
+                    # No score parsed - this is an infrastructure/evaluator error
                     return EvaluationResult(
                         problem_id=problem_id,
-                        score=score,
-                        status=EvaluationStatus.SUCCESS,
+                        status=EvaluationStatus.ERROR,
+                        message=f"Remote job failed with exit code {exit_code}",
                         logs=logs,
                         duration_seconds=duration,
                     )
@@ -421,15 +423,19 @@ class SkyPilotRunner(Runner):
                     chmod +x evaluate.sh
                     ./evaluate.sh | tee /results/output.txt
 
-                    # Extract score (last numeric line)
-                    grep -E "^-?[0-9]+\\.?[0-9]*$" /results/output.txt | tail -1 > /results/score.txt || true
+                    # Extract score (last line with number(s): "85.5" or "85.5 120.3")
+                    grep -E "^-?[0-9]+\\.?[0-9]*(\\s+-?[0-9]+\\.?[0-9]*)?$" /results/output.txt | tail -1 > /results/score.txt || true
                 '
             {bucket_write}
         """)
 
-    def _fetch_results(self, cluster_name: str, handle: object) -> Tuple[Optional[float], Optional[str]]:
-        """Fetch results from remote cluster via scp."""
+    def _fetch_results(self, cluster_name: str, handle: object) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        """Fetch results from remote cluster via scp.
+
+        Returns (score, score_unbounded, logs).
+        """
         score = None
+        score_unbounded = None
         logs = None
 
         with tempfile.TemporaryDirectory(prefix="frontier_results_") as temp_dir:
@@ -448,14 +454,16 @@ class SkyPilotRunner(Runner):
                 if result.returncode == 0:
                     results_dir = temp_path / "results"
 
-                    # Read score
+                    # Read score (format: "85.5" or "85.5 120.3")
                     score_file = results_dir / "score.txt"
                     if score_file.exists():
                         score_text = score_file.read_text().strip()
                         if score_text:
+                            parts = score_text.split()
                             try:
-                                score = float(score_text)
-                            except ValueError:
+                                score = float(parts[0])
+                                score_unbounded = float(parts[1]) if len(parts) > 1 else score
+                            except (ValueError, IndexError):
                                 pass
 
                     # Read logs
@@ -466,4 +474,4 @@ class SkyPilotRunner(Runner):
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
-        return score, logs
+        return score, score_unbounded, logs

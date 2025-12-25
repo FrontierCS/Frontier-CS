@@ -58,11 +58,13 @@ class BatchEvaluator:
         *,
         base_dir: Optional[Path] = None,
         backend: str = "docker",
+        track: str = "research",
         max_concurrent: int = 1,
         timeout: Optional[int] = None,
         bucket_url: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
+        judge_url: Optional[str] = None,
     ):
         """
         Initialize batch evaluator.
@@ -71,6 +73,7 @@ class BatchEvaluator:
             results_dir: Directory for results and state
             base_dir: Frontier-CS base directory (auto-detected if None)
             backend: Evaluation backend ("docker" or "skypilot")
+            track: Evaluation track ("research" or "algorithmic")
             max_concurrent: Maximum concurrent evaluations
             timeout: Default timeout for evaluations (seconds)
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
@@ -78,13 +81,16 @@ class BatchEvaluator:
                        to the bucket and synced incrementally.
             keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            judge_url: URL for algorithmic judge server (default: http://localhost:8081)
         """
+        self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
         self.backend = backend
         self.max_concurrent = max_concurrent
         self.timeout = timeout
         self.bucket_url = bucket_url
+        self.judge_url = judge_url or "http://localhost:8081"
         self._bucket_storage = None
 
         # Initialize bucket storage if provided
@@ -98,29 +104,38 @@ class BatchEvaluator:
         self.state_path = self.results_dir / self.STATE_FILE
         self.state = EvaluationState.load(self.state_path)
 
-        # Initialize runner
-        if backend == "docker":
-            self._runner = DockerRunner(base_dir=self.base_dir)
+        # Initialize runner based on track and backend
+        if track == "algorithmic":
+            if backend == "skypilot":
+                from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
+                self._runner = AlgorithmicSkyPilotRunner(
+                    base_dir=self.base_dir,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
+            else:
+                from ..runner.algorithmic import AlgorithmicRunner
+                self._runner = AlgorithmicRunner(judge_url=self.judge_url)
         else:
-            from ..runner.skypilot import SkyPilotRunner
-            self._runner = SkyPilotRunner(
-                base_dir=self.base_dir,
-                bucket_url=bucket_url,
-                keep_cluster=keep_cluster,
-                idle_timeout=idle_timeout,
-            )
+            # research track
+            if backend == "docker":
+                self._runner = DockerRunner(base_dir=self.base_dir)
+            else:
+                from ..runner.skypilot import SkyPilotRunner
+                self._runner = SkyPilotRunner(
+                    base_dir=self.base_dir,
+                    bucket_url=bucket_url,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        candidates = [
-            Path(__file__).parents[4],  # src/frontier_cs/batch/evaluator.py -> repo root
-            Path.cwd(),
-            Path.cwd().parent,
-        ]
-        for candidate in candidates:
-            if (candidate / "research").is_dir() and (candidate / "pyproject.toml").exists():
-                return candidate
-        raise RuntimeError("Could not find Frontier-CS base directory")
+        # src/frontier_cs/batch/evaluator.py -> repo root
+        base = Path(__file__).parents[3]
+        if not (base / "pyproject.toml").exists():
+            raise RuntimeError(f"pyproject.toml not found in {base}")
+        return base
 
     def _save_state(self) -> None:
         """Save current state to disk."""
@@ -370,13 +385,12 @@ class BatchEvaluator:
 
     def _evaluate_pair(self, pair: Pair) -> EvaluationResult:
         """Evaluate a single pair using the configured runner."""
-        # Find solution file
-        solution_dir = self.base_dir / "solutions" / pair.solution / "resources"
-        solution_file = solution_dir / "solution.py"
-
-        if not solution_file.exists():
-            # Try alternate location
-            solution_file = self.base_dir / "solutions" / pair.solution / "solution.py"
+        # Solutions are in track-specific directories
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+        solution_file = solutions_dir / pair.solution
 
         if not solution_file.exists():
             return EvaluationResult(
@@ -430,13 +444,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             problems,
             [model],
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         if not pairs:
@@ -467,13 +487,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             [problem],
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         if not pairs:
@@ -529,13 +555,19 @@ class BatchEvaluator:
         models = read_models_file(models_file)
         variants = read_variants_file(variants_file) if variants_file else [0]
 
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             problems,
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         logger.info(f"Expanded {len(problems)} problems × {len(models)} models × {len(variants)} variants = {len(pairs)} pairs")
@@ -629,13 +661,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         all_pairs = expand_pairs(
             problems,
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         # Find pairs not in current state

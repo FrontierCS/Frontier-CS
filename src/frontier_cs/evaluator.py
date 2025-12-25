@@ -6,7 +6,7 @@ with support for different backends (local Docker, SkyPilot cloud).
 """
 
 from pathlib import Path
-from typing import Iterator, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from .runner import EvaluationResult, DockerRunner, AlgorithmicRunner
 from .runner.base import Runner
@@ -32,11 +32,6 @@ class FrontierCSEvaluator:
         # Research problem (SkyPilot)
         result = evaluator.evaluate("research", problem_id="flash_attn", code=py_code,
                                    backend="skypilot")
-
-        # Batch evaluation
-        results = evaluator.evaluate_batch("research",
-                                          problem_ids=["flash_attn", "cross_entropy"],
-                                          code=py_code)
     """
 
     def __init__(
@@ -184,61 +179,6 @@ class FrontierCSEvaluator:
         """
         runner = self._get_runner(track, backend)
         return runner.evaluate_file(str(problem_id), solution_path, timeout=timeout)
-
-    def evaluate_batch(
-        self,
-        track: TrackType,
-        problem_ids: List[Union[str, int]],
-        code: str,
-        *,
-        backend: Optional[BackendType] = None,
-        timeout: Optional[int] = None,
-    ) -> List[EvaluationResult]:
-        """
-        Evaluate a solution against multiple problems.
-
-        Args:
-            track: Problem track
-            problem_ids: List of problem identifiers
-            code: Solution code (same code for all problems)
-            backend: Backend to use
-            timeout: Optional timeout per problem
-
-        Returns:
-            List of EvaluationResult, one per problem
-        """
-        runner = self._get_runner(track, backend)
-        results = []
-        for pid in problem_ids:
-            result = runner.evaluate(str(pid), code, timeout=timeout)
-            results.append(result)
-        return results
-
-    def evaluate_batch_iter(
-        self,
-        track: TrackType,
-        problem_ids: List[Union[str, int]],
-        code: str,
-        *,
-        backend: Optional[BackendType] = None,
-        timeout: Optional[int] = None,
-    ) -> Iterator[EvaluationResult]:
-        """
-        Evaluate a solution against multiple problems, yielding results as they complete.
-
-        Args:
-            track: Problem track
-            problem_ids: List of problem identifiers
-            code: Solution code
-            backend: Backend to use
-            timeout: Optional timeout per problem
-
-        Yields:
-            EvaluationResult for each problem as it completes
-        """
-        runner = self._get_runner(track, backend)
-        for pid in problem_ids:
-            yield runner.evaluate(str(pid), code, timeout=timeout)
 
     def list_problems(self, track: TrackType) -> List[str]:
         """

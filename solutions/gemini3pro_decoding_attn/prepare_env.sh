@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-echo "[gemini3pro_decoding_attn] No additional environment preparation required."

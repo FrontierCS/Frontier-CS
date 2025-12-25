@@ -271,13 +271,16 @@ def main(argv: List[str] | None = None) -> float:
     results = evaluate(solution_module, datasets, references)
 
     scores = [entry["score"] for entry in results.values()]
+    scores_unbounded = [entry["score_unbounded"] for entry in results.values()]
     mean_score = float(sum(scores) / len(scores))
+    mean_score_unbounded = float(sum(scores_unbounded) / len(scores_unbounded))
     mean_mse = float(sum(entry["mse"] for entry in results.values()) / len(results))
 
     report = {
         "by_dataset": results,
         "summary": {
             "mean_score": mean_score,
+            "mean_score_unbounded": mean_score_unbounded,
             "mean_mse": mean_mse,
             "num_datasets": len(results),
         },
@@ -286,7 +289,8 @@ def main(argv: List[str] | None = None) -> float:
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    print(f"{mean_score:.6f}")
+    # Format: "score score_unbounded" (space-separated)
+    print(f"{mean_score:.6f} {mean_score_unbounded:.6f}")
     return mean_score
 
 

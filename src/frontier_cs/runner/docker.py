@@ -47,15 +47,11 @@ class DockerRunner(Runner):
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        candidates = [
-            Path(__file__).parents[4],  # src/frontier_cs/runner/docker.py -> repo root
-            Path.cwd(),
-            Path.cwd().parent,
-        ]
-        for candidate in candidates:
-            if (candidate / "research").is_dir() and (candidate / "pyproject.toml").exists():
-                return candidate
-        raise RuntimeError("Could not find Frontier-CS base directory")
+        # src/frontier_cs/runner/docker.py -> repo root
+        base = Path(__file__).parents[3]
+        if not (base / "research").is_dir():
+            raise RuntimeError(f"research/ not found in {base}")
+        return base
 
     @property
     def has_gpu(self) -> bool:
@@ -188,21 +184,25 @@ class DockerRunner(Runner):
                 )
 
             # Parse score from output
-            score, error = self._parse_score(logs)
+            score, score_unbounded, error = self._parse_score(logs)
 
-            if error or result.returncode != 0:
+            # If we got a score, treat as success (even if returncode != 0)
+            # This distinguishes "solution failed, got 0" from "infrastructure error"
+            if score is not None:
                 return EvaluationResult(
                     problem_id=problem_id,
-                    status=EvaluationStatus.ERROR,
-                    message=error or f"Docker exited with code {result.returncode}",
+                    score=score,
+                    score_unbounded=score_unbounded,
+                    status=EvaluationStatus.SUCCESS,
                     logs=logs,
                     duration_seconds=duration,
                 )
 
+            # No score parsed - this is an infrastructure/evaluator error
             return EvaluationResult(
                 problem_id=problem_id,
-                score=score,
-                status=EvaluationStatus.SUCCESS,
+                status=EvaluationStatus.ERROR,
+                message=error or f"Docker exited with code {result.returncode}",
                 logs=logs,
                 duration_seconds=duration,
             )
@@ -322,8 +322,13 @@ chmod +x evaluate.sh
 ./evaluate.sh
 '''
 
-    def _parse_score(self, output: str) -> Tuple[Optional[float], Optional[str]]:
-        """Parse score from evaluation output."""
+    def _parse_score(self, output: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        """Parse score and score_unbounded from evaluation output.
+
+        Expects last line to be either:
+        - Single number: "85.5" (score_unbounded = score)
+        - Two numbers: "85.5 120.3" (score score_unbounded)
+        """
         lines = output.strip().split("\n")
 
         # Look for the last numeric line (ignoring log messages)
@@ -332,15 +337,20 @@ chmod +x evaluate.sh
             # Skip log messages
             if line.startswith("[") or "INFO" in line or "ERROR" in line:
                 continue
-            # Try to parse as number
+            # Try to parse as number(s)
+            parts = line.split()
+            if not parts:
+                continue
             try:
-                return float(line), None
+                score = float(parts[0])
+                score_unbounded = float(parts[1]) if len(parts) > 1 else score
+                return score, score_unbounded, None
             except ValueError:
                 continue
 
         # Look for error messages
         for line in lines:
             if "Error" in line or "ERROR" in line:
-                return None, line
+                return None, None, line
 
-        return None, "Could not parse score from output"
+        return None, None, "Could not parse score from output"

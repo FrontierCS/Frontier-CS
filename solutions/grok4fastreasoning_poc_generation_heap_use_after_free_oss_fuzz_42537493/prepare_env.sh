@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-echo "[grok4fastreasoning_poc_generation_heap_use_after_free_oss_fuzz_42537493] No additional environment preparation required."

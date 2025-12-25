@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-echo "[grok4fastreasoning_cant_be_late_low_availability_loose_deadline_small_overhead] No additional environment preparation required."

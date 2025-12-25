@@ -6,7 +6,7 @@ Provides batch and incremental evaluation of multiple solutions across multiple 
 
 from .evaluator import BatchEvaluator
 from .state import EvaluationState, PairResult
-from .pair import Pair, expand_pairs, read_pairs_file, scan_solutions_dir, read_solution_config
+from .pair import Pair, expand_pairs, read_pairs_file, scan_solutions_dir
 
 __all__ = [
     "BatchEvaluator",
@@ -16,5 +16,4 @@ __all__ = [
     "expand_pairs",
     "read_pairs_file",
     "scan_solutions_dir",
-    "read_solution_config",
 ]

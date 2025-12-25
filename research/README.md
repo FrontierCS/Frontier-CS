@@ -6,13 +6,13 @@ Real-world systems challenges requiring domain expertise in GPU computing, distr
 
 ```bash
 # List all problems
-frontier-eval --list
+frontier list
 
 # Evaluate a solution (requires Docker)
-frontier-eval flash_attn <your_solution.py>
+frontier eval flash_attn <your_solution.py>
 
 # Evaluate multiple problems
-frontier-eval --problems flash_attn,cross_entropy <your_solution.py>
+frontier eval --problems flash_attn,cross_entropy <your_solution.py>
 ```
 
 ## Cloud Evaluation with SkyPilot
@@ -30,31 +30,22 @@ See [SkyPilot docs](https://skypilot.readthedocs.io/en/latest/getting-started/in
 **Usage:**
 
 ```bash
-frontier-eval flash_attn <your_solution.py> --skypilot
+frontier eval flash_attn <your_solution.py> --skypilot
 ```
 
 ## Batch Evaluation
 
-For evaluating multiple solutions at once, create a pairs file mapping solutions to problems:
-
-```
-# pairs.txt format: solution_path:problem_id
-solutions/my_flash_attn_v1.py:flash_attn
-solutions/my_flash_attn_v2.py:flash_attn
-solutions/my_cross_entropy.py:cross_entropy
-```
-
-Then run:
+Batch evaluation automatically scans `solutions/` and parses problem IDs from filenames:
 
 ```bash
-# Evaluate all pairs
-frontier-eval batch --pairs-file pairs.txt
-
-# Resume interrupted evaluation
-frontier-eval batch --pairs-file pairs.txt --resume
+# Evaluate all solutions (auto-skips completed)
+frontier batch
 
 # Check status
-frontier-eval batch --status --results-dir results/batch
+frontier batch --status
+
+# Force re-evaluate all
+frontier batch --no-resume
 ```
 
 ## Python API
@@ -71,11 +62,6 @@ print(f"Score: {result.score}")
 # With SkyPilot
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code,
                            backend="skypilot")
-
-# Batch evaluation
-results = evaluator.evaluate_batch("research",
-                                  problem_ids=["flash_attn", "cross_entropy"],
-                                  code=my_code)
 ```
 
 ## Problem Structure
@@ -98,24 +84,24 @@ research/problems/
 
 ### File Reference
 
-| File | Purpose |
-|------|---------|
-| `config.yaml` | Runtime config (Docker image, GPU requirement, timeout) |
-| `readme` | Problem description, API spec, scoring formula |
-| `set_up_env.sh` | Environment setup (install deps, check CUDA) |
-| `download_datasets.sh` | Download datasets (for local pre-download) |
-| `evaluate.sh` | Evaluation entry point |
-| `run_evaluator.sh` | Invokes `evaluator.py` |
-| `evaluator.py` | Core evaluation logic |
-| `resources/` | Baseline code, benchmark, test data |
+| File                   | Purpose                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| `config.yaml`          | Runtime config (Docker image, GPU requirement, timeout) |
+| `readme`               | Problem description, API spec, scoring formula          |
+| `set_up_env.sh`        | Environment setup (install deps, check CUDA)            |
+| `download_datasets.sh` | Download datasets (for local pre-download)              |
+| `evaluate.sh`          | Evaluation entry point                                  |
+| `run_evaluator.sh`     | Invokes `evaluator.py`                                  |
+| `evaluator.py`         | Core evaluation logic                                   |
+| `resources/`           | Baseline code, benchmark, test data                     |
 
 ### config.yaml Example
 
 ```yaml
 dependencies:
-  uv_project: resources    # Optional: uv project in resources/
-datasets: []               # Optional: dataset URLs
-tag: hpc                   # Category: os, hpc, ai, db, pl, security
+  uv_project: resources # Optional: uv project in resources/
+datasets: [] # Optional: dataset URLs
+tag: hpc # Category: os, hpc, ai, db, pl, security
 runtime:
   docker:
     image: andylizf/triton-tlx:tlx-nv-cu122
@@ -191,7 +177,7 @@ Use `generate_solutions.py` to generate solutions using LLMs.
 
 ```bash
 # Generate one solution
-python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5 --variants 1
+python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5 --indices 1
 
 # Preview what would be generated
 python research/scripts/generate_solutions.py --dryrun
@@ -205,52 +191,65 @@ python research/scripts/generate_solutions.py --dryrun
 python research/scripts/generate_solutions.py --problem flash_attn --model gpt-5
 ```
 
-Generates **problems × models × variants** (Cartesian product):
-- Problems: `--problem` patterns or `--problems-file` (default: `problems.txt`)
-- Models: `--model` list or `--models-file` (default: `models.txt`)
-- Variants: `--variants N` (default: from `num_solutions.txt`, currently 5)
+Generates **problems × models × indices** (Cartesian product):
 
-Solution naming: `{model_prefix}_{problem}` for variant 0, `{model_prefix}_{problem}_{i}` for variant i.
+- Problems: `--problem` patterns or `--problems-file` (default: auto-discover all problems)
+- Models: `--model` list or `--models-file` (default: `models.txt`)
+- Indices: `--indices N` or `--indices-file` (default: `indices.txt` or single solution)
+
+Solution naming: `{problem}.{model}.py` for index 0, `{problem}.{model}_{i}.py` for index i.
 
 **Solution mode** (regenerate existing solutions):
 
 ```bash
-python research/scripts/generate_solutions.py --solution "gpt5_flash*" --force
+python research/scripts/generate_solutions.py --solution "flash_attn.gpt5*" --force
 ```
 
 - Matches existing solutions in `solutions/` by pattern
-- Model inferred from solution name prefix (e.g., `gpt5_` → `gpt-5`)
+- Model inferred from solution filename (e.g., `flash_attn.gpt5.py` → model `gpt5`)
 - Requires `--force` since solutions already exist
 - Still needs `models.txt` or `--model` to map prefix to model name
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `--problem` / `--problems-file` | Problem pattern or file (default: `problems.txt`) |
-| `--model` / `--models-file` | Model(s) or file (default: `models.txt`) |
-| `--variants` / `--variants-file` | Variant count or file (default: `num_solutions.txt`) |
-| `--solution PATTERN` | Regenerate existing solutions by pattern (mutually exclusive with `--problem`) |
-| `--force` | Overwrite existing solutions |
-| `--dryrun` | Preview without generating |
-| `--concurrency N` | Parallel API calls |
-| `--timeout SECONDS` | API timeout (default: 600s) |
-| `--reasoning-model` | Force reasoning mode (o1/o3 models) |
+| Option                          | Description                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `--problem` / `--problems-file` | Problem pattern or file (default: auto-discover)                               |
+| `--model` / `--models-file`     | Model(s) or file (default: `models.txt`)                                       |
+| `--indices` / `--indices-file`  | Solution indices count or file (default: `indices.txt`)                        |
+| `--solution PATTERN`            | Regenerate existing solutions by pattern (mutually exclusive with `--problem`) |
+| `--force`                       | Overwrite existing solutions                                                   |
+| `--dryrun`                      | Preview without generating                                                     |
+| `--concurrency N`               | Parallel API calls                                                             |
+| `--timeout SECONDS`             | API timeout (default: 600s)                                                    |
 
 ### Output
 
+Solutions are saved as flat files in `solutions/`:
+
 ```
-solutions/{model_prefix}_{problem}[_{variant}]/
-├── config.yaml
-├── prepare_env.sh
-├── solve.sh
-└── resources/solution.py
+solutions/
+├── flash_attn.gpt5.py
+├── flash_attn.gpt5_1.py
+├── flash_attn.claude.py
+└── cross_entropy.gpt5.py
 ```
 
 ### API Keys
 
+Set environment variables for the providers you need. Multiple keys per provider are supported for load balancing (e.g., `OPENAI_API_KEY`, `OPENAI_API_KEY2`, `OPENAI_API_KEY_2`).
+
+| Provider   | Environment Variable | Models                                |
+| ---------- | -------------------- | ------------------------------------- |
+| OpenAI     | `OPENAI_API_KEY`     | gpt-4o, gpt-5, o1, o3, ...            |
+| Anthropic  | `ANTHROPIC_API_KEY`  | claude-sonnet-4-5, claude-opus-4, ... |
+| Google     | `GOOGLE_API_KEY`     | gemini-2.5-pro, gemini-2.5-flash, ... |
+| xAI        | `XAI_API_KEY`        | grok-3, grok-3-mini, ...              |
+| DeepSeek   | `DEEPSEEK_API_KEY`   | deepseek-r1, deepseek-chat, ...       |
+| OpenRouter | `OPENROUTER_API_KEY` | openrouter/\* models                  |
+
 ```bash
-export OPENAI_API_KEY=sk-...      # GPT models
-export ANTHROPIC_API_KEY=sk-...   # Claude models
-export GOOGLE_API_KEY=...         # Gemini models
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-...
+export GOOGLE_API_KEY=...
 ```

@@ -27,8 +27,8 @@ class PairResult:
 
     @property
     def is_complete(self) -> bool:
-        """Whether this pair has finished evaluation (success or failure)."""
-        return self.status in ("success", "error", "timeout", "skipped")
+        """Whether this pair has a valid result (success with score)."""
+        return self.status == "success" and self.score is not None
 
     @property
     def is_success(self) -> bool:

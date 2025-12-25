@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.scripts]
-frontier-eval = "frontier_cs.cli:main"
+frontier = "frontier_cs.cli:main"
+frontier-eval = "frontier_cs.cli:main"  # deprecated alias
 
 [tool.uv]
 package = true

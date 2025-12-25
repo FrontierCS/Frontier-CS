@@ -287,7 +287,8 @@ def main():
                 print(f"Tests passed: {result['passed_tests']}/{result['total_tests']}")
         
         # Print score as last line for main_loop.sh to extract
-        print(result['score'])
+        # Format: "score score_unbounded" (space-separated)
+        print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
         print(f"Evaluation failed: {result['error']}")
         # Print error score as last line

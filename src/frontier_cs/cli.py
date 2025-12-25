@@ -4,26 +4,26 @@ CLI interface for Frontier-CS evaluation.
 
 Usage:
     # Single problem evaluation
-    frontier-eval flash_attn solution.py
-    frontier-eval --algorithmic 1 solution.cpp
+    frontier eval flash_attn solution.py
+    frontier eval --algorithmic 1 solution.cpp
+
+    # Auto-detect problem from filename
+    frontier eval solutions/flash_attn.gpt5.py
 
     # With SkyPilot
-    frontier-eval flash_attn solution.py --skypilot
+    frontier eval flash_attn solution.py --skypilot
 
     # All problems for a solution
-    frontier-eval --all-problems solution.py
-
-    # Specific problems
-    frontier-eval --problems flash_attn,cross_entropy solution.py
+    frontier eval --all-problems solution.py
 
     # List problems
-    frontier-eval --list
-    frontier-eval --list --algorithmic
+    frontier list
+    frontier list --algorithmic
 
     # Batch evaluation (scans solutions/ by default)
-    frontier-eval batch
-    frontier-eval batch --solutions-dir path/to/solutions
-    frontier-eval batch --resume --results-dir results/batch1
+    frontier batch
+    frontier batch --solutions-dir path/to/solutions
+    frontier batch --resume --results-dir results/batch1
 """
 
 import argparse
@@ -34,85 +34,88 @@ from typing import List, Optional
 
 from .evaluator import FrontierCSEvaluator
 from .runner import EvaluationResult
-from .batch.pair import read_solution_config
+from .gen.solution_format import parse_solution_filename
 
 logger = logging.getLogger(__name__)
 
 
-def detect_solution_dir(path: Path) -> tuple[bool, Optional[str], Optional[Path]]:
+def detect_solution_file(path: Path) -> tuple[bool, Optional[str], Optional[Path]]:
     """
-    Detect if a path is a solution directory with config.yaml.
+    Detect if a path is a solution file with format {problem}.{model}.py.
 
     Returns:
-        (is_solution_dir, problem, solution_file)
-        - is_solution_dir: True if path is a directory with config.yaml
-        - problem: Problem ID from config.yaml (or None)
-        - solution_file: Path to solution file in the directory (or None)
+        (is_solution, problem, solution_file)
+        - is_solution: True if path matches the solution file format
+        - problem: Problem ID parsed from filename (or None)
+        - solution_file: The solution file Path (or None)
     """
-    if not path.is_dir():
+    if not path.is_file():
         return False, None, None
 
-    problem = read_solution_config(path)
-    if not problem:
+    parsed = parse_solution_filename(path.name)
+    if not parsed:
         return False, None, None
 
-    # Look for solution file in order of preference:
-    # solve.sh (standard), solution.py, solution.cpp, or any .py file
-    for name in ["solve.sh", "solution.py", "solution.cpp"]:
-        candidate = path / name
-        if candidate.exists():
-            return True, problem, candidate
-
-    # Fallback: any Python file
-    py_files = list(path.glob("*.py"))
-    if py_files:
-        return True, problem, py_files[0]
-
-    return True, problem, None
+    problem, _, _ = parsed
+    return True, problem, path
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """Create argument parser."""
+    """Create argument parser with subcommands."""
     parser = argparse.ArgumentParser(
-        prog="frontier-eval",
-        description="Evaluate solutions for Frontier-CS problems",
+        prog="frontier",
+        description="Frontier-CS: Evaluate solutions for frontier AI research problems",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Commands:
+  eval     Evaluate a solution
+  batch    Batch evaluation with incremental progress
+  list     List available problems
+  show     Show problem statement
+
 Examples:
-  # Evaluate a solution directory (auto-detects problem from config.yaml)
-  frontier-eval solutions/gpt5_flash_attn
-
-  # Evaluate a research problem with solution file
-  frontier-eval flash_attn solution.py
-
-  # Override problem when evaluating a solution directory
-  frontier-eval solutions/gpt5_flash_attn --problems other_problem
-
-  # Evaluate an algorithmic problem
-  frontier-eval --algorithmic 1 solution.cpp
-
-  # Evaluate with SkyPilot (cloud)
-  frontier-eval flash_attn solution.py --skypilot
-
-  # Evaluate multiple problems
-  frontier-eval --problems flash_attn,cross_entropy solution.py
-
-  # Evaluate all research problems
-  frontier-eval --all-problems solution.py
-
-  # List available problems
-  frontier-eval --list
+  frontier eval flash_attn solution.py
+  frontier eval --algorithmic 1 solution.cpp
+  frontier batch --solutions-dir solutions/
+  frontier list --algorithmic
         """,
     )
 
-    # Problem and solution arguments (as options to avoid conflict with subcommands)
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # ==========================================================================
+    # EVAL subcommand
+    # ==========================================================================
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Evaluate a solution",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Evaluate with problem ID and solution file
+  frontier eval flash_attn solution.py
+  frontier eval --algorithmic 1 solution.cpp
+
+  # Auto-detect problem from filename
+  frontier eval solutions/flash_attn.gpt5.py
+
+  # Evaluate with SkyPilot (cloud)
+  frontier eval flash_attn solution.py --skypilot
+
+  # Evaluate multiple problems
+  frontier eval --problems flash_attn,cross_entropy solution.py
+  frontier eval --all-problems solution.py
+        """,
+    )
+
+    # Positional arguments for eval
+    eval_parser.add_argument(
         "problem_id",
         nargs="?",
         default=None,
-        help="Problem ID (e.g., flash_attn) or solution directory with config.yaml",
+        help="Problem ID (e.g., flash_attn) or solution file (e.g., flash_attn.gpt5.py)",
     )
-    parser.add_argument(
+    eval_parser.add_argument(
         "solution",
         nargs="?",
         default=None,
@@ -120,7 +123,7 @@ Examples:
     )
 
     # Problem selection
-    problem_group = parser.add_argument_group("Problem Selection")
+    problem_group = eval_parser.add_argument_group("Problem Selection")
     problem_group.add_argument(
         "--algorithmic",
         action="store_true",
@@ -148,7 +151,7 @@ Examples:
     )
 
     # Backend options
-    backend_group = parser.add_argument_group("Backend Options")
+    backend_group = eval_parser.add_argument_group("Backend Options")
     backend_group.add_argument(
         "--skypilot",
         action="store_true",
@@ -184,25 +187,25 @@ Examples:
     )
 
     # Evaluation options
-    eval_group = parser.add_argument_group("Evaluation Options")
-    eval_group.add_argument(
+    eval_opts = eval_parser.add_argument_group("Evaluation Options")
+    eval_opts.add_argument(
         "--timeout",
         type=int,
         help="Timeout in seconds per problem",
     )
-    eval_group.add_argument(
+    eval_opts.add_argument(
         "--code",
         type=str,
         help="Solution code as string (alternative to file)",
     )
-    eval_group.add_argument(
+    eval_opts.add_argument(
         "--unbounded",
         action="store_true",
-        help="Use unbounded score (for algorithmic problems, shows score without clipping)",
+        help="Use unbounded score (shows score without clipping)",
     )
 
     # Output options
-    output_group = parser.add_argument_group("Output Options")
+    output_group = eval_parser.add_argument_group("Output Options")
     output_group.add_argument(
         "--json",
         action="store_true",
@@ -219,23 +222,9 @@ Examples:
         help="Verbose output including logs",
     )
 
-    # Info commands
-    info_group = parser.add_argument_group("Info Commands")
-    info_group.add_argument(
-        "--list",
-        action="store_true",
-        help="List available problems",
-    )
-    info_group.add_argument(
-        "--show",
-        action="store_true",
-        help="Show problem statement",
-    )
-
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # Batch subcommand
+    # ==========================================================================
+    # BATCH subcommand
+    # ==========================================================================
     batch_parser = subparsers.add_parser(
         "batch",
         help="Batch evaluation with incremental progress",
@@ -243,22 +232,21 @@ Examples:
         epilog="""
 Examples:
   # Evaluate all solutions (scans solutions/ directory)
-  frontier-eval batch
+  frontier batch
 
   # Evaluate from specific solutions directory
-  frontier-eval batch --solutions-dir path/to/solutions
+  frontier batch --solutions-dir path/to/solutions
 
   # Evaluate specific pairs
-  frontier-eval batch --pairs "sol1:flash_attn,sol2:cross_entropy"
+  frontier batch --pairs "flash_attn.gpt5.py:flash_attn"
 
   # Resume interrupted evaluation
-  frontier-eval batch --resume --results-dir results/batch1
+  frontier batch --resume --results-dir results/batch1
 
   # Check evaluation status
-  frontier-eval batch --status --results-dir results/batch1
+  frontier batch --status --results-dir results/batch1
 
-Each solution directory should have a config.yaml with:
-  problem: flash_attn
+Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         """,
     )
 
@@ -286,6 +274,19 @@ Each solution directory should have a config.yaml with:
         type=Path,
         default=Path("results/batch"),
         help="Directory for results and state (default: results/batch)",
+    )
+
+    batch_track = batch_parser.add_argument_group("Track Selection")
+    batch_track.add_argument(
+        "--algorithmic",
+        action="store_true",
+        help="Evaluate algorithmic track (C++ solutions)",
+    )
+    batch_track.add_argument(
+        "--judge-url",
+        type=str,
+        default="http://localhost:8081",
+        help="Judge server URL for algorithmic problems",
     )
 
     batch_backend = batch_parser.add_argument_group("Backend Options")
@@ -359,6 +360,41 @@ Each solution directory should have a config.yaml with:
         "--sync-bucket",
         action="store_true",
         help="Sync results from bucket to local state and export reports",
+    )
+
+    # ==========================================================================
+    # LIST subcommand
+    # ==========================================================================
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List available problems",
+    )
+    list_parser.add_argument(
+        "--algorithmic",
+        action="store_true",
+        help="List algorithmic problems only",
+    )
+    list_parser.add_argument(
+        "--research",
+        action="store_true",
+        help="List research problems only",
+    )
+
+    # ==========================================================================
+    # SHOW subcommand
+    # ==========================================================================
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Show problem statement",
+    )
+    show_parser.add_argument(
+        "problem_id",
+        help="Problem ID to show",
+    )
+    show_parser.add_argument(
+        "--algorithmic",
+        action="store_true",
+        help="Show algorithmic problem",
     )
 
     return parser
@@ -457,17 +493,21 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Create batch evaluator
     backend = "skypilot" if args.skypilot else "docker"
+    track = "algorithmic" if getattr(args, "algorithmic", False) else "research"
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
+    judge_url = getattr(args, "judge_url", None)
     batch = BatchEvaluator(
         results_dir=args.results_dir,
         backend=backend,
+        track=track,
         max_concurrent=args.max_concurrent,
         timeout=args.timeout,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
         idle_timeout=idle_timeout,
+        judge_url=judge_url,
     )
 
     # Handle status command
@@ -570,22 +610,23 @@ def run_batch(args: argparse.Namespace) -> int:
 
         solutions_dir = args.solutions_dir
         if solutions_dir is None:
-            # Default to solutions/ in current directory or repo root
-            for candidate in [Path("solutions"), Path("../solutions"), Path("../../solutions")]:
-                if candidate.is_dir():
-                    solutions_dir = candidate.resolve()
-                    break
+            # Use base_dir from batch evaluator
+            base_dir = Path(__file__).parents[2]  # src/frontier_cs/cli.py -> repo root
+            track_dir = "algorithmic" if track == "algorithmic" else "research"
+            solutions_dir = base_dir / track_dir / "solutions"
 
-        if solutions_dir is None or not solutions_dir.is_dir():
-            print("Error: No solutions directory found. Use --solutions-dir or --pairs-file", file=sys.stderr)
+        if not solutions_dir.is_dir():
+            track_dir = "algorithmic" if track == "algorithmic" else "research"
+            print(f"Error: No solutions directory found. Expected {track_dir}/solutions/", file=sys.stderr)
+            print("Use --solutions-dir or --pairs-file to specify", file=sys.stderr)
             return 1
 
         pairs = scan_solutions_dir(solutions_dir)
         if not pairs:
-            print(f"Error: No solutions with config.yaml found in {solutions_dir}", file=sys.stderr)
+            print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1
 
-        print(f"\nBatch evaluation: {len(pairs)} solutions from {solutions_dir}")
+        print(f"\nBatch evaluation ({track}): {len(pairs)} solutions from {solutions_dir}")
         state = batch.evaluate_pairs(pairs, resume=resume)
 
     # Print summary
@@ -606,28 +647,57 @@ def run_batch(args: argparse.Namespace) -> int:
     return 0 if state.error_count == 0 else 1
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    """Main entry point."""
-    if argv is None:
-        argv = sys.argv[1:]
+def run_list(args: argparse.Namespace) -> int:
+    """Run list command."""
+    evaluator = FrontierCSEvaluator(backend="docker")
 
-    # Handle subcommands first by checking if first arg is a subcommand
-    subcommands = {"batch"}
-    if argv and argv[0] in subcommands:
-        parser = create_parser()
-        args = parser.parse_args(argv)
-        if args.command == "batch":
-            return run_batch(args)
+    if args.algorithmic:
+        # Only list algorithmic problems in compact format
+        problems = evaluator.list_problems("algorithmic")
+        print(f"\nAlgorithmic Problems ({len(problems)} total):\n")
+        ids_per_line = 10
+        for i in range(0, len(problems), ids_per_line):
+            line_ids = problems[i:i+ids_per_line]
+            print("  " + ", ".join(line_ids))
+    elif args.research:
+        # Only list research problems
+        all_research = evaluator.list_problems("research")
+        research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
+        print(f"\nResearch Problems ({len(research_problems)} total):\n")
+        for p in research_problems:
+            print(f"  {p}")
+    else:
+        # List both tracks
+        all_research = evaluator.list_problems("research")
+        research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
+        print(f"\nResearch Problems ({len(research_problems)} total):\n")
+        for p in research_problems:
+            print(f"  {p}")
 
-    # For single evaluations, create a parser without subcommands
-    # to avoid argparse confusion with positional args
-    parser = create_parser()
-    # Inject a dummy command to satisfy the subparser
-    args = parser.parse_args(argv + ["batch", "--status"]) if not any(a in argv for a in subcommands) else parser.parse_args(argv)
-    # Reset command since we used a dummy
-    args.command = None
-    args.status = False
+        alg_problems = evaluator.list_problems("algorithmic")
+        print(f"\nAlgorithmic Problems ({len(alg_problems)} total):\n")
+        ids_per_line = 10
+        for i in range(0, len(alg_problems), ids_per_line):
+            line_ids = alg_problems[i:i+ids_per_line]
+            print("  " + ", ".join(line_ids))
+    return 0
 
+
+def run_show(args: argparse.Namespace) -> int:
+    """Run show command."""
+    evaluator = FrontierCSEvaluator(backend="docker")
+    track = "algorithmic" if args.algorithmic else "research"
+    statement = evaluator.get_problem_statement(track, args.problem_id)
+    if statement:
+        print(statement)
+    else:
+        print(f"Problem not found: {args.problem_id}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_eval(args: argparse.Namespace) -> int:
+    """Run eval command."""
     # Determine track
     track = "algorithmic" if args.algorithmic else "research"
 
@@ -643,81 +713,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         idle_timeout=idle_timeout,
     )
 
-    # Handle info commands
-    if args.list:
-        if args.algorithmic:
-            # Only list algorithmic problems in compact format
-            problems = evaluator.list_problems("algorithmic")
-            print(f"\nAlgorithmic Problems ({len(problems)} total):\n")
-            # Display 10 IDs per line
-            ids_per_line = 10
-            for i in range(0, len(problems), ids_per_line):
-                line_ids = problems[i:i+ids_per_line]
-                print("  " + ", ".join(line_ids))
-        elif args.research:
-            # Only list research problems
-            all_research = evaluator.list_problems("research")
-            research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
-            print(f"\nResearch Problems ({len(research_problems)} total):\n")
-            for p in research_problems:
-                print(f"  {p}")
-        else:
-            # List both tracks separately - research first, then algorithmic
-            # Get research problems (excluding algorithmic)
-            all_research = evaluator.list_problems("research")
-            research_problems = [p for p in all_research if not p.startswith("algorithmic/")]
-            print(f"\nResearch Problems ({len(research_problems)} total):\n")
-            for p in research_problems:
-                print(f"  {p}")
-            
-            # Get algorithmic problems - show in compact format (multiple per line)
-            alg_problems = evaluator.list_problems("algorithmic")
-            print(f"\nAlgorithmic Problems ({len(alg_problems)} total):\n")
-            # Display 10 IDs per line
-            ids_per_line = 10
-            for i in range(0, len(alg_problems), ids_per_line):
-                line_ids = alg_problems[i:i+ids_per_line]
-                print("  " + ", ".join(line_ids))
-        return 0
-
-    if args.show:
-        if not args.problem_id:
-            print("Error: --show requires a problem_id", file=sys.stderr)
-            return 1
-        statement = evaluator.get_problem_statement(track, args.problem_id)
-        if statement:
-            print(statement)
-        else:
-            print(f"Problem not found: {args.problem_id}", file=sys.stderr)
-            return 1
-        return 0
-
-    # Auto-detect solution directory mode
-    # If problem_id is a directory with config.yaml, use it as solution directory
-    solution_dir_mode = False
+    # Auto-detect solution file format: {problem}.{model}.py
+    solution_file_mode = False
     detected_problem = None
     detected_solution_file = None
 
     if args.problem_id:
         candidate = Path(args.problem_id)
-        is_sol_dir, detected_problem, detected_solution_file = detect_solution_dir(candidate)
-        if is_sol_dir:
-            solution_dir_mode = True
+        is_solution, detected_problem, detected_solution_file = detect_solution_file(candidate)
+        if is_solution:
+            solution_file_mode = True
             if not args.quiet:
-                print(f"Detected solution directory: {candidate}")
-                print(f"  Problem (from config.yaml): {detected_problem}")
-                if detected_solution_file:
-                    print(f"  Solution file: {detected_solution_file.name}")
+                print(f"Detected solution file: {candidate}")
+                print(f"  Problem (from filename): {detected_problem}")
 
     # Get problem IDs
-    if solution_dir_mode:
-        # Use problem from config.yaml, or override with --problems
+    if solution_file_mode:
         if args.problems:
             problem_ids = [p.strip() for p in args.problems.split(",")]
         elif detected_problem:
             problem_ids = [detected_problem]
         else:
-            print("Error: No problem found in config.yaml", file=sys.stderr)
+            print("Error: Could not parse problem from filename", file=sys.stderr)
             return 1
     else:
         problem_ids = get_problem_ids(args, evaluator, track)
@@ -729,8 +746,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Get solution code
     if args.code:
         code = args.code
-    elif solution_dir_mode and detected_solution_file:
-        # Use solution file from detected directory
+    elif solution_file_mode and detected_solution_file:
         code = detected_solution_file.read_text(encoding="utf-8")
     elif args.solution:
         solution_path = Path(args.solution)
@@ -738,11 +754,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"Error: Solution file not found: {solution_path}", file=sys.stderr)
             return 1
         code = solution_path.read_text(encoding="utf-8")
-    elif solution_dir_mode:
-        print(f"Error: No solution.py found in {args.problem_id}", file=sys.stderr)
-        return 1
     else:
-        print("Error: No solution provided. Use --code or provide a file path.", file=sys.stderr)
+        print("Error: No solution provided.", file=sys.stderr)
         return 1
 
     # Run evaluations
@@ -791,6 +804,29 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Return non-zero if any failures
     return 0 if all(r.success for r in results) else 1
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Main entry point."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    parser = create_parser()
+    args = parser.parse_args(argv)
+
+    # Route to appropriate command handler
+    if args.command == "eval":
+        return run_eval(args)
+    elif args.command == "batch":
+        return run_batch(args)
+    elif args.command == "list":
+        return run_list(args)
+    elif args.command == "show":
+        return run_show(args)
+    else:
+        # No command specified, show help
+        parser.print_help()
+        return 0
 
 
 if __name__ == "__main__":

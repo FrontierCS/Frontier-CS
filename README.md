@@ -43,6 +43,8 @@ Current benchmarks are becoming too easy. Models score 90%+ on many existing cod
 
 ### Installation
 
+**Requirements:** Python 3.11+, Docker 24+ (for local evaluation)
+
 ```bash
 git clone https://github.com/FrontierCS/Frontier-CS.git
 cd Frontier-CS
@@ -59,17 +61,14 @@ pip install -e .
 Here's [Algorithmic Problem 0](algorithmic/problems/0/statement.txt) - try to beat GPT-5!
 
 ```bash
-# Start the judge server
-cd algorithmic && docker compose up -d
-
 # Run the example solution (Human Expert Solution)
-frontier-eval --algorithmic 0 problems/0/examples/reference.cpp
+frontier eval --algorithmic 0 algorithmic/problems/0/examples/reference.cpp
 
 # Run the example solution (GPT-5 Thinking Solution)
-frontier-eval --algorithmic 0 problems/0/examples/gpt5.cpp
+frontier eval --algorithmic 0 algorithmic/problems/0/examples/gpt5.cpp
 
-# Try you own solution!
-frontier-eval --algorithmic 0 <your_solution.cpp>
+# Try your own solution!
+frontier eval --algorithmic 0 <your_solution.cpp>
 ```
 
 <p align="center">
@@ -80,51 +79,38 @@ frontier-eval --algorithmic 0 <your_solution.cpp>
 
 ```bash
 # List all problems
-frontier-eval --list
+frontier list
 
 # Evaluate a generated solution locally for flash_attn problem (requires Docker)
-frontier-eval flash_attn <your_solution.py>
+frontier eval flash_attn <your_solution.py>
 
 # Evaluate on cloud (requires SkyPilot)
-frontier-eval flash_attn <your_solution.py> --skypilot
+frontier eval flash_attn <your_solution.py> --skypilot
 ```
 
 See [research/README.md](research/README.md) for full documentation.
 
 ### Algorithmic Problems
 
-```bash 
-# Start the judge server
-cd algorithmic && docker compose up -d
-
-# Evaluate a solution
-frontier-eval --algorithmic 1 <your_solution.cpp>
-```
-#### Raw Score
-Frontier-CS supports unbounded scoring for algorithmic problems, enabling open-ended evaluation compatible with algorithm evolution frameworks such as OpenEvolve.
-
 ```bash
-# Get unbounded score (without clipping to 100)
-frontier-eval --algorithmic --unbounded 1 <your_solution.cpp> 
-```
+# Evaluate a solution locally (requires Docker)
+frontier eval --algorithmic 1 <your_solution.cpp>
 
-#### Note
-1. We currently support C++17 only for algorithmic problem solutions.
-2. Reference solutions and hidden tests are withheld; full evaluation and leaderboard inclusion require submission.
-
-#### Cloud Evaluation
-For environments where Docker privileged mode is unavailable (e.g., gVisor), use SkyPilot to run the judge on a cloud VM:
-
-```bash
-# Auto-launch cloud judge (recommended)
-frontier-eval --algorithmic --skypilot 1 <your_solution.cpp>
-
-# Or manually launch and connect
-sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
-frontier-eval --algorithmic --judge-url http://$(sky status --ip algo-judge):8081 1 <your_solution.cpp>
+# Evaluate on cloud (requires SkyPilot)
+frontier eval --algorithmic 1 <your_solution.cpp> --skypilot
 ```
 
 See [algorithmic/README.md](algorithmic/README.md) for full documentation.
+
+### Raw Score
+
+Frontier-CS supports unbounded scoring, enabling open-ended evaluation compatible with algorithm evolution frameworks such as OpenEvolve.
+
+```bash
+# Get unbounded score (without clipping to 100)
+frontier eval --unbounded flash_attn <your_solution.py>
+frontier eval --algorithmic --unbounded 1 <your_solution.cpp>
+```
 
 ### Python API
 
@@ -149,7 +135,7 @@ print(f"Score (unbounded): {result.score_unbounded}")
 
 ## Submitting Results
 
-We release partial test cases so you can develop and debug locally. For full evaluation and leaderboard inclusion, please follow the instructions in [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.
+Reference solutions and full test cases are withheld. We release partial test cases so you can develop and debug locally. For full evaluation and leaderboard inclusion, please follow the instructions in [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.
 
 Questions? Join our [Discord](https://discord.gg/k4hd2nU4UE)
 
@@ -163,7 +149,7 @@ If you use Frontier-CS in your research, please cite:
 
 ```bibtex
 @misc{mang2025frontiercsevolvingchallengesevolving,
-      title={FrontierCS: Evolving Challenges for Evolving Intelligence}, 
+      title={FrontierCS: Evolving Challenges for Evolving Intelligence},
       author = {Qiuyang Mang and Wenhao Chai and Zhifei Li and Huanzhi Mao and
                 Shang Zhou and Alexander Du and Hanchen Li and Shu Liu and
                 Edwin Chen and Yichuan Wang and Xieting Chu and Zerui Cheng and
@@ -182,6 +168,6 @@ If you use Frontier-CS in your research, please cite:
       eprint={2512.15699},
       archivePrefix={arXiv},
       primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2512.15699}, 
+      url={https://arxiv.org/abs/2512.15699},
 }
 ```

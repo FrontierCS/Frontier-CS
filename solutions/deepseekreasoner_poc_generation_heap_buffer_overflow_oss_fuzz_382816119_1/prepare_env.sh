@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-echo "[deepseekreasoner_poc_generation_heap_buffer_overflow_oss_fuzz_382816119_1] No additional environment preparation required."
