@@ -15,7 +15,7 @@ Evolving Challenges for Evolving Intelligence
   <a href="https://deepwiki.com/FrontierCS/Frontier-CS"><img src="https://img.shields.io/badge/DeepWiki-Documentation-blue?logo=bookstack&logoColor=white" alt="DeepWiki"></a>
   <br>
   <img src="https://img.shields.io/badge/Research_Problems-63-blue" alt="Research Problems">
-  <img src="https://img.shields.io/badge/Algorithmic_Problems-125-green" alt="Algorithmic Problems">
+  <img src="https://img.shields.io/badge/Algorithmic_Problems-126-green" alt="Algorithmic Problems">
 </p>
 
 ## What is Frontier-CS?
