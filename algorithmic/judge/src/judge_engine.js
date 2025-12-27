@@ -14,6 +14,7 @@ export class JudgeEngine {
         this.goJudge = new GoJudgeClient(config.gjAddr);
         this.submissionManager = config.submissionManager;
         this.testlibPath = config.testlibPath || '/lib/testlib';
+        this.saveOutputs = process.env.SAVE_OUTPUTS === 'true';
         
         // In-memory queue and results
         this.queue = [];
@@ -142,7 +143,8 @@ export class JudgeEngine {
             status: ok ? 'Accepted' : 'Wrong Answer',
             time: runRes.runTime,
             memory: runRes.memory,
-            msg: chkRes.files?.stdout || chkRes.files?.stderr || ''
+            msg: chkRes.files?.stdout || chkRes.files?.stderr || '',
+            output: out
         };
     }
 
@@ -283,6 +285,15 @@ export class JudgeEngine {
             };
             this.results.set(sid, final);
             await fs.writeFile(path.join(subDir, 'result.json'), JSON.stringify(final, null, 2));
+            
+            // Save outputs if enabled
+            if (this.saveOutputs) {
+                for (let i = 0; i < caseResults.length; i++) {
+                    if (caseResults[i].output !== undefined) {
+                        await fs.writeFile(path.join(subDir, `case_${i + 1}.out`), caseResults[i].output);
+                    }
+                }
+            }
         } catch (e) {
             const err = { status: 'error', error: String(e) };
             this.results.set(sid, err);
@@ -351,6 +362,15 @@ export class JudgeEngine {
             };
             this.results.set(sid, final);
             await fs.writeFile(path.join(subDir, 'result.json'), JSON.stringify(final, null, 2));
+            
+            // Save outputs if enabled
+            if (this.saveOutputs) {
+                for (let i = 0; i < caseResults.length; i++) {
+                    if (caseResults[i].output !== undefined) {
+                        await fs.writeFile(path.join(subDir, `case_${i + 1}.out`), caseResults[i].output);
+                    }
+                }
+            }
         } catch (e) {
             const err = { status: 'error', error: String(e) };
             this.results.set(sid, err);
