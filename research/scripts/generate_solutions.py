@@ -889,6 +889,28 @@ Examples:
             print(f"    {dim(f'... and {len(failed) - 5} more')}")
     print(dim(line))
 
+    # Write detailed summary to file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    summary_file = logs_dir / f"generation_summary_{timestamp}.txt"
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        f.write(f"Generation Summary - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(f"Generated: {len(generated)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in generated:
+            f.write(f"  {name}\n")
+        f.write("\n")
+        f.write(f"Skipped: {len(skipped)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in skipped:
+            f.write(f"  {name}\n")
+        f.write("\n")
+        f.write(f"Failed: {len(failed)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in failed:
+            f.write(f"  {name}\n")
+    print(f"\n{dim('Detailed summary saved to:')} {cyan(str(summary_file))}")
+
 
 if __name__ == "__main__":
     main()

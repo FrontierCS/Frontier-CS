@@ -32,6 +32,8 @@ class PairResultData:
     duration_seconds: Optional[float] = None
     timestamp: Optional[str] = None
     logs: Optional[str] = None
+    solution_hash: Optional[str] = None  # Hash of solution file
+    problem_hash: Optional[str] = None   # Hash of problem directory
 
     def to_json(self) -> str:
         """Serialize to JSON string."""

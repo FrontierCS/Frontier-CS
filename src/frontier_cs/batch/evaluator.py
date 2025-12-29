@@ -16,7 +16,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Iterator, List, Optional
+from typing import Callable, Dict, List, Optional
 
 try:
     from tqdm import tqdm
@@ -27,7 +27,7 @@ except ImportError:
 from ..runner.base import EvaluationResult, EvaluationStatus
 from ..runner.docker import DockerRunner
 from .pair import Pair, expand_pairs, read_pairs_file, read_problems_file, read_models_file, read_variants_file
-from .state import EvaluationState, PairResult
+from .state import EvaluationState, PairResult, hash_file, hash_directory
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,7 @@ class BatchEvaluator:
 
         self.state_path = self.results_dir / self.STATE_FILE
         self.state = EvaluationState.load(self.state_path)
+        self._pair_hashes: Dict[str, tuple] = {}  # Computed during evaluate_pairs
 
         # Initialize runner based on track and backend
         if track == "algorithmic":
@@ -140,6 +141,49 @@ class BatchEvaluator:
     def _save_state(self) -> None:
         """Save current state to disk."""
         self.state.save(self.state_path)
+
+    def _compute_hashes(self, pairs: List[Pair]) -> Dict[str, tuple]:
+        """
+        Compute hashes for all pairs.
+
+        Returns:
+            Dict mapping pair.id to (solution_hash, problem_hash)
+        """
+        hashes = {}
+
+        # Cache problem hashes (same problem used by multiple solutions)
+        problem_hash_cache: Dict[str, Optional[str]] = {}
+
+        for pair in pairs:
+            # Solution hash
+            if self.track == "algorithmic":
+                solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            else:
+                solutions_dir = self.base_dir / "research" / "solutions"
+            solution_path = solutions_dir / pair.solution
+
+            if solution_path.exists():
+                sol_hash = hash_file(solution_path)
+            else:
+                sol_hash = None
+
+            # Problem hash (cached)
+            if pair.problem not in problem_hash_cache:
+                if self.track == "algorithmic":
+                    problem_path = self.base_dir / "algorithmic" / "problems" / pair.problem
+                else:
+                    problem_path = self.base_dir / "research" / "problems" / pair.problem
+
+                if problem_path.exists():
+                    problem_hash_cache[pair.problem] = hash_directory(problem_path)
+                else:
+                    problem_hash_cache[pair.problem] = None
+
+            prob_hash = problem_hash_cache[pair.problem]
+
+            hashes[pair.id] = (sol_hash, prob_hash)
+
+        return hashes
 
     def sync_from_bucket(self) -> int:
         """
@@ -184,6 +228,8 @@ class BatchEvaluator:
                     message=result_data.message,
                     duration_seconds=result_data.duration_seconds,
                     timestamp=result_data.timestamp,
+                    solution_hash=getattr(result_data, "solution_hash", None),
+                    problem_hash=getattr(result_data, "problem_hash", None),
                 )
                 merged += 1
 
@@ -206,7 +252,7 @@ class BatchEvaluator:
 
         Args:
             pairs: List of pairs to evaluate
-            resume: Skip already-completed pairs
+            resume: Skip already-completed pairs (with hash validation)
             on_progress: Callback after each evaluation
             show_progress: Show tqdm progress bar
 
@@ -224,11 +270,39 @@ class BatchEvaluator:
             self.state.total_pairs = len(pairs)
         self._save_state()
 
-        # Get pending pairs
+        # Compute hashes for all pairs (for cache invalidation)
+        logger.info("Computing hashes for solution/problem pairs...")
+        self._pair_hashes = self._compute_hashes(pairs)
+
+        # Get pending pairs (with hash validation)
         if resume:
-            pending = self.state.get_pending_pairs(pairs)
-            if len(pending) < len(pairs):
-                logger.info(f"Resuming: {len(pairs) - len(pending)} pairs already complete")
+            pending, invalidated = self.state.get_pending_pairs(pairs, self._pair_hashes)
+
+            # Log invalidated pairs (hash mismatch)
+            if invalidated:
+                logger.warning(
+                    f"⚠️  {len(invalidated)} pair(s) invalidated due to solution/problem changes:"
+                )
+                for p in invalidated[:10]:
+                    old_result = self.state.results.get(p.id)
+                    old_sol_hash = old_result.solution_hash if old_result else None
+                    old_prob_hash = old_result.problem_hash if old_result else None
+                    new_sol_hash, new_prob_hash = self._pair_hashes.get(p.id, (None, None))
+
+                    changes = []
+                    if old_sol_hash != new_sol_hash:
+                        changes.append(f"solution: {old_sol_hash or 'none'} → {new_sol_hash or 'none'}")
+                    if old_prob_hash != new_prob_hash:
+                        changes.append(f"problem: {old_prob_hash or 'none'} → {new_prob_hash or 'none'}")
+
+                    logger.warning(f"  - {p.id}: {', '.join(changes)}")
+
+                if len(invalidated) > 10:
+                    logger.warning(f"  ... and {len(invalidated) - 10} more")
+
+            completed = len(pairs) - len(pending)
+            if completed > 0:
+                logger.info(f"Resuming: {completed} pairs already complete (valid hashes)")
         else:
             pending = pairs
 
@@ -407,19 +481,25 @@ class BatchEvaluator:
         )
 
     def _record_result(self, pair: Pair, result: EvaluationResult) -> None:
-        """Record an evaluation result to state."""
+        """Record an evaluation result to state (with hashes)."""
         status_map = {
             EvaluationStatus.SUCCESS: "success",
             EvaluationStatus.ERROR: "error",
             EvaluationStatus.TIMEOUT: "timeout",
             EvaluationStatus.SKIPPED: "skipped",
         }
+
+        # Get hashes computed during evaluate_pairs
+        sol_hash, prob_hash = getattr(self, "_pair_hashes", {}).get(pair.id, (None, None))
+
         self.state.record_result(
             pair,
             score=result.score,
             status=status_map.get(result.status, "error"),
             message=result.message,
             duration_seconds=result.duration_seconds,
+            solution_hash=sol_hash,
+            problem_hash=prob_hash,
         )
 
     def evaluate_model(
