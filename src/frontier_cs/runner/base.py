@@ -23,6 +23,7 @@ class EvaluationResult:
 
     problem_id: str
     score: Optional[float] = None
+    score_unbounded: Optional[float] = None  # For algorithmic problems with unbounded scoring
     status: EvaluationStatus = EvaluationStatus.SUCCESS
     message: Optional[str] = None
     logs: Optional[str] = None
@@ -70,6 +71,7 @@ class Runner(ABC):
         solution_path: Path,
         *,
         timeout: Optional[int] = None,
+        solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """
         Evaluate a solution file for a given problem.
@@ -78,6 +80,7 @@ class Runner(ABC):
             problem_id: Problem identifier
             solution_path: Path to solution file
             timeout: Optional timeout in seconds
+            solution_id: Optional solution identifier (for result tracking)
 
         Returns:
             EvaluationResult with score and status

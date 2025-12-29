@@ -2,16 +2,72 @@
 Persistent state tracking for incremental batch evaluation.
 
 Tracks completed pairs to enable resume functionality.
+Supports hash-based cache invalidation for solutions and problems.
 """
 
+import hashlib
 import json
 import csv
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from .pair import Pair
+
+
+def hash_file(path: Path) -> str:
+    """Compute SHA256 hash of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]  # Use first 16 chars for brevity
+
+
+def hash_directory(path: Path, extensions: Optional[Set[str]] = None) -> str:
+    """
+    Compute hash of all relevant files in a directory.
+
+    Args:
+        path: Directory path
+        extensions: File extensions to include (default: common code/config files)
+
+    Returns:
+        Combined hash of all file contents and paths
+    """
+    if extensions is None:
+        extensions = {".py", ".sh", ".yaml", ".yml", ".txt", ".json", ".md", ""}
+
+    h = hashlib.sha256()
+    files = []
+
+    for p in sorted(path.rglob("*")):
+        if not p.is_file():
+            continue
+        # Skip hidden files and __pycache__
+        if any(part.startswith(".") or part == "__pycache__" for part in p.parts):
+            continue
+        # Filter by extension
+        if extensions and p.suffix not in extensions:
+            continue
+        files.append(p)
+
+    for p in files:
+        # Include relative path in hash (so renames are detected)
+        rel_path = p.relative_to(path)
+        h.update(str(rel_path).encode("utf-8"))
+        h.update(b"\x00")
+        # Include file content
+        try:
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+        except (IOError, OSError):
+            pass
+        h.update(b"\x00")
+
+    return h.hexdigest()[:16]
 
 
 @dataclass
@@ -24,15 +80,24 @@ class PairResult:
     message: Optional[str] = None
     duration_seconds: Optional[float] = None
     timestamp: Optional[str] = None
+    solution_hash: Optional[str] = None  # Hash of solution file
+    problem_hash: Optional[str] = None   # Hash of problem directory
 
     @property
     def is_complete(self) -> bool:
-        """Whether this pair has finished evaluation (success or failure)."""
-        return self.status in ("success", "error", "timeout", "skipped")
+        """Whether this pair has a valid result (success with score)."""
+        return self.status == "success" and self.score is not None
 
     @property
     def is_success(self) -> bool:
         return self.status == "success"
+
+    def hashes_match(self, solution_hash: Optional[str], problem_hash: Optional[str]) -> bool:
+        """Check if stored hashes match the provided hashes."""
+        # If no hashes stored, consider it a match (backwards compatibility)
+        if self.solution_hash is None and self.problem_hash is None:
+            return True
+        return self.solution_hash == solution_hash and self.problem_hash == problem_hash
 
 
 @dataclass
@@ -79,6 +144,8 @@ class EvaluationState:
                 message=result_data.get("message"),
                 duration_seconds=result_data.get("duration_seconds"),
                 timestamp=result_data.get("timestamp"),
+                solution_hash=result_data.get("solution_hash"),
+                problem_hash=result_data.get("problem_hash"),
             )
 
         return state
@@ -100,6 +167,8 @@ class EvaluationState:
                     "message": r.message,
                     "duration_seconds": r.duration_seconds,
                     "timestamp": r.timestamp,
+                    "solution_hash": r.solution_hash,
+                    "problem_hash": r.problem_hash,
                 }
                 for pair_id, r in self.results.items()
             },
@@ -109,14 +178,62 @@ class EvaluationState:
         with path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    def get_pending_pairs(self, pairs: List[Pair]) -> List[Pair]:
-        """Get pairs that haven't been successfully evaluated yet."""
-        return [p for p in pairs if not self.is_complete(p)]
+    def get_pending_pairs(
+        self,
+        pairs: List[Pair],
+        hashes: Optional[Dict[str, Tuple[str, str]]] = None,
+    ) -> Tuple[List[Pair], List[Pair]]:
+        """
+        Get pairs that need evaluation.
 
-    def is_complete(self, pair: Pair) -> bool:
-        """Check if a pair has been evaluated."""
+        Args:
+            pairs: List of pairs to check
+            hashes: Optional dict mapping pair.id to (solution_hash, problem_hash)
+
+        Returns:
+            Tuple of (pending_pairs, invalidated_pairs)
+            - pending_pairs: pairs that haven't been evaluated or have stale hashes
+            - invalidated_pairs: subset of pending that were invalidated due to hash mismatch
+        """
+        pending = []
+        invalidated = []
+
+        for p in pairs:
+            result = self.results.get(p.id)
+
+            # Not evaluated yet
+            if result is None or not result.is_complete:
+                pending.append(p)
+                continue
+
+            # Check hash validity if hashes provided
+            if hashes and p.id in hashes:
+                sol_hash, prob_hash = hashes[p.id]
+                if not result.hashes_match(sol_hash, prob_hash):
+                    pending.append(p)
+                    invalidated.append(p)
+
+        return pending, invalidated
+
+    def is_complete(self, pair: Pair, hashes: Optional[Tuple[str, str]] = None) -> bool:
+        """
+        Check if a pair has been evaluated with valid hashes.
+
+        Args:
+            pair: Pair to check
+            hashes: Optional (solution_hash, problem_hash) tuple
+
+        Returns:
+            True if evaluated and hashes match (or no hashes to check)
+        """
         result = self.results.get(pair.id)
-        return result is not None and result.is_complete
+        if result is None or not result.is_complete:
+            return False
+
+        if hashes:
+            return result.hashes_match(hashes[0], hashes[1])
+
+        return True
 
     def mark_running(self, pair: Pair) -> None:
         """Mark a pair as currently running."""
@@ -133,6 +250,8 @@ class EvaluationState:
         status: str,
         message: Optional[str] = None,
         duration_seconds: Optional[float] = None,
+        solution_hash: Optional[str] = None,
+        problem_hash: Optional[str] = None,
     ) -> None:
         """Record the result of evaluating a pair."""
         self.results[pair.id] = PairResult(
@@ -142,6 +261,8 @@ class EvaluationState:
             message=message,
             duration_seconds=duration_seconds,
             timestamp=datetime.now().isoformat(),
+            solution_hash=solution_hash,
+            problem_hash=problem_hash,
         )
 
     @property
@@ -165,7 +286,10 @@ class EvaluationState:
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["solution", "problem", "score", "status", "message", "duration_seconds", "timestamp"])
+            writer.writerow([
+                "solution", "problem", "score", "status", "message",
+                "duration_seconds", "timestamp", "solution_hash", "problem_hash"
+            ])
 
             for pair_id, result in sorted(self.results.items()):
                 solution, problem = pair_id.split(":", 1)
@@ -177,6 +301,8 @@ class EvaluationState:
                     result.message or "",
                     result.duration_seconds or "",
                     result.timestamp or "",
+                    result.solution_hash or "",
+                    result.problem_hash or "",
                 ])
 
     def export_summary(self, path: Path) -> None:

@@ -2,17 +2,20 @@
 SkyPilot runner for algorithmic problems.
 
 Automatically launches a go-judge VM on cloud and uses it for evaluation.
+Uses SkyPilot Python API with sky-judge.yaml configuration.
 """
 
-import subprocess
+import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
 from .algorithmic import AlgorithmicRunner
 from .base import EvaluationResult, EvaluationStatus
+
+logger = logging.getLogger(__name__)
 
 
 class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
@@ -29,7 +32,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        cloud: str = "gcp",
+        cloud: Optional[str] = None,
         region: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = DEFAULT_IDLE_TIMEOUT,
@@ -39,14 +42,14 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         Args:
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
-            cloud: Cloud provider (gcp, aws, azure)
-            region: Cloud region (optional)
+            cloud: Cloud provider override (default: use yaml config)
+            region: Cloud region override (optional)
             keep_cluster: Keep cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
-        # Initialize parent class
-        super().__init__(judge_url="http://localhost:8081")  # Placeholder, will be updated
-        
+        # Initialize parent class with placeholder URL (will be updated when cluster is ready)
+        super().__init__(judge_url="http://localhost:8081")
+
         self.base_dir = base_dir or self._find_base_dir()
         self.cloud = cloud
         self.region = region
@@ -57,74 +60,105 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        candidates = [
-            Path(__file__).parents[4],
-            Path.cwd(),
-            Path.cwd().parent,
-        ]
-        for candidate in candidates:
-            if (candidate / "algorithmic").is_dir() and (candidate / "pyproject.toml").exists():
-                return candidate
-        raise RuntimeError("Could not find Frontier-CS base directory")
+        # src/frontier_cs/runner/algorithmic_skypilot.py -> repo root
+        base = Path(__file__).parents[3]
+        if not (base / "algorithmic").is_dir():
+            raise RuntimeError(f"algorithmic/ not found in {base}")
+        return base
+
+    def _get_yaml_path(self) -> Path:
+        """Get path to sky-judge.yaml."""
+        return self.base_dir / "algorithmic" / "sky-judge.yaml"
+
+    def _get_cluster_info(self) -> tuple[Optional[str], Any]:
+        """Get cluster status and handle.
+
+        Returns:
+            Tuple of (status, handle) where status is 'UP', 'STOPPED', etc.
+            and handle contains cluster info including head_ip.
+        """
+        import sky
+
+        try:
+            clusters = sky.status(cluster_names=[self.CLUSTER_NAME])
+            if clusters:
+                record: dict[str, Any] = clusters[0]  # type: ignore[assignment]
+                status = record.get("status")
+                handle = record.get("handle")
+                return (str(status) if status else None, handle)
+        except Exception:
+            pass
+        return (None, None)
+
+    def _get_cluster_status(self) -> Optional[str]:
+        """Get the status of the algo-judge cluster."""
+        status, _ = self._get_cluster_info()
+        return status
 
     def _get_cluster_ip(self) -> Optional[str]:
-        """Get the IP of the algo-judge cluster if running."""
-        try:
-            result = subprocess.run(
-                ["sky", "status", "--ip", self.CLUSTER_NAME],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                ip = result.stdout.strip()
-                if ip and not ip.startswith("No"):
-                    return ip
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+        """Get the IP of the algo-judge cluster if running.
+
+        Uses sky.status() to get cluster handle and extract head_ip.
+        """
+        status, handle = self._get_cluster_info()
+        # Status could be string "UP" or enum ClusterStatus.UP
+        is_up = status is not None and ("UP" in str(status).upper())
+        if is_up and handle is not None:
+            # Handle has head_ip attribute
+            if hasattr(handle, "head_ip"):
+                return handle.head_ip
         return None
 
     def _is_cluster_running(self) -> bool:
         """Check if the algo-judge cluster is running."""
-        try:
-            result = subprocess.run(
-                ["sky", "status", self.CLUSTER_NAME],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            return "UP" in result.stdout
-        except (subprocess.TimeoutExpired, Exception):
-            return False
+        status = self._get_cluster_status()
+        return status is not None and "UP" in str(status).upper()
 
-    def _launch_cluster(self) -> bool:
-        """Launch the algo-judge cluster."""
-        yaml_path = self.base_dir / "algorithmic" / "sky-judge.yaml"
+    def _launch_cluster(self) -> Optional[str]:
+        """Launch the algo-judge cluster using sky-judge.yaml.
+
+        Returns:
+            The cluster head IP if successful, None otherwise.
+        """
+        import sky
+
+        yaml_path = self._get_yaml_path()
         if not yaml_path.exists():
             raise FileNotFoundError(f"sky-judge.yaml not found at {yaml_path}")
 
-        cmd = [
-            "sky", "launch", "-c", self.CLUSTER_NAME,
-            str(yaml_path),
-            "-y",  # auto-confirm
-        ]
-
-        if self.idle_timeout is not None:
-            cmd.extend(["--idle-minutes-to-autostop", str(self.idle_timeout)])
+        logger.info(f"Launching cluster '{self.CLUSTER_NAME}' from {yaml_path}")
 
         try:
-            # Run synchronously - sky launch waits for cluster to be ready
-            print(f"Launching cluster {self.CLUSTER_NAME}... (this may take a few minutes)")
-            result = subprocess.run(
-                cmd,
-                text=True,
-                timeout=1800,  # 30 minutes max for launch
+            task = sky.Task.from_yaml(str(yaml_path))
+
+            # Set absolute path for file_mounts to avoid CWD issues
+            algorithmic_dir = str(self.base_dir / "algorithmic")
+            task.update_file_mounts({"~/algorithmic": algorithmic_dir})
+
+            if self.cloud or self.region:
+                resources = list(task.resources)[0] if task.resources else sky.Resources()
+                new_resources = resources.copy(
+                    cloud=self.cloud if self.cloud else resources.cloud,
+                    region=self.region if self.region else resources.region,
+                )
+                task.set_resources(new_resources)
+
+            request_id = sky.launch(
+                task,
+                cluster_name=self.CLUSTER_NAME,
+                idle_minutes_to_autostop=self.idle_timeout,
             )
-            print(f"Launch command completed with return code {result.returncode}")
-            return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            print("Launch timed out after 30 minutes")
-            return False
+            # stream_and_get returns (job_id, handle) where handle has head_ip
+            job_id, handle = sky.stream_and_get(request_id)
+            logger.info(f"Cluster '{self.CLUSTER_NAME}' launched successfully")
+
+            # Extract IP from handle
+            if handle and hasattr(handle, 'head_ip'):
+                return handle.head_ip
+            return None
+        except Exception as e:
+            logger.exception(f"Failed to launch cluster: {e}")
+            return None
 
     def _wait_for_service(self, ip: str, timeout: int = 120) -> bool:
         """Wait for the judge service to be ready."""
@@ -153,34 +187,36 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
                 # Cluster may have stopped, re-check
                 self._initialized = False
 
-        # Check if cluster is running
         ip = self._get_cluster_ip()
 
         if ip:
-            # Cluster exists, check if service is ready
-            print(f"Found existing cluster at {ip}")
+            logger.info(f"Found existing cluster at {ip}")
             if self._wait_for_service(ip, timeout=30):
                 self._judge_url = f"http://{ip}:8081"
                 self._initialized = True
                 return self._judge_url
 
-        # Need to launch cluster
-        if not self._launch_cluster():
-            raise RuntimeError("Failed to launch algo-judge cluster")
-
-        # sky launch is synchronous, so cluster should be ready
-        # Get IP and wait for service
-        ip = self._get_cluster_ip()
+        ip = self._launch_cluster()
+        if not ip:
+            # Fallback: try to get IP from status if launch didn't return it
+            # May take a few seconds for cluster to be fully UP
+            logger.info("Waiting for cluster IP to become available...")
+            for attempt in range(10):
+                time.sleep(3)
+                ip = self._get_cluster_ip()
+                if ip:
+                    logger.info(f"Got cluster IP on attempt {attempt + 1}: {ip}")
+                    break
         if not ip:
             raise RuntimeError("Could not get cluster IP after launch")
 
-        print(f"Waiting for judge service at {ip}:8081...")
+        logger.info(f"Waiting for judge service at {ip}:8081 (timeout: 120s)")
         if not self._wait_for_service(ip, timeout=120):
-            raise RuntimeError("Judge service did not become ready")
+            raise RuntimeError("Judge service did not become ready after 120s")
 
         self._judge_url = f"http://{ip}:8081"
         self._initialized = True
-        print(f"Judge service ready at {self._judge_url}")
+        logger.info(f"Judge service ready at {self._judge_url}")
         return self._judge_url
 
     def evaluate(
@@ -223,6 +259,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         solution_path: Path,
         *,
         timeout: Optional[int] = None,
+        solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Evaluate a solution file using cloud-based go-judge."""
         if not solution_path.exists():
@@ -235,3 +272,19 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
         return self.evaluate(problem_id, code, timeout=timeout, lang=lang)
+
+    def stop_cluster(self) -> bool:
+        """Stop the algo-judge cluster."""
+        import sky
+
+        try:
+            logger.info(f"Stopping cluster '{self.CLUSTER_NAME}'")
+            request_id = sky.down(self.CLUSTER_NAME)
+            sky.stream_and_get(request_id)
+            self._initialized = False
+            self._judge_url = None
+            logger.info(f"Cluster '{self.CLUSTER_NAME}' stopped")
+            return True
+        except Exception as e:
+            logger.exception(f"Failed to stop cluster: {e}")
+            return False

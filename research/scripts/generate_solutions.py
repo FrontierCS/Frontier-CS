@@ -25,11 +25,21 @@ from datetime import datetime
 from importlib import metadata
 
 from frontier_cs.models import get_model_prefix, is_reasoning_model
+from frontier_cs.gen import (
+    build_key_pools, get_fallback_api_key, APIKeyPool,
+    instantiate_llm_client, detect_provider,
+    bold, dim, red, green, yellow, blue, cyan, magenta,
+    success, error, warning, info, header, section,
+    model_name, problem_name as format_problem_name, solution_name as format_solution_name,
+    print_header, print_section, print_success, print_error, print_warning, print_info,
+)
+from frontier_cs.gen.solution_format import (
+    format_solution_filename,
+    validate_problem_name,
+)
 
-# Local modules
+# Local modules (research-specific)
 from gen_env import get_system_prompt_for_problem
-from gen_api_keys import build_key_pools, get_fallback_api_key, APIKeyPool
-from gen_llm import instantiate_llm_client, detect_provider
 from gen_io import (
     load_env_file,
     load_solution_targets,
@@ -38,13 +48,6 @@ from gen_io import (
     read_readme,
     load_docker_config,
     get_problem_name,
-)
-from gen_templates import create_solution
-from gen_colors import (
-    bold, dim, red, green, yellow, blue, cyan, magenta,
-    success, error, warning, info, header, section,
-    model_name, problem_name, solution_name,
-    print_header, print_section, print_success, print_error, print_warning, print_info,
 )
 
 
@@ -83,11 +86,44 @@ def ensure_numpy_version(required: str) -> None:
         )
 
 
+# Directories to exclude when auto-discovering problems
+EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
 
 
-def is_reasoning(model: str, override: Optional[bool]) -> bool:
-    """Check if a model is a reasoning model."""
-    return is_reasoning_model(model, override)
+def discover_problems(problems_dir: Path) -> List[Path]:
+    """Auto-discover all problem directories by finding leaf directories.
+
+    Excludes special directories like common/, resources/, __pycache__, .venv/, etc.
+    A problem directory is a directory with no subdirectories (except excluded ones).
+    """
+    result = []
+
+    def is_excluded(p: Path) -> bool:
+        """Check if path or any parent is in exclude list."""
+        for part in p.parts:
+            if part in EXCLUDE_DIRS:
+                return True
+        return False
+
+    def has_problem_subdirs(p: Path) -> bool:
+        """Check if directory has non-excluded subdirectories."""
+        try:
+            for child in p.iterdir():
+                if child.is_dir() and child.name not in EXCLUDE_DIRS:
+                    return True
+        except PermissionError:
+            pass
+        return False
+
+    for p in problems_dir.rglob('*'):
+        if not p.is_dir():
+            continue
+        if is_excluded(p):
+            continue
+        if not has_problem_subdirs(p):
+            result.append(p)
+
+    return sorted(result)
 
 
 def generate_code(
@@ -147,7 +183,7 @@ def generate_code(
         f.write("CALLING test_scripts.llm_interface...\n")
         f.write("=" * 80 + "\n\n")
 
-    print(f"Calling llm_interface (model: {model})...")
+    print(f"Calling llm_interface (model: {model}, problem: {problem_name})...")
 
     MAX_RETRIES = 5
     RETRY_DELAY = 30
@@ -161,6 +197,7 @@ def generate_code(
             break
 
         error_message = response_text or "Empty response"
+        print(f"  [problem: {problem_name}] Error (attempt {attempt}/{MAX_RETRIES}): {error_message[:200]}")
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"ERROR calling llm_interface (attempt {attempt}/{MAX_RETRIES}): {error_message}\n")
 
@@ -227,7 +264,8 @@ def build_tasks(
     skipped: List[str] = []
 
     if args.solutions_file:
-        # Solutions file mode
+        # Solutions file mode - for regenerating existing solutions
+        # New format: solution filenames like "flash_attn.gpt5.py:research/problems/flash_attn"
         solutions_path = Path(args.solutions_file)
         if not solutions_path.is_absolute():
             solutions_path = base_dir / solutions_path
@@ -235,12 +273,27 @@ def build_tasks(
         print(f"Loaded {len(solution_targets)} target solution(s) from {solutions_path}.")
 
         problem_cache: Dict[str, Tuple[Path, str, str]] = {}
-        for solution_name, problem_entry in solution_targets:
-            model_prefix = solution_name.split("_", 1)[0]
-            model = prefix_to_model.get(model_prefix)
-            if not model:
-                print(f"WARNING: No model mapping found for solution prefix '{model_prefix}'; skipping {solution_name}.")
+        for sol_filename, problem_entry in solution_targets:
+            # Parse new format: {problem}.{model}.py
+            parts = sol_filename.rsplit('.', 2)
+            if len(parts) != 3:
+                print(f"WARNING: Invalid solution filename format '{sol_filename}'; skipping.")
                 continue
+            _, model_with_variant, _ = parts
+
+            # Extract model prefix (strip variant suffix like _1, _2)
+            model_base = model_with_variant.rsplit("_", 1)[0] if "_" in model_with_variant and model_with_variant.rsplit("_", 1)[1].isdigit() else model_with_variant
+            model = prefix_to_model.get(model_base)
+            if not model:
+                print(f"WARNING: No model mapping for '{model_base}' in '{sol_filename}'; skipping.")
+                continue
+
+            # Parse variant index
+            variant_index = 0
+            if "_" in model_with_variant:
+                variant_parts = model_with_variant.rsplit("_", 1)
+                if len(variant_parts) == 2 and variant_parts[1].isdigit():
+                    variant_index = int(variant_parts[1])
 
             provider = detect_provider(model)
 
@@ -252,11 +305,11 @@ def build_tasks(
             try:
                 problem_path_real = (repo_root / relative_problem_str).resolve()
             except Exception:
-                print(f"WARNING: Invalid problem path '{problem_entry}' for {solution_name}; skipping.")
+                print(f"WARNING: Invalid problem path '{problem_entry}' for {sol_filename}; skipping.")
                 continue
 
             if not problem_path_real.is_dir():
-                print(f"WARNING: Problem path {problem_path_real} not found; skipping {solution_name}.")
+                print(f"WARNING: Problem path {problem_path_real} not found; skipping {sol_filename}.")
                 continue
 
             cache_key = relative_problem_str
@@ -264,35 +317,29 @@ def build_tasks(
                 try:
                     readme_text = read_readme(problem_path_real)
                 except FileNotFoundError as exc:
-                    print(f"WARNING: {exc}; skipping {solution_name}.")
+                    print(f"WARNING: {exc}; skipping {sol_filename}.")
                     continue
                 try:
                     rel_path_for_name = problem_path_real.relative_to(repo_root / "research")
                 except ValueError:
                     rel_path_for_name = Path(problem_path_real.name)
-                problem_name = get_problem_name(rel_path_for_name)
-                problem_cache[cache_key] = (problem_path_real, readme_text, problem_name)
+                inferred_problem_name = get_problem_name(rel_path_for_name)
+                problem_cache[cache_key] = (problem_path_real, readme_text, inferred_problem_name)
 
             problem_path_real, readme_text, inferred_problem_name = problem_cache[cache_key]
 
-            tail_parts = solution_name.rsplit("_", 1)
-            variant_index = 0
-            if len(tail_parts) == 2 and tail_parts[1].isdigit():
-                variant_index = int(tail_parts[1])
-            total_variants_for_task = max(variant_index + 1, 1)
-
-            sol_dir = repo_root / "solutions" / solution_name
-            if sol_dir.exists():
+            sol_file = repo_root / "solutions" / sol_filename
+            if sol_file.exists():
                 if args.force:
                     if not args.dryrun:
                         try:
-                            shutil.rmtree(sol_dir)
+                            sol_file.unlink()
                         except Exception as exc:
-                            print(f"WARNING: Failed to remove {sol_dir}: {exc}; skipping")
-                            skipped.append(solution_name)
+                            print(f"WARNING: Failed to remove {sol_file}: {exc}; skipping")
+                            skipped.append(sol_filename)
                             continue
                 else:
-                    skipped.append(solution_name)
+                    skipped.append(sol_filename)
                     continue
 
             tasks.append(
@@ -303,34 +350,27 @@ def build_tasks(
                     readme=readme_text,
                     model=model,
                     provider=provider,
-                    reasoning_model=is_reasoning(model, args.reasoning_override),
+                    reasoning_model=is_reasoning_model(model),
                     variant_index=variant_index,
                     variant_position=variant_index,
-                    solution_name=solution_name,
-                    total_variants=total_variants_for_task,
+                    solution_name=sol_filename,
+                    total_variants=max(variant_index + 1, 1),
                 )
             )
     else:
-        # Problem list mode
-        if args.variants is not None:
+        # Problem list mode - determine solution indices
+        if args.indices is not None:
             # Explicit count
-            variant_indices = list(range(args.variants))
-        elif args.variants_file is not None:
-            # Explicit file
-            variants_path = Path(args.variants_file)
-            if not variants_path.is_absolute():
-                variants_path = base_dir / variants_path
-            if not variants_path.is_file():
-                print(f"ERROR: Variants file not found: {variants_path}")
-                sys.exit(1)
-            variant_indices = read_variant_indices_file(variants_path)
+            variant_indices = list(range(args.indices))
         else:
-            # Default: num_solutions.txt
-            variants_file = base_dir / "num_solutions.txt"
-            try:
-                variant_indices = read_variant_indices_file(variants_file)
-            except Exception as exc:
-                print(f"WARNING: Failed to read {variants_file}: {exc}; defaulting to [0]")
+            # Use indices file (default: indices.txt)
+            indices_path = Path(args.indices_file)
+            if not indices_path.is_absolute():
+                indices_path = base_dir / indices_path
+            if indices_path.is_file():
+                variant_indices = read_variant_indices_file(indices_path)
+                print(f"Loaded {len(variant_indices)} indices from {indices_path}")
+            else:
                 variant_indices = [0]
 
         for problem_path_real, display_path in normalized_problems:
@@ -354,26 +394,28 @@ def build_tasks(
             problem_name = args.name or get_problem_name(relative_problem_path)
 
             for model in models_list:
-                reasoning_model = is_reasoning(model, args.reasoning_override)
+                reasoning_model = is_reasoning_model(model)
                 model_prefix = get_model_prefix(model)
                 provider = detect_provider(model)
 
                 for pos, variant_index in enumerate(variant_indices):
-                    suffix = "" if variant_index == 0 else f"_{variant_index}"
-                    solution_name = f"{model_prefix}_{problem_name}{suffix}"
-                    sol_dir = repo_root / "solutions" / solution_name
+                    # New flat format: {problem}.{model}.py or {problem}.{model}_{variant}.py
+                    variant_suffix = "" if variant_index == 0 else f"_{variant_index}"
+                    model_with_variant = f"{model_prefix}{variant_suffix}"
+                    sol_filename = format_solution_filename(problem_name, model_with_variant, "py")
+                    sol_file = repo_root / "solutions" / sol_filename
 
-                    if sol_dir.exists():
+                    if sol_file.exists():
                         if args.force:
                             if not args.dryrun:
                                 try:
-                                    shutil.rmtree(sol_dir)
+                                    sol_file.unlink()
                                 except Exception as exc:
-                                    print(f"WARNING: Failed to remove {sol_dir}: {exc}; skipping")
-                                    skipped.append(solution_name)
+                                    print(f"WARNING: Failed to remove {sol_file}: {exc}; skipping")
+                                    skipped.append(sol_filename)
                                     continue
                         else:
-                            skipped.append(solution_name)
+                            skipped.append(sol_filename)
                             continue
 
                     tasks.append(
@@ -387,7 +429,7 @@ def build_tasks(
                             reasoning_model=reasoning_model,
                             variant_index=variant_index,
                             variant_position=pos,
-                            solution_name=solution_name,
+                            solution_name=sol_filename,
                             total_variants=len(variant_indices),
                         )
                     )
@@ -422,8 +464,8 @@ Examples:
     problem_group.add_argument("problem_path", nargs="?", help="Path to a single problem dir")
     problem_group.add_argument("--problem", dest="problem_patterns", action="append", default=[],
                                help="Problem name pattern (wildcards supported), repeatable")
-    problem_group.add_argument("--problems-file", dest="problems_file",
-                               help="File containing problem directories")
+    problem_group.add_argument("--problems-file", dest="problems_file", default=None,
+                               help="File containing problem directories (default: auto-discover)")
 
     # Target selection - Solution-based (regenerate existing)
     solution_group = parser.add_argument_group("Solution selection (regenerate existing)")
@@ -444,22 +486,15 @@ Examples:
     api_group.add_argument("--timeout", type=float, default=600.0,
                            help="Request timeout in seconds")
 
-    # Generation parameters
-    gen_group = parser.add_argument_group("Generation parameters")
-    gen_group.add_argument("--reasoning-model", dest="reasoning_override", action="store_const",
-                           const=True, default=None, help="Force reasoning mode")
-    gen_group.add_argument("--no-reasoning-model", dest="reasoning_override", action="store_const",
-                           const=False, help="Force standard mode")
-
     # Execution control
     exec_group = parser.add_argument_group("Execution control")
     exec_group.add_argument("--force", action="store_true", help="Regenerate existing solutions")
     exec_group.add_argument("--dryrun", action="store_true", help="Show what would be generated")
-    exec_group.add_argument("--variants", type=int, default=None,
-                            help="Number of variants per (problem, model)")
-    exec_group.add_argument("--variants-file", default=None,
-                            help="File with variant indices (default: num_solutions.txt)")
-    exec_group.add_argument("--concurrency", type=int, default=max(1, min(8, os.cpu_count() or 4)),
+    exec_group.add_argument("--indices", type=int, default=None,
+                            help="Number of solutions to generate (e.g., --indices 4)")
+    exec_group.add_argument("--indices-file", dest="indices_file", default="indices.txt",
+                            help="File with solution indices to generate")
+    exec_group.add_argument("--concurrency", type=int, default=4,
                             help="Maximum parallel generations")
 
     # Hidden/advanced options
@@ -475,22 +510,13 @@ Examples:
         print("ERROR: Cannot mix problem-based (--problem, --problems-file) and solution-based (--solution, --solutions-file) options")
         sys.exit(1)
 
-    # Default to problems.txt if no targets provided
+    # Default to auto-discovery if no targets provided
+    auto_discover = False
     if not has_problem_targets and not has_solution_targets:
-        problems_default = base_dir / "problems.txt"
-        if problems_default.is_file():
-            args.problems_file = str(problems_default)
-            has_problem_targets = True
-            print(f"No targets provided; defaulting to {problems_default}.")
-        else:
-            print("ERROR: Provide --problem, --problems-file, --solution, or --solutions-file")
-            sys.exit(1)
+        auto_discover = True
+        has_problem_targets = True
 
     # Validate args
-    if args.variants is not None and args.variants < 1:
-        print("ERROR: --variants must be >= 1")
-        sys.exit(1)
-
     if args.concurrency < 1:
         print("ERROR: --concurrency must be >= 1")
         sys.exit(1)
@@ -498,24 +524,19 @@ Examples:
     # Handle --solution patterns (expands to solutions-file format)
     if args.solution_patterns:
         import fnmatch
+        from frontier_cs.gen.solution_format import parse_solution_filename
 
-        # Scan solutions directory and read config.yaml for problem mapping
+        # Scan solutions directory for flat files
         solutions_dir = repo_root / "solutions"
         solution_to_problem: Dict[str, str] = {}
         if solutions_dir.is_dir():
-            for sol_dir in solutions_dir.iterdir():
-                if sol_dir.is_dir() and not sol_dir.name.startswith('.'):
-                    config_file = sol_dir / "config.yaml"
-                    if config_file.exists():
-                        try:
-                            content = config_file.read_text(encoding="utf-8")
-                            for line in content.splitlines():
-                                if line.strip().startswith("problem:"):
-                                    problem = line.split(":", 1)[1].strip()
-                                    solution_to_problem[sol_dir.name] = problem
-                                    break
-                        except Exception:
-                            pass
+            for sol_file in solutions_dir.iterdir():
+                if sol_file.is_file() and not sol_file.name.startswith('.'):
+                    parsed = parse_solution_filename(sol_file.name)
+                    if parsed:
+                        problem, _, _ = parsed
+                        # Problem name from filename maps to problem path
+                        solution_to_problem[sol_file.name] = f"problems/{problem.replace('_', '/')}"
 
         all_solutions = set(solution_to_problem.keys())
 
@@ -542,11 +563,11 @@ Examples:
 
     # Build problem sources
     problem_sources: List[Tuple[Path, str]] = []
+    problems_dir = repo_root / "research" / "problems"
 
     # Handle --problem patterns (supports wildcards)
     if args.problem_patterns:
         import fnmatch
-        problems_dir = repo_root / "research" / "problems"
         all_problems = []
         if problems_dir.is_dir():
             def find_problems_recursive(directory: Path, depth: int = 0, max_depth: int = 3) -> List[Path]:
@@ -602,6 +623,7 @@ Examples:
                 print(f"WARNING: No problems matched pattern '{pattern}'")
 
     if args.problems_file:
+        # Load problems from file
         list_path = Path(args.problems_file)
         if not list_path.is_absolute():
             list_path = base_dir / list_path
@@ -613,6 +635,15 @@ Examples:
             if not stripped or stripped.startswith("#"):
                 continue
             problem_sources.append((Path(stripped), stripped))
+        print(f"Loaded {len(problem_sources)} problems from {list_path}")
+
+    if auto_discover:
+        # Auto-discover all problems from problems/ directory
+        discovered = discover_problems(problems_dir)
+        print(f"Auto-discovered {len(discovered)} problems from {problems_dir}")
+        for prob_path in discovered:
+            rel_path = prob_path.relative_to(problems_dir)
+            problem_sources.append((prob_path, str(rel_path)))
 
     if args.problem_path:
         problem_sources.append((Path(args.problem_path), args.problem_path))
@@ -734,9 +765,9 @@ Examples:
                 by_problem[key].append(task)
 
             for problem, problem_tasks in by_problem.items():
-                print(f"  {problem_name(problem)}:")
+                print(f"  {format_problem_name(problem)}:")
                 for task in problem_tasks:
-                    print(f"    {dim('-')} {solution_name(task.solution_name)} "
+                    print(f"    {dim('-')} {format_solution_name(task.solution_name)} "
                           f"({dim('model:')} {model_name(task.model)}, "
                           f"{dim('variant:')} {task.variant_index})")
                 print()
@@ -776,7 +807,7 @@ Examples:
         variant_label = f"{task.variant_position + 1}/{task.total_variants}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
-        print(f"{cyan('▶')} Generating {solution_name(task.solution_name)} "
+        print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
               f"({dim('model:')} {model_name(task.model)}, {dim('variant')} {variant_label})...")
         print(f"  {dim('Log:')} {dim(str(log_file))}")
 
@@ -805,14 +836,12 @@ Examples:
                 problem_path=task.problem_path,
                 docker_config=docker_config,
             )
-            # Extract problem path (remove "research/problems/" prefix if present)
-            problem_for_config = task.display_path
-            for prefix in ("research/problems/", "problems/"):
-                if problem_for_config.startswith(prefix):
-                    problem_for_config = problem_for_config[len(prefix):]
-                    break
-            sol_dir = create_solution(repo_root, task.solution_name, code, problem=problem_for_config)
-            print(f"  {green('✓')} Created: {green(str(sol_dir))}")
+            # Write solution to flat file
+            solutions_dir = research_dir / "solutions"
+            solutions_dir.mkdir(exist_ok=True)
+            sol_file = solutions_dir / task.solution_name
+            sol_file.write_text(code, encoding="utf-8")
+            print(f"  {green('✓')} Created: {green(str(sol_file))}")
             print(f"  {dim('Log saved:')} {dim(str(log_file))}")
             return ("generated", task.solution_name, None, task.provider, pool_token)
         except Exception as exc:
@@ -845,7 +874,7 @@ Examples:
     if generated:
         print(f"  {green('✓')} Generated: {green(bold(str(len(generated))))} solution(s)")
         for name in generated[:5]:
-            print(f"    {dim('•')} {solution_name(name)}")
+            print(f"    {dim('•')} {format_solution_name(name)}")
         if len(generated) > 5:
             print(f"    {dim(f'... and {len(generated) - 5} more')}")
     else:
@@ -859,6 +888,28 @@ Examples:
         if len(failed) > 5:
             print(f"    {dim(f'... and {len(failed) - 5} more')}")
     print(dim(line))
+
+    # Write detailed summary to file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    summary_file = logs_dir / f"generation_summary_{timestamp}.txt"
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        f.write(f"Generation Summary - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(f"Generated: {len(generated)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in generated:
+            f.write(f"  {name}\n")
+        f.write("\n")
+        f.write(f"Skipped: {len(skipped)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in skipped:
+            f.write(f"  {name}\n")
+        f.write("\n")
+        f.write(f"Failed: {len(failed)} solution(s)\n")
+        f.write("-" * 40 + "\n")
+        for name in failed:
+            f.write(f"  {name}\n")
+    print(f"\n{dim('Detailed summary saved to:')} {cyan(str(summary_file))}")
 
 
 if __name__ == "__main__":

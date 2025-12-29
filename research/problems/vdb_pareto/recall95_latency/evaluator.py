@@ -6,7 +6,6 @@ VDB Design Evaluator (recall95_latency)
 import argparse
 import importlib.util
 import json
-import signal
 import sys
 import time
 from pathlib import Path
@@ -21,28 +20,6 @@ except ImportError:
 
 
 CONFIG_PATH = Path(__file__).with_name("score_config.json")
-TIMEOUT_SECONDS = 3600
-
-
-class TimeoutError(Exception):
-    pass
-
-
-def timeout_handler(signum, frame):
-    raise TimeoutError(f"Solver execution exceeded {TIMEOUT_SECONDS} seconds")
-
-
-def with_timeout(func):
-    def wrapper(*args, **kwargs):
-        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(TIMEOUT_SECONDS)
-        try:
-            result = func(*args, **kwargs)
-            return result
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-    return wrapper
 
 
 def load_score_config() -> dict:
@@ -237,7 +214,6 @@ def assess_pareto(metrics: dict, config: dict = SCORE_CONFIG) -> dict:
     }
 
 
-@with_timeout
 def evaluate(solution_path: Path, k: int = 1) -> dict:
     print("[evaluator] Loading solution module...", file=sys.stderr)
     module = load_solution_module(solution_path)
@@ -298,20 +274,14 @@ def main() -> None:
         with output_path.open('w') as f:
             json.dump(results, f, indent=2)
         print(f"[evaluator] Results written to {output_path}", file=sys.stderr)
-        print(json.dumps(results))
-    except TimeoutError as e:
-        print(f"[evaluator] TIMEOUT FAILURE: {e}", file=sys.stderr)
-        timeout_payload = {'score': 0.0, 'error': str(e), 'error_type': 'TimeoutError', 'timeout_seconds': TIMEOUT_SECONDS}
-        with output_path.open('w') as f:
-            json.dump(timeout_payload, f, indent=2)
-        print(json.dumps(timeout_payload))
-        sys.exit(1)
+        # Format: "score score_unbounded" (space-separated)
+        print(f"{results['score']} {results.get('score_unbounded', results['score'])}")
     except Exception as e:
         error_payload = {'score': 0.0, 'error': str(e), 'error_type': type(e).__name__}
         with output_path.open('w') as f:
             json.dump(error_payload, f, indent=2)
         print(f"[evaluator] ERROR: {e}", file=sys.stderr)
-        print(json.dumps(error_payload))
+        print("0")
         sys.exit(1)
 
 

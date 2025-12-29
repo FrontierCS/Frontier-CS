@@ -193,7 +193,10 @@ def main():
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(result, f)
-    print(json.dumps(result))
+    # Format: "score score_unbounded" (space-separated)
+    score = result.get('score', 0)
+    score_unbounded = result.get('score_unbounded', score)
+    print(f"{score} {score_unbounded}")
     return 0
 
 

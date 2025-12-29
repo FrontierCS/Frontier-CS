@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g npm@latest
 
 # --- 3. Install go-judge (auto-detect architecture) ---
+# Use pinned version with fallback to avoid GitHub API rate limits
+ARG GO_JUDGE_VERSION=v1.11.1
 RUN set -eux; \
   arch="$(uname -m)"; \
   case "$arch" in \
@@ -41,11 +43,16 @@ RUN set -eux; \
     aarch64) goarch="arm64" ;; \
     *) echo "Unsupported arch: $arch" && exit 1 ;; \
   esac; \
-  url=$(curl -fsSL https://api.github.com/repos/criyle/go-judge/releases/latest \
-    | jq -r --arg goarch "$goarch" '.assets[] | select(.name | test("linux.*\($goarch).*tar.gz$")) | .browser_download_url' \
-    | head -n 1); \
-  echo "Downloading go-judge for $arch ($url)"; \
-  curl -fsSL "$url" | tar -xz -C /usr/local/bin go-judge; \
+  # Try direct download first (no API call), fallback to API
+  url="https://github.com/criyle/go-judge/releases/download/${GO_JUDGE_VERSION}/go-judge_linux_${goarch}.tar.gz"; \
+  echo "Downloading go-judge ${GO_JUDGE_VERSION} for $arch"; \
+  if ! curl -fsSL "$url" | tar -xz -C /usr/local/bin go-judge; then \
+    echo "Direct download failed, trying GitHub API..."; \
+    url=$(curl -fsSL https://api.github.com/repos/criyle/go-judge/releases/latest \
+      | jq -r --arg goarch "$goarch" '.assets[] | select(.name | test("linux.*\($goarch).*tar.gz$")) | .browser_download_url' \
+      | head -n 1); \
+    curl -fsSL "$url" | tar -xz -C /usr/local/bin go-judge; \
+  fi; \
   chmod +x /usr/local/bin/go-judge
 
 # --- 4. Set application working directory and install Node.js dependencies ---

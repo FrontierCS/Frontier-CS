@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Check solution coverage: Expected (models × problems × variants) vs Actual (solutions/).
+Check solution coverage for research track.
+
+Scans research/solutions/ for flat solution files ({problem}.{model}.py)
+and compares against expected models × discovered problems × variants.
 
 Usage:
     python check_solutions.py
@@ -10,14 +13,14 @@ Usage:
 import argparse
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from frontier_cs.models import get_model_prefix, sanitize_problem_name
+from frontier_cs.models import get_model_prefix
+from frontier_cs.gen.solution_format import parse_solution_filename, format_solution_filename
 
 
 class Colors:
@@ -78,22 +81,43 @@ def info(text: str) -> str:
     return Colors.c(f"ℹ {text}", Colors.CYAN)
 
 
-def read_problem_list(path: Path) -> List[str]:
-    """Read problems from problems.txt."""
-    problems: List[str] = []
-    if not path.exists():
-        return problems
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+# Directories to exclude when auto-discovering problems
+EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
+
+
+def discover_problems(problems_dir: Path) -> List[str]:
+    """Auto-discover all problem names by finding leaf directories with readme files."""
+    result = []
+
+    def is_excluded(p: Path) -> bool:
+        for part in p.parts:
+            if part in EXCLUDE_DIRS:
+                return True
+        return False
+
+    def has_problem_subdirs(p: Path) -> bool:
+        try:
+            for child in p.iterdir():
+                if child.is_dir() and child.name not in EXCLUDE_DIRS:
+                    return True
+        except PermissionError:
+            pass
+        return False
+
+    for p in problems_dir.rglob('*'):
+        if not p.is_dir():
             continue
-        # Normalize: remove 'research/problems/' prefix
-        for prefix in ("research/problems/", "problems/"):
-            if line.startswith(prefix):
-                line = line[len(prefix):]
-                break
-        problems.append(line)
-    return problems
+        if is_excluded(p):
+            continue
+        # Check if it's a leaf directory (problem) - has readme but no subdirs
+        has_readme = (p / "readme").exists() or (p / "README.md").exists()
+        if has_readme and not has_problem_subdirs(p):
+            # Convert path to problem name (underscore-separated)
+            rel_path = p.relative_to(problems_dir)
+            problem_name = "_".join(rel_path.parts)
+            result.append(problem_name)
+
+    return sorted(result)
 
 
 def read_models_list(path: Path) -> List[str]:
@@ -110,7 +134,7 @@ def read_models_list(path: Path) -> List[str]:
 
 
 def read_variant_indices(path: Path) -> List[int]:
-    """Read variant indices from num_solutions.txt."""
+    """Read variant indices from indices.txt."""
     if not path.exists():
         return [0]
     lines = []
@@ -137,101 +161,53 @@ def read_variant_indices(path: Path) -> List[int]:
     return indices if indices else [0]
 
 
-def read_solution_config(solution_dir: Path) -> Optional[str]:
-    """Read problem from solution's config.yaml."""
-    config_file = solution_dir / "config.yaml"
-    if not config_file.exists():
-        return None
-    try:
-        content = config_file.read_text(encoding="utf-8")
-        for line in content.splitlines():
-            line = line.strip()
-            if line.startswith("problem:"):
-                return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-    return None
-
-
-def find_solution_file(solution_dir: Path) -> Optional[Path]:
-    """Find the solution file in a solution directory."""
-    # Check common solution file names in order of preference
-    for name in ["solve.sh", "solution.py", "solution.cpp"]:
-        candidate = solution_dir / name
-        if candidate.exists():
-            return candidate
-
-    # Fallback: any Python file
-    py_files = list(solution_dir.glob("*.py"))
-    if py_files:
-        return py_files[0]
-
-    return None
-
-
-def check_solution_file(solution_dir: Path) -> tuple[Optional[Path], bool]:
-    """
-    Check solution file existence and validity.
-
-    Returns:
-        (solution_file, is_empty)
-        - solution_file: Path to solution file or None if not found
-        - is_empty: True if file exists but is empty/whitespace only
-    """
-    solution_file = find_solution_file(solution_dir)
-    if solution_file is None:
-        return None, False
-
-    try:
-        content = solution_file.read_text(encoding="utf-8").strip()
-        is_empty = len(content) == 0
-    except Exception:
-        is_empty = True
-
-    return solution_file, is_empty
-
-
 def compute_expected(
     problems: List[str],
     models: List[str],
     variants: List[int],
-) -> Dict[str, str]:
-    """Compute expected solution names -> problem mapping."""
-    expected: Dict[str, str] = {}
+) -> Set[str]:
+    """Compute expected solution filenames."""
+    expected: Set[str] = set()
     for problem in problems:
-        problem_name = sanitize_problem_name(problem)
         for model in models:
             model_prefix = get_model_prefix(model)
             for variant_idx in variants:
                 suffix = "" if variant_idx == 0 else f"_{variant_idx}"
-                solution_name = f"{model_prefix}_{problem_name}{suffix}"
-                expected[solution_name] = problem
+                model_with_variant = f"{model_prefix}{suffix}"
+                filename = format_solution_filename(problem, model_with_variant, "py")
+                expected.add(filename)
     return expected
 
 
-@dataclass
-class SolutionInfo:
-    """Information about a solution directory."""
-    problem: Optional[str]  # Problem from config.yaml (None if missing)
-    solution_file: Optional[Path]  # Solution file path (None if missing)
-    is_empty: bool  # True if solution file is empty
-
-
-def collect_actual(solutions_dir: Path) -> Dict[str, SolutionInfo]:
-    """Collect actual solutions from directory with structure info."""
-    actual: Dict[str, SolutionInfo] = {}
+def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
+    """Scan solutions directory for flat solution files."""
+    solutions: Dict[str, Dict] = {}
     if not solutions_dir.is_dir():
-        return actual
-    for sol_dir in solutions_dir.iterdir():
-        if sol_dir.is_dir() and not sol_dir.name.startswith("."):
-            problem = read_solution_config(sol_dir)
-            solution_file, is_empty = check_solution_file(sol_dir)
-            actual[sol_dir.name] = SolutionInfo(
-                problem=problem,
-                solution_file=solution_file,
-                is_empty=is_empty,
-            )
-    return actual
+        return solutions
+
+    for sol_file in solutions_dir.iterdir():
+        if not sol_file.is_file() or sol_file.name.startswith("."):
+            continue
+
+        parsed = parse_solution_filename(sol_file.name)
+        if parsed:
+            problem, model, ext = parsed
+            # Check if file is empty
+            try:
+                content = sol_file.read_text(encoding="utf-8").strip()
+                is_empty = len(content) == 0
+            except Exception:
+                is_empty = True
+
+            solutions[sol_file.name] = {
+                "problem": problem,
+                "model": model,
+                "ext": ext,
+                "path": sol_file,
+                "is_empty": is_empty,
+            }
+
+    return solutions
 
 
 def main():
@@ -244,28 +220,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--problems-file",
-        type=Path,
-        default=base_dir / "problems.txt",
-        help="Problems file (default: research/scripts/problems.txt)",
-    )
-    parser.add_argument(
         "--models-file",
         type=Path,
         default=base_dir / "models.txt",
         help="Models file (default: research/scripts/models.txt)",
     )
     parser.add_argument(
-        "--variants-file",
+        "--indices-file",
         type=Path,
-        default=base_dir / "num_solutions.txt",
-        help="Variants file (default: research/scripts/num_solutions.txt)",
+        default=base_dir / "indices.txt",
+        help="Indices file (default: research/scripts/indices.txt)",
     )
     parser.add_argument(
         "--solutions-dir",
         type=Path,
-        default=repo_root / "solutions",
-        help="Solutions directory (default: solutions/)",
+        default=research_dir / "solutions",
+        help="Solutions directory (default: research/solutions/)",
+    )
+    parser.add_argument(
+        "--problems-dir",
+        type=Path,
+        default=research_dir / "problems",
+        help="Problems directory for auto-discovery (default: research/problems/)",
     )
     parser.add_argument(
         "--no-color",
@@ -277,39 +253,49 @@ def main():
     if args.no_color:
         Colors.disable()
 
-    # Read config files
-    problems = read_problem_list(args.problems_file) if args.problems_file.exists() else []
-    models = read_models_list(args.models_file) if args.models_file.exists() else []
-    variants = read_variant_indices(args.variants_file) if args.variants_file.exists() else [0]
-
+    # Auto-discover problems
+    problems = discover_problems(args.problems_dir)
     if not problems:
-        print(warning(f"No problems found in {args.problems_file}"))
+        print(warning(f"No problems found in {args.problems_dir}"))
+
+    # Read config files
+    models = read_models_list(args.models_file) if args.models_file.exists() else []
+    variants = read_variant_indices(args.indices_file) if args.indices_file.exists() else [0]
+
     if not models:
         print(warning(f"No models found in {args.models_file}"))
 
     # Compute expected and actual
-    expected = compute_expected(problems, models, variants) if problems and models else {}
-    actual = collect_actual(args.solutions_dir)
-
-    # Analyze
-    expected_set = set(expected.keys())
+    expected = compute_expected(problems, models, variants) if problems and models else set()
+    actual = scan_solutions(args.solutions_dir)
     actual_set = set(actual.keys())
 
-    generated = expected_set & actual_set  # Expected and exists
-    missing = expected_set - actual_set  # Expected but not generated
-    extra = actual_set - expected_set  # Exists but not expected
+    # Analyze
+    generated = expected & actual_set  # Expected and exists
+    missing = expected - actual_set  # Expected but not generated
+    extra = actual_set - expected  # Exists but not expected
 
-    # Structure issues
-    no_config = {name for name, info in actual.items() if info.problem is None}
-    no_solution_file = {name for name, info in actual.items() if info.solution_file is None}
-    empty_solution = {name for name, info in actual.items() if info.is_empty}
+    # Empty solutions
+    empty_solutions = {name for name, info in actual.items() if info["is_empty"]}
 
     # Print report
     print()
     line = "=" * 60
     print(cyan(line))
-    print(cyan(bold("Solution Coverage Report")))
+    print(cyan(bold("Solution Coverage Report (Research Track)")))
     print(cyan(line))
+    print()
+
+    print(f"  Problems (auto-discovered): {bold(str(len(problems)))}")
+    if problems:
+        # Show first few problems
+        shown = problems[:5]
+        more = len(problems) - len(shown)
+        print(f"    {dim(', '.join(shown))}{dim(f', ... +{more} more') if more > 0 else ''}")
+    print(f"  Models: {bold(str(len(models)))}")
+    if models:
+        print(f"    {dim(', '.join(models))}")
+    print(f"  Variants: {bold(str(len(variants)))} (indices: {variants})")
     print()
 
     total_expected = len(expected)
@@ -339,10 +325,14 @@ def main():
         print(warning(f"{total_missing} solutions not yet generated:"))
         by_model: Dict[str, int] = defaultdict(int)
         for name in missing:
-            prefix = name.split("_", 1)[0]
-            by_model[prefix] += 1
-        for prefix in sorted(by_model.keys()):
-            print(f"    {prefix}: {by_model[prefix]} missing")
+            parsed = parse_solution_filename(name)
+            if parsed:
+                _, model, _ = parsed
+                # Extract base model (strip variant suffix)
+                base_model = model.rsplit("_", 1)[0] if "_" in model and model.rsplit("_", 1)[1].isdigit() else model
+                by_model[base_model] += 1
+        for model in sorted(by_model.keys()):
+            print(f"    {model}: {by_model[model]} missing")
         print()
 
     # Extra solutions
@@ -350,58 +340,33 @@ def main():
         print(info(f"{total_extra} extra solutions (not in expected set):"))
         for name in sorted(extra)[:10]:
             info_obj = actual.get(name)
-            problem = info_obj.problem if info_obj else None
-            print(f"    {dim(name)}: {problem or dim('no config.yaml')}")
+            problem = info_obj["problem"] if info_obj else "?"
+            print(f"    {dim(name)}: problem={problem}")
         if len(extra) > 10:
             print(f"    {dim(f'... and {len(extra) - 10} more')}")
         print()
 
-    # Structure issues
-    has_issues = False
-
-    if no_config:
-        has_issues = True
-        print(error(f"{len(no_config)} solutions missing config.yaml:"))
-        for name in sorted(no_config)[:10]:
-            print(f"    {red(name)}")
-        if len(no_config) > 10:
-            print(f"    {dim(f'... and {len(no_config) - 10} more')}")
-        print()
-
-    if no_solution_file:
-        has_issues = True
-        print(error(f"{len(no_solution_file)} solutions missing solve.sh/solution.py:"))
-        for name in sorted(no_solution_file)[:10]:
-            print(f"    {red(name)}")
-        if len(no_solution_file) > 10:
-            print(f"    {dim(f'... and {len(no_solution_file) - 10} more')}")
-        print()
-
-    if empty_solution:
-        has_issues = True
-        print(warning(f"{len(empty_solution)} solutions with empty solution file:"))
-        for name in sorted(empty_solution)[:10]:
-            info_obj = actual.get(name)
-            file_name = info_obj.solution_file.name if info_obj and info_obj.solution_file else "?"
-            print(f"    {yellow(name)} ({dim(file_name)})")
-        if len(empty_solution) > 10:
-            print(f"    {dim(f'... and {len(empty_solution) - 10} more')}")
+    # Empty solutions
+    if empty_solutions:
+        print(warning(f"{len(empty_solutions)} solutions with empty content:"))
+        for name in sorted(empty_solutions)[:10]:
+            print(f"    {yellow(name)}")
+        if len(empty_solutions) > 10:
+            print(f"    {dim(f'... and {len(empty_solutions) - 10} more')}")
         print()
 
     # Summary
     print(dim("─" * 40))
+    has_issues = len(empty_solutions) > 0
     all_good = total_missing == 0 and not has_issues
+
     if all_good:
-        print(success("All expected solutions are generated with valid structure"))
+        print(success("All expected solutions are generated"))
     else:
         if total_missing > 0:
             print(f"  Run {bold('generate_solutions.py')} to generate missing solutions")
-        if no_config:
-            print(f"  Fix solutions missing {bold('config.yaml')}")
-        if no_solution_file:
-            print(f"  Fix solutions missing {bold('solve.sh/solution.py')}")
-        if empty_solution:
-            print(f"  Fix solutions with {bold('empty solution files')}")
+        if empty_solutions:
+            print(f"  Fix {bold(str(len(empty_solutions)))} solutions with empty content")
     print(dim("─" * 40))
 
     # Exit code

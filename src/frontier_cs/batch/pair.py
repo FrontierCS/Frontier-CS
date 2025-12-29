@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..models import get_model_prefix, sanitize_problem_name
+from ..gen.solution_format import parse_solution_filename, format_solution_filename
 
 
 @dataclass
 class Pair:
     """Represents a solution-problem pair for evaluation."""
 
-    solution: str  # Solution identifier (e.g., "gpt5_flash_attn")
+    solution: str  # Solution filename (e.g., "flash_attn.gpt5.py")
     problem: str   # Problem identifier (e.g., "flash_attn")
 
     @property
@@ -72,6 +73,7 @@ def expand_pairs(
     *,
     solutions_dir: Optional[Path] = None,
     validate_paths: bool = True,
+    ext: str = "py",
 ) -> List[Pair]:
     """
     Expand problems × models × variants into pairs.
@@ -82,6 +84,7 @@ def expand_pairs(
         variants: List of variant indices (default: [0] for no suffix)
         solutions_dir: Directory containing solutions (for validation)
         validate_paths: Whether to validate solution paths exist
+        ext: File extension (default: "py", use "cpp" for algorithmic)
 
     Returns:
         List of Pair objects
@@ -98,15 +101,17 @@ def expand_pairs(
             model_prefix = get_model_prefix(model)
 
             for variant_idx in variants:
-                suffix = "" if variant_idx == 0 else f"_{variant_idx}"
-                solution_name = f"{model_prefix}_{problem_name}{suffix}"
+                # Flat format: {problem}.{model}.{ext} or {problem}.{model}_{variant}.{ext}
+                variant_suffix = "" if variant_idx == 0 else f"_{variant_idx}"
+                model_with_variant = f"{model_prefix}{variant_suffix}"
+                solution_filename = format_solution_filename(problem_name, model_with_variant, ext)
 
                 if validate_paths and solutions_dir:
-                    solution_path = solutions_dir / solution_name
+                    solution_path = solutions_dir / solution_filename
                     if not solution_path.exists():
                         continue
 
-                pairs.append(Pair(solution=solution_name, problem=problem))
+                pairs.append(Pair(solution=solution_filename, problem=problem))
 
     return pairs
 
@@ -184,46 +189,18 @@ def read_variants_file(path: Path) -> List[int]:
     return variants if variants else [0]
 
 
-def read_solution_config(solution_dir: Path) -> Optional[str]:
-    """
-    Read problem from a solution's config.yaml.
-
-    Returns:
-        Problem path (e.g., "flash_attn") or None if not found.
-    """
-    config_file = solution_dir / "config.yaml"
-    if not config_file.exists():
-        return None
-
-    try:
-        import yaml
-        with config_file.open("r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        if config and isinstance(config, dict):
-            return config.get("problem")
-    except Exception:
-        # Fallback: simple parsing for "problem: value"
-        try:
-            content = config_file.read_text(encoding="utf-8")
-            for line in content.splitlines():
-                line = line.strip()
-                if line.startswith("problem:"):
-                    return line.split(":", 1)[1].strip()
-        except Exception:
-            pass
-
-    return None
-
-
 def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
     """
-    Scan solutions directory and build pairs from config.yaml files.
+    Scan solutions directory and build pairs from flat solution files.
+
+    New format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
+    Problem is parsed from the filename.
 
     Args:
         solutions_dir: Path to solutions directory
 
     Returns:
-        List of Pair objects for solutions that have valid config.yaml
+        List of Pair objects for valid solution files
     """
     pairs: List[Pair] = []
 
@@ -231,11 +208,12 @@ def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
         return pairs
 
     for solution_path in sorted(solutions_dir.iterdir()):
-        if not solution_path.is_dir() or solution_path.name.startswith("."):
+        if not solution_path.is_file() or solution_path.name.startswith("."):
             continue
 
-        problem = read_solution_config(solution_path)
-        if problem:
+        parsed = parse_solution_filename(solution_path.name)
+        if parsed:
+            problem, _, _ = parsed
             pairs.append(Pair(solution=solution_path.name, problem=problem))
 
     return pairs

@@ -16,7 +16,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Iterator, List, Optional
+from typing import Callable, Dict, List, Optional
 
 try:
     from tqdm import tqdm
@@ -27,7 +27,7 @@ except ImportError:
 from ..runner.base import EvaluationResult, EvaluationStatus
 from ..runner.docker import DockerRunner
 from .pair import Pair, expand_pairs, read_pairs_file, read_problems_file, read_models_file, read_variants_file
-from .state import EvaluationState, PairResult
+from .state import EvaluationState, PairResult, hash_file, hash_directory
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,13 @@ class BatchEvaluator:
         *,
         base_dir: Optional[Path] = None,
         backend: str = "docker",
+        track: str = "research",
         max_concurrent: int = 1,
         timeout: Optional[int] = None,
         bucket_url: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
+        judge_url: Optional[str] = None,
     ):
         """
         Initialize batch evaluator.
@@ -71,6 +73,7 @@ class BatchEvaluator:
             results_dir: Directory for results and state
             base_dir: Frontier-CS base directory (auto-detected if None)
             backend: Evaluation backend ("docker" or "skypilot")
+            track: Evaluation track ("research" or "algorithmic")
             max_concurrent: Maximum concurrent evaluations
             timeout: Default timeout for evaluations (seconds)
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
@@ -78,13 +81,16 @@ class BatchEvaluator:
                        to the bucket and synced incrementally.
             keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            judge_url: URL for algorithmic judge server (default: http://localhost:8081)
         """
+        self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
         self.backend = backend
         self.max_concurrent = max_concurrent
         self.timeout = timeout
         self.bucket_url = bucket_url
+        self.judge_url = judge_url or "http://localhost:8081"
         self._bucket_storage = None
 
         # Initialize bucket storage if provided
@@ -97,34 +103,87 @@ class BatchEvaluator:
 
         self.state_path = self.results_dir / self.STATE_FILE
         self.state = EvaluationState.load(self.state_path)
+        self._pair_hashes: Dict[str, tuple] = {}  # Computed during evaluate_pairs
 
-        # Initialize runner
-        if backend == "docker":
-            self._runner = DockerRunner(base_dir=self.base_dir)
+        # Initialize runner based on track and backend
+        if track == "algorithmic":
+            if backend == "skypilot":
+                from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
+                self._runner = AlgorithmicSkyPilotRunner(
+                    base_dir=self.base_dir,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
+            else:
+                from ..runner.algorithmic import AlgorithmicRunner
+                self._runner = AlgorithmicRunner(judge_url=self.judge_url)
         else:
-            from ..runner.skypilot import SkyPilotRunner
-            self._runner = SkyPilotRunner(
-                base_dir=self.base_dir,
-                bucket_url=bucket_url,
-                keep_cluster=keep_cluster,
-                idle_timeout=idle_timeout,
-            )
+            # research track
+            if backend == "docker":
+                self._runner = DockerRunner(base_dir=self.base_dir)
+            else:
+                from ..runner.skypilot import SkyPilotRunner
+                self._runner = SkyPilotRunner(
+                    base_dir=self.base_dir,
+                    bucket_url=bucket_url,
+                    keep_cluster=keep_cluster,
+                    idle_timeout=idle_timeout,
+                )
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        candidates = [
-            Path(__file__).parents[4],  # src/frontier_cs/batch/evaluator.py -> repo root
-            Path.cwd(),
-            Path.cwd().parent,
-        ]
-        for candidate in candidates:
-            if (candidate / "research").is_dir() and (candidate / "pyproject.toml").exists():
-                return candidate
-        raise RuntimeError("Could not find Frontier-CS base directory")
+        # src/frontier_cs/batch/evaluator.py -> repo root
+        base = Path(__file__).parents[3]
+        if not (base / "pyproject.toml").exists():
+            raise RuntimeError(f"pyproject.toml not found in {base}")
+        return base
 
     def _save_state(self) -> None:
         """Save current state to disk."""
         self.state.save(self.state_path)
+
+    def _compute_hashes(self, pairs: List[Pair]) -> Dict[str, tuple]:
+        """
+        Compute hashes for all pairs.
+
+        Returns:
+            Dict mapping pair.id to (solution_hash, problem_hash)
+        """
+        hashes = {}
+
+        # Cache problem hashes (same problem used by multiple solutions)
+        problem_hash_cache: Dict[str, Optional[str]] = {}
+
+        for pair in pairs:
+            # Solution hash
+            if self.track == "algorithmic":
+                solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            else:
+                solutions_dir = self.base_dir / "research" / "solutions"
+            solution_path = solutions_dir / pair.solution
+
+            if solution_path.exists():
+                sol_hash = hash_file(solution_path)
+            else:
+                sol_hash = None
+
+            # Problem hash (cached)
+            if pair.problem not in problem_hash_cache:
+                if self.track == "algorithmic":
+                    problem_path = self.base_dir / "algorithmic" / "problems" / pair.problem
+                else:
+                    problem_path = self.base_dir / "research" / "problems" / pair.problem
+
+                if problem_path.exists():
+                    problem_hash_cache[pair.problem] = hash_directory(problem_path)
+                else:
+                    problem_hash_cache[pair.problem] = None
+
+            prob_hash = problem_hash_cache[pair.problem]
+
+            hashes[pair.id] = (sol_hash, prob_hash)
+
+        return hashes
 
     def sync_from_bucket(self) -> int:
         """
@@ -169,6 +228,8 @@ class BatchEvaluator:
                     message=result_data.message,
                     duration_seconds=result_data.duration_seconds,
                     timestamp=result_data.timestamp,
+                    solution_hash=getattr(result_data, "solution_hash", None),
+                    problem_hash=getattr(result_data, "problem_hash", None),
                 )
                 merged += 1
 
@@ -191,7 +252,7 @@ class BatchEvaluator:
 
         Args:
             pairs: List of pairs to evaluate
-            resume: Skip already-completed pairs
+            resume: Skip already-completed pairs (with hash validation)
             on_progress: Callback after each evaluation
             show_progress: Show tqdm progress bar
 
@@ -209,11 +270,39 @@ class BatchEvaluator:
             self.state.total_pairs = len(pairs)
         self._save_state()
 
-        # Get pending pairs
+        # Compute hashes for all pairs (for cache invalidation)
+        logger.info("Computing hashes for solution/problem pairs...")
+        self._pair_hashes = self._compute_hashes(pairs)
+
+        # Get pending pairs (with hash validation)
         if resume:
-            pending = self.state.get_pending_pairs(pairs)
-            if len(pending) < len(pairs):
-                logger.info(f"Resuming: {len(pairs) - len(pending)} pairs already complete")
+            pending, invalidated = self.state.get_pending_pairs(pairs, self._pair_hashes)
+
+            # Log invalidated pairs (hash mismatch)
+            if invalidated:
+                logger.warning(
+                    f"⚠️  {len(invalidated)} pair(s) invalidated due to solution/problem changes:"
+                )
+                for p in invalidated[:10]:
+                    old_result = self.state.results.get(p.id)
+                    old_sol_hash = old_result.solution_hash if old_result else None
+                    old_prob_hash = old_result.problem_hash if old_result else None
+                    new_sol_hash, new_prob_hash = self._pair_hashes.get(p.id, (None, None))
+
+                    changes = []
+                    if old_sol_hash != new_sol_hash:
+                        changes.append(f"solution: {old_sol_hash or 'none'} → {new_sol_hash or 'none'}")
+                    if old_prob_hash != new_prob_hash:
+                        changes.append(f"problem: {old_prob_hash or 'none'} → {new_prob_hash or 'none'}")
+
+                    logger.warning(f"  - {p.id}: {', '.join(changes)}")
+
+                if len(invalidated) > 10:
+                    logger.warning(f"  ... and {len(invalidated) - 10} more")
+
+            completed = len(pairs) - len(pending)
+            if completed > 0:
+                logger.info(f"Resuming: {completed} pairs already complete (valid hashes)")
         else:
             pending = pairs
 
@@ -370,13 +459,12 @@ class BatchEvaluator:
 
     def _evaluate_pair(self, pair: Pair) -> EvaluationResult:
         """Evaluate a single pair using the configured runner."""
-        # Find solution file
-        solution_dir = self.base_dir / "solutions" / pair.solution / "resources"
-        solution_file = solution_dir / "solution.py"
-
-        if not solution_file.exists():
-            # Try alternate location
-            solution_file = self.base_dir / "solutions" / pair.solution / "solution.py"
+        # Solutions are in track-specific directories
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+        solution_file = solutions_dir / pair.solution
 
         if not solution_file.exists():
             return EvaluationResult(
@@ -393,19 +481,25 @@ class BatchEvaluator:
         )
 
     def _record_result(self, pair: Pair, result: EvaluationResult) -> None:
-        """Record an evaluation result to state."""
+        """Record an evaluation result to state (with hashes)."""
         status_map = {
             EvaluationStatus.SUCCESS: "success",
             EvaluationStatus.ERROR: "error",
             EvaluationStatus.TIMEOUT: "timeout",
             EvaluationStatus.SKIPPED: "skipped",
         }
+
+        # Get hashes computed during evaluate_pairs
+        sol_hash, prob_hash = getattr(self, "_pair_hashes", {}).get(pair.id, (None, None))
+
         self.state.record_result(
             pair,
             score=result.score,
             status=status_map.get(result.status, "error"),
             message=result.message,
             duration_seconds=result.duration_seconds,
+            solution_hash=sol_hash,
+            problem_hash=prob_hash,
         )
 
     def evaluate_model(
@@ -430,13 +524,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             problems,
             [model],
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         if not pairs:
@@ -467,13 +567,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             [problem],
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         if not pairs:
@@ -529,13 +635,19 @@ class BatchEvaluator:
         models = read_models_file(models_file)
         variants = read_variants_file(variants_file) if variants_file else [0]
 
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         pairs = expand_pairs(
             problems,
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         logger.info(f"Expanded {len(problems)} problems × {len(models)} models × {len(variants)} variants = {len(pairs)} pairs")
@@ -629,13 +741,19 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        solutions_dir = self.base_dir / "solutions"
+        if self.track == "algorithmic":
+            solutions_dir = self.base_dir / "algorithmic" / "solutions"
+            ext = "cpp"
+        else:
+            solutions_dir = self.base_dir / "research" / "solutions"
+            ext = "py"
         all_pairs = expand_pairs(
             problems,
             models,
             variants,
             solutions_dir=solutions_dir,
             validate_paths=True,
+            ext=ext,
         )
 
         # Find pairs not in current state

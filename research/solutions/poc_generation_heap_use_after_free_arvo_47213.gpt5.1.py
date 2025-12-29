@@ -1,0 +1,93 @@
+import os
+
+
+class Solution:
+    def solve(self, src_path: str) -> bytes:
+        lines = []
+        lines.append("# MRuby heap use-after-free stress script")
+        lines.append("# Generated to exercise deep recursion, large argument lists,")
+        lines.append("# and extensive block/proc usage to trigger mrb_stack_extend().")
+        lines.append("")
+        lines.append("def driver(depth, *vals, &blk)")
+        lines.append("  # Normalize the argument array so we have a good number of registers in use.")
+        lines.append("  while vals.length < 20")
+        lines.append("    vals << vals.length")
+        lines.append("  end")
+        lines.append("")
+        # Assign a0..a19 from vals
+        for i in range(20):
+            lines.append(f"  a{i} = vals[{i}] || 0")
+        lines.append("")
+        # Create many locals to inflate register usage
+        for i in range(40):
+            ai = i % 20
+            lines.append(f"  l{i} = a{ai}")
+        lines.append("")
+        lines.append("  sum = 0")
+        # Add locals in chunks to avoid very long lines
+        terms = [f"l{i}" for i in range(40)]
+        chunk = 8
+        while terms:
+            part = terms[:chunk]
+            terms = terms[chunk:]
+            lines.append("  sum += " + " + ".join(part))
+        lines.append("")
+        lines.append("  if depth > 0")
+        lines.append("    begin")
+        lines.append("      # Recursive call with growing argument list to force stack extension.")
+        lines.append("      driver(depth - 1, *vals, sum, &blk)")
+        lines.append("    rescue Exception")
+        lines.append("      # Swallow any recursion-related or other runtime errors to keep executing.")
+        lines.append("    end")
+        lines.append("  else")
+        lines.append("    if blk")
+        lines.append("      begin")
+        lines.append("        # Call the block multiple times with heavy splats to stress call handling.")
+        lines.append("        blk.call(sum, *vals, sum, *vals)")
+        lines.append("        blk.call(*vals, sum, *vals, sum)")
+        lines.append("      rescue Exception")
+        lines.append("        # Ignore any errors from the user-supplied block.")
+        lines.append("      end")
+        lines.append("    end")
+        lines.append("  end")
+        lines.append("  sum")
+        lines.append("end")
+        lines.append("")
+        lines.append("collector = Proc.new do |*args|")
+        lines.append("  acc = 0")
+        lines.append("  i = 0")
+        lines.append("  # Iterate arguments, treating nested arrays specially to increase work.")
+        lines.append("  while i < args.length")
+        lines.append("    v = args[i]")
+        lines.append("    if v.is_a?(Array)")
+        lines.append("      v.each { |x| acc += x.to_i }")
+        lines.append("    else")
+        lines.append("      acc += v.to_i")
+        lines.append("    end")
+        lines.append("    i += 1")
+        lines.append("  end")
+        lines.append("  acc")
+        lines.append("end")
+        lines.append("")
+        lines.append("# Initial argument array; its size will grow with recursion depth.")
+        lines.append("vals = []")
+        lines.append("50.times { |i| vals << i }")
+        lines.append("")
+        lines.append("begin")
+        lines.append("  # Main deep-recursion invocation.")
+        lines.append("  driver(200, *vals, &collector)")
+        lines.append("rescue Exception")
+        lines.append("  # Ignore any top-level exceptions to keep the interpreter running as long as possible.")
+        lines.append("end")
+        lines.append("")
+        lines.append("# Additional invocations from within blocks to exercise more call paths.")
+        lines.append("3.times do |outer|")
+        lines.append("  begin")
+        lines.append("    driver(100, *vals, outer, &collector)")
+        lines.append("  rescue Exception")
+        lines.append("  end")
+        lines.append("end")
+        lines.append("")
+        lines.append("print ''")
+        code = "\n".join(lines)
+        return code.encode("utf-8")

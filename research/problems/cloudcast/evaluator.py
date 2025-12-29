@@ -205,11 +205,12 @@ def main() -> None:
         payload = evaluator.evaluate(solution)
         
         out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(json.dumps(payload))
+        # Format: "score score_unbounded" (space-separated)
+        print(f"{payload['score']} {payload.get('score_unbounded', payload['score'])}")
     except Exception as exc:
         error_payload = {"score": 0.0, "error": str(exc)}
         out_path.write_text(json.dumps(error_payload, indent=2), encoding="utf-8")
-        print(json.dumps(error_payload))
+        print("0")
         raise
 
 

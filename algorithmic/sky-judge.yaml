@@ -3,7 +3,7 @@
 # Usage:
 #   sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
 #   sky status --ip algo-judge  # Get IP
-#   frontier-eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp
+#   frontier eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp
 #
 #   # When done (or let autostop handle it):
 #   sky down algo-judge
@@ -15,10 +15,8 @@ resources:
   disk_size: 50
   ports: 8081
 
-workdir: .
-
 file_mounts:
-  ~/algorithmic: .
+  ~/algorithmic: ./algorithmic
 
 setup: |
   set -euo pipefail
@@ -40,7 +38,7 @@ setup: |
 
 run: |
   set -euo pipefail
-  cd ~/algorithmic/algorithmic
+  cd ~/algorithmic
 
   # Build and start go-judge service
   echo "Building and starting go-judge..."
@@ -62,5 +60,12 @@ run: |
   echo "Go-Judge service is running on port 8081"
   echo "=========================================="
   echo ""
-  echo "Service logs: sudo docker-compose -f ~/algorithmic/algorithmic/docker-compose.yml logs -f"
+  echo "To get the IP address:"
+  echo "  sky status --ip algo-judge"
   echo ""
+  echo "To evaluate:"
+  echo "  frontier eval --algorithmic --judge-url http://<ip>:8081 1 solution.cpp"
+  echo ""
+
+  # Keep running (tail logs)
+  sudo docker-compose logs -f
