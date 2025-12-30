@@ -81,9 +81,8 @@ def load_matmul_from_artifact(artifact_path: Path) -> Any:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                 f.write(artifact["code"])
                 temp_file = f.name
-            
-            # Import the module
-            import importlib.util
+
+            # Import the module (importlib.util already imported at top of file)
             spec = importlib.util.spec_from_file_location("temp_matmul_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

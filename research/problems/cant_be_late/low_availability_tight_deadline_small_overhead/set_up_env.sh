@@ -3,6 +3,9 @@ set -euo pipefail
 
 # Usage: ./set_up_env.sh [config_path]
 
+# Install pyyaml for config parsing (not in base python:3.11-slim image)
+pip install pyyaml --quiet 2>/dev/null || pip3 install pyyaml --quiet 2>/dev/null || true
+
 CONFIG_PATH=${1:-config.yaml}
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Error: config file not found at $CONFIG_PATH" >&2
