@@ -348,8 +348,8 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
     pool_group.add_argument(
         "--pool-accelerators",
         type=str,
-        default="A100:1",
-        help="GPU type and count for workers (default: A100:1)",
+        default="T4:1",
+        help="GPU type and count for workers (default: T4:1)",
     )
     pool_group.add_argument(
         "--pool-cpus",

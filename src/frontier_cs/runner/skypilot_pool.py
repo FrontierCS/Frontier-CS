@@ -31,7 +31,7 @@ class PoolConfig:
     """Configuration for a SkyPilot pool."""
     name: str
     workers: int = 4
-    accelerators: str = "A100:1"
+    accelerators: str = "T4:1"
     cpus: str = "8+"
     memory: str = "32+"
     disk_size: int = 100
@@ -62,7 +62,7 @@ class SkyPilotPoolRunner(Runner):
 
     DEFAULT_POOL_NAME = "frontier-eval-pool"
     DEFAULT_WORKERS = 4
-    DEFAULT_ACCELERATORS = "A100:1"
+    DEFAULT_ACCELERATORS = "T4:1"  # Cost-effective GPU for most evaluations
     DEFAULT_CPUS = "8+"
     DEFAULT_MEMORY = "32+"
     DEFAULT_DISK_SIZE = 100
@@ -134,12 +134,21 @@ class SkyPilotPoolRunner(Runner):
         cfg = self.pool_config
 
         # Build resources
+        cloud = None
+        if cfg.cloud:
+            cloud_map = {
+                "gcp": sky.clouds.GCP(),
+                "aws": sky.clouds.AWS(),
+                "azure": sky.clouds.Azure(),
+            }
+            cloud = cloud_map.get(cfg.cloud.lower())
+
         resources = sky.Resources(
             accelerators=cfg.accelerators,
             cpus=cfg.cpus,
             memory=cfg.memory,
             disk_size=cfg.disk_size,
-            cloud=sky.clouds.CLOUD_REGISTRY.from_str(cfg.cloud) if cfg.cloud else None,
+            cloud=cloud,
             region=cfg.region,
         )
 
