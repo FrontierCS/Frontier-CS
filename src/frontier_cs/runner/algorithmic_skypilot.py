@@ -260,6 +260,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         *,
         timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
+        unbounded: bool = True,
     ) -> EvaluationResult:
         """Evaluate a solution file using cloud-based go-judge."""
         if not solution_path.exists():
@@ -271,7 +272,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
-        return self.evaluate(problem_id, code, timeout=timeout, lang=lang)
+        return self.evaluate(problem_id, code, timeout=timeout, lang=lang, unbounded=unbounded)
 
     def stop_cluster(self) -> bool:
         """Stop the algo-judge cluster."""

@@ -503,6 +503,7 @@ class BatchEvaluator:
             duration_seconds=result.duration_seconds,
             solution_hash=sol_hash,
             problem_hash=prob_hash,
+            score_unbounded=result.score_unbounded,
         )
 
     def evaluate_model(

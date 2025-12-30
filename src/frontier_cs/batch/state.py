@@ -76,6 +76,7 @@ class PairResult:
 
     pair_id: str  # "solution:problem"
     score: Optional[float] = None
+    score_unbounded: Optional[float] = None  # Unbounded score for algorithmic problems
     status: str = "pending"  # pending, running, success, error, timeout, skipped
     message: Optional[str] = None
     duration_seconds: Optional[float] = None
@@ -252,11 +253,13 @@ class EvaluationState:
         duration_seconds: Optional[float] = None,
         solution_hash: Optional[str] = None,
         problem_hash: Optional[str] = None,
+        score_unbounded: Optional[float] = None,
     ) -> None:
         """Record the result of evaluating a pair."""
         self.results[pair.id] = PairResult(
             pair_id=pair.id,
             score=score,
+            score_unbounded=score_unbounded,
             status=status,
             message=message,
             duration_seconds=duration_seconds,
@@ -287,7 +290,7 @@ class EvaluationState:
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "solution", "problem", "score", "status", "message",
+                "solution", "problem", "score", "score_unbounded", "status", "message",
                 "duration_seconds", "timestamp", "solution_hash", "problem_hash"
             ])
 
@@ -297,6 +300,7 @@ class EvaluationState:
                     solution,
                     problem,
                     result.score if result.score is not None else "",
+                    result.score_unbounded if result.score_unbounded is not None else "",
                     result.status,
                     result.message or "",
                     result.duration_seconds or "",

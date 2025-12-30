@@ -217,6 +217,7 @@ class AlgorithmicRunner(Runner):
         *,
         timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
+        unbounded: bool = True,
     ) -> EvaluationResult:
         """Evaluate a solution file."""
         if not solution_path.exists():
@@ -228,7 +229,7 @@ class AlgorithmicRunner(Runner):
 
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
-        return self.evaluate(problem_id, code, timeout=timeout, lang=lang)
+        return self.evaluate(problem_id, code, timeout=timeout, lang=lang, unbounded=unbounded)
 
     def _submit(self, pid: str, code: str, lang: str) -> Optional[str]:
         """Submit solution to judge server."""
