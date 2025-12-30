@@ -246,7 +246,7 @@ def main():
         json.dump(result, fout, indent=2)
     
     # Print summary
-    if result["status"] == "success":
+    if result["status"] == "success" and "geometric_mean_speedup" in result:
         print(f"Evaluation completed successfully!")
         print(f"Score: {result['score']:.2f}/100")
         print(f"Geometric mean speedup: {result['geometric_mean_speedup']:.3f}x")
@@ -255,7 +255,8 @@ def main():
         # Format: "score score_unbounded" (space-separated)
         print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
-        print(f"Evaluation failed: {result['error']}")
+        error_msg = result.get('error', 'Unknown error')
+        print(f"Evaluation failed: {error_msg}")
         # Print error score as last line
         print("0")
         sys.exit(1)

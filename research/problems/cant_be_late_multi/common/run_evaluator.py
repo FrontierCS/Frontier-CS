@@ -297,6 +297,10 @@ def main(
         raise
     else:
         print(json.dumps(payload))
+        # Format: "score score_unbounded" (space-separated) for batch runner
+        score = payload.get("score", 0)
+        score_unbounded = payload.get("score_unbounded", score)
+        print(f"{score} {score_unbounded}")
 
 
 if __name__ == "__main__":
