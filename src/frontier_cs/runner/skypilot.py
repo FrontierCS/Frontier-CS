@@ -193,8 +193,9 @@ class SkyPilotRunner(Runner):
         # Determine timeout
         effective_timeout = timeout or runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
 
-        # Create cluster name
-        digest = hashlib.md5(problem_id.encode()).hexdigest()[:8]
+        # Create cluster name with date to avoid conflicts between runs
+        date_str = datetime.now().strftime("%m%d%H%M")
+        digest = hashlib.md5(f"{problem_id}-{date_str}".encode()).hexdigest()[:8]
         cluster_name = _sanitize_name(f"eval-{problem_id}-{digest}")[:63]
 
         # Build pair_id for bucket storage
