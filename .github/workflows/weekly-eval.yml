@@ -75,6 +75,25 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
+      - name: Cleanup stale clusters from previous runs
+        run: |
+          echo "Cleaning up stale eval-* clusters from previous runs..."
+          # Each workflow run generates new SSH keys, so old clusters are inaccessible
+          # Must delete them before starting new evaluations
+          INSTANCES=$(gcloud compute instances list --project=${{ secrets.GCP_PROJECT_ID }} \
+            --filter="name~'^eval-'" --format="csv[no-heading](name,zone)" 2>/dev/null || true)
+          if [ -n "$INSTANCES" ]; then
+            echo "Found stale instances, deleting..."
+            echo "$INSTANCES" | while IFS=, read -r name zone; do
+              echo "Deleting: $name"
+              gcloud compute instances delete "$name" --zone="$zone" --project=${{ secrets.GCP_PROJECT_ID }} --quiet &
+            done
+            wait
+            echo "Stale clusters deleted"
+          else
+            echo "No stale clusters found"
+          fi
+
       - name: Run batch evaluation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -124,9 +143,15 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           echo "Cleaning up SkyPilot clusters..."
-          # List and terminate all eval-* clusters
-          uv run sky status --refresh 2>/dev/null | grep -E '^eval-' | awk '{print $1}' | while read cluster; do
-            echo "Terminating cluster: $cluster"
-            uv run sky down "$cluster" -y || true
-          done
+          # Use gcloud directly to find and delete all eval-* instances
+          # sky status only shows clusters from current session, missing clusters from previous runs
+          INSTANCES=$(gcloud compute instances list --project=${{ secrets.GCP_PROJECT_ID }} \
+            --filter="name~'^eval-'" --format="csv[no-heading](name,zone)" 2>/dev/null || true)
+          if [ -n "$INSTANCES" ]; then
+            echo "$INSTANCES" | while IFS=, read -r name zone; do
+              echo "Deleting instance: $name in $zone"
+              gcloud compute instances delete "$name" --zone="$zone" --project=${{ secrets.GCP_PROJECT_ID }} --quiet &
+            done
+            wait
+          fi
           echo "Cleanup complete"
