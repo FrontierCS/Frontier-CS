@@ -35,7 +35,7 @@ from frontier_cs.gen import (
 )
 from frontier_cs.gen.solution_format import (
     format_solution_filename,
-    validate_problem_name,
+    get_solution_path,
 )
 
 # Local modules (research-specific)
@@ -399,11 +399,10 @@ def build_tasks(
                 provider = detect_provider(model)
 
                 for pos, variant_index in enumerate(variant_indices):
-                    # New flat format: {problem}.{model}.py or {problem}.{model}_{variant}.py
-                    variant_suffix = "" if variant_index == 0 else f"_{variant_index}"
-                    model_with_variant = f"{model_prefix}{variant_suffix}"
-                    sol_filename = format_solution_filename(problem_name, model_with_variant, "py")
-                    sol_file = repo_root / "solutions" / sol_filename
+                    # Nested format: {problem}/{model}.py or {problem}/{model}_{variant}.py
+                    solutions_dir = repo_root / "research" / "solutions"
+                    sol_file = get_solution_path(solutions_dir, problem_name, model_prefix, "py", variant_index)
+                    sol_filename = str(sol_file.relative_to(solutions_dir))
 
                     if sol_file.exists():
                         if args.force:
@@ -836,10 +835,10 @@ Examples:
                 problem_path=task.problem_path,
                 docker_config=docker_config,
             )
-            # Write solution to flat file
+            # Write solution to nested directory
             solutions_dir = research_dir / "solutions"
-            solutions_dir.mkdir(exist_ok=True)
             sol_file = solutions_dir / task.solution_name
+            sol_file.parent.mkdir(parents=True, exist_ok=True)
             sol_file.write_text(code, encoding="utf-8")
             print(f"  {green('✓')} Created: {green(str(sol_file))}")
             print(f"  {dim('Log saved:')} {dim(str(log_file))}")

@@ -105,151 +105,107 @@ def normalize_solution_name(name: str) -> str:
     return name
 
 
-def sanitize_problem_name(problem: str) -> str:
+def get_solution_filename(model: str, variant: int = 0, ext: str = "py") -> str:
     """
-    Convert problem path to solution name suffix.
+    Get solution filename from model and variant.
 
     Examples:
-        >>> sanitize_problem_name("flash_attn")
-        'flash_attn'
-        >>> sanitize_problem_name("gemm_optimization/squares")
-        'gemm_optimization_squares'
-
-    Args:
-        problem: Problem ID (may contain slashes)
-
-    Returns:
-        Sanitized problem name for use in solution directory names
-    """
-    return problem.replace("/", "_")
-
-
-def build_problem_name_map(problems_dir: "Path") -> Dict[str, str]:
-    """
-    Build a mapping from sanitized problem names to actual problem paths.
-
-    Scans the problems directory recursively to find all problem directories
-    (those containing config.yaml or evaluate.sh).
-
-    Args:
-        problems_dir: Path to problems directory
-
-    Returns:
-        Dict mapping sanitized names to relative paths
-        e.g., {"cant_be_late_high_availability": "cant_be_late/high_availability"}
-    """
-    from pathlib import Path
-
-    mapping: Dict[str, str] = {}
-
-    if not problems_dir.is_dir():
-        return mapping
-
-    def is_problem_dir(path: Path) -> bool:
-        """Check if a directory is a problem (has config.yaml or evaluate.sh)."""
-        return (path / "config.yaml").exists() or (path / "evaluate.sh").exists()
-
-    def scan_recursive(current: Path, rel_path: str = "") -> None:
-        if is_problem_dir(current):
-            # This is a problem directory
-            if rel_path:
-                sanitized = sanitize_problem_name(rel_path)
-                mapping[sanitized] = rel_path
-            return
-
-        # Scan subdirectories
-        for child in current.iterdir():
-            if child.is_dir() and not child.name.startswith(".") and child.name != "__pycache__":
-                child_rel = f"{rel_path}/{child.name}" if rel_path else child.name
-                scan_recursive(child, child_rel)
-
-    scan_recursive(Path(problems_dir))
-    return mapping
-
-
-# Cached problem name map
-_problem_name_map: Optional[Dict[str, str]] = None
-_problem_name_map_dir: Optional[str] = None
-
-
-def resolve_problem_name(sanitized_name: str, problems_dir: "Path") -> Optional[str]:
-    """
-    Resolve a sanitized problem name back to its actual path.
-
-    Args:
-        sanitized_name: Sanitized name like "cant_be_late_high_availability"
-        problems_dir: Path to problems directory
-
-    Returns:
-        Actual problem path like "cant_be_late/high_availability" or None if not found
-    """
-    global _problem_name_map, _problem_name_map_dir
-
-    problems_dir_str = str(problems_dir)
-
-    # Rebuild cache if directory changed
-    if _problem_name_map is None or _problem_name_map_dir != problems_dir_str:
-        _problem_name_map = build_problem_name_map(problems_dir)
-        _problem_name_map_dir = problems_dir_str
-
-    return _problem_name_map.get(sanitized_name)
-
-
-def parse_solution_name(solution_name: str) -> Tuple[str, str, int]:
-    """
-    Parse a solution directory name into components.
-
-    Examples:
-        >>> parse_solution_name("gpt5_flash_attn")
-        ('gpt5', 'flash_attn', 0)
-        >>> parse_solution_name("gpt5_flash_attn_1")
-        ('gpt5', 'flash_attn', 1)
-        >>> parse_solution_name("claude4.5sonnet_gemm_optimization_squares_2")
-        ('claude4.5sonnet', 'gemm_optimization_squares', 2)
-
-    Args:
-        solution_name: Solution directory name
-
-    Returns:
-        Tuple of (model_prefix, problem_slug, variant_index)
-    """
-    # Check for variant suffix
-    parts = solution_name.rsplit("_", 1)
-    variant_index = 0
-    base_name = solution_name
-
-    if len(parts) == 2 and parts[1].isdigit():
-        variant_index = int(parts[1])
-        base_name = parts[0]
-
-    # Split into model prefix and problem slug
-    # Model prefix is the first part before underscore
-    first_underscore = base_name.find("_")
-    if first_underscore == -1:
-        return (base_name, "", variant_index)
-
-    model_prefix = base_name[:first_underscore]
-    problem_slug = base_name[first_underscore + 1:]
-
-    return (model_prefix, problem_slug, variant_index)
-
-
-def build_solution_name(model: str, problem: str, variant_index: int = 0) -> str:
-    """
-    Build a solution directory name from components.
+        >>> get_solution_filename("gpt-5")
+        'gpt5.py'
+        >>> get_solution_filename("gpt-5", variant=1)
+        'gpt5_1.py'
+        >>> get_solution_filename("claude-sonnet-4-5-20250929", variant=2)
+        'claude4.5sonnet_2.py'
 
     Args:
         model: Model name (will be converted to prefix)
-        problem: Problem ID
-        variant_index: Variant index (0 = no suffix)
+        variant: Variant index (0 = no suffix)
+        ext: File extension (default: "py")
 
     Returns:
-        Solution directory name
+        Solution filename
     """
     prefix = get_model_prefix(model)
-    slug = sanitize_problem_name(problem)
-    suffix = "" if variant_index == 0 else f"_{variant_index}"
-    return f"{prefix}_{slug}{suffix}"
+    suffix = "" if variant == 0 else f"_{variant}"
+    return f"{prefix}{suffix}.{ext}"
+
+
+def get_solution_path(
+    solutions_dir: "Path",
+    problem: str,
+    model: str,
+    variant: int = 0,
+    ext: str = "py",
+) -> "Path":
+    """
+    Get solution file path.
+
+    New nested structure:
+        solutions/{problem}/{model_prefix}.py
+        solutions/{problem}/{model_prefix}_{variant}.py
+
+    Examples:
+        >>> get_solution_path(Path("solutions"), "llm_sql/large", "gpt-5")
+        Path('solutions/llm_sql/large/gpt5.py')
+        >>> get_solution_path(Path("solutions"), "flash_attn", "gpt-5", variant=1)
+        Path('solutions/flash_attn/gpt5_1.py')
+
+    Args:
+        solutions_dir: Path to solutions directory
+        problem: Problem ID (e.g., "flash_attn", "llm_sql/large")
+        model: Model name
+        variant: Variant index (0 = no suffix)
+        ext: File extension (default: "py")
+
+    Returns:
+        Path to solution file
+    """
+    from pathlib import Path
+    solutions_dir = Path(solutions_dir)
+    filename = get_solution_filename(model, variant, ext)
+    return solutions_dir / problem / filename
+
+
+def parse_solution_path(
+    solution_path: "Path",
+    solutions_dir: "Path",
+) -> Tuple[str, str, int]:
+    """
+    Parse a solution file path into components.
+
+    Examples:
+        >>> parse_solution_path(Path("solutions/llm_sql/large/gpt5.py"), Path("solutions"))
+        ('llm_sql/large', 'gpt5', 0)
+        >>> parse_solution_path(Path("solutions/flash_attn/gpt5_1.py"), Path("solutions"))
+        ('flash_attn', 'gpt5', 1)
+
+    Args:
+        solution_path: Path to solution file
+        solutions_dir: Path to solutions directory
+
+    Returns:
+        Tuple of (problem, model_prefix, variant)
+    """
+    from pathlib import Path
+    solution_path = Path(solution_path)
+    solutions_dir = Path(solutions_dir)
+
+    # Get problem from directory structure
+    rel = solution_path.relative_to(solutions_dir)
+    problem = str(rel.parent)
+
+    # Parse filename: {model_prefix}.py or {model_prefix}_{variant}.py
+    stem = solution_path.stem  # e.g., "gpt5" or "gpt5_1"
+    parts = stem.rsplit("_", 1)
+
+    if len(parts) == 2 and parts[1].isdigit():
+        model_prefix = parts[0]
+        variant = int(parts[1])
+    else:
+        model_prefix = stem
+        variant = 0
+
+    return (problem, model_prefix, variant)
 
 
 def detect_provider(model: str) -> str:

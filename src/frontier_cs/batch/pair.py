@@ -2,6 +2,14 @@
 Pair expansion and management for batch evaluation.
 
 A Pair represents a (solution, problem) combination to evaluate.
+
+Solution structure (nested):
+    solutions/{problem}/{model}.{ext}
+    solutions/{problem}/{model}_{variant}.{ext}
+
+Examples:
+    solutions/flash_attn/gpt5.py
+    solutions/llm_sql/large/claude4.5sonnet_1.py
 """
 
 import hashlib
@@ -9,16 +17,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from ..models import get_model_prefix, sanitize_problem_name
-from ..gen.solution_format import parse_solution_filename, format_solution_filename
+from ..models import get_model_prefix
+from ..gen.solution_format import format_solution_filename, get_solution_path
 
 
 @dataclass
 class Pair:
     """Represents a solution-problem pair for evaluation."""
 
-    solution: str  # Solution filename (e.g., "flash_attn.gpt5.py")
-    problem: str   # Problem identifier (e.g., "flash_attn")
+    solution: str  # Relative path to solution (e.g., "flash_attn/gpt5.py")
+    problem: str   # Problem identifier (e.g., "flash_attn", "llm_sql/large")
 
     @property
     def id(self) -> str:
@@ -63,9 +71,6 @@ def _sanitize_name(name: str) -> str:
     return sanitized or "job"
 
 
-# get_model_prefix and sanitize_problem_name imported from ..models
-
-
 def expand_pairs(
     problems: List[str],
     models: List[str],
@@ -79,7 +84,7 @@ def expand_pairs(
     Expand problems × models × variants into pairs.
 
     Args:
-        problems: List of problem IDs (e.g., ["flash_attn", "cross_entropy"])
+        problems: List of problem IDs (e.g., ["flash_attn", "llm_sql/large"])
         models: List of model names (e.g., ["gpt-5", "claude-sonnet-4-5"])
         variants: List of variant indices (default: [0] for no suffix)
         solutions_dir: Directory containing solutions (for validation)
@@ -95,23 +100,26 @@ def expand_pairs(
     pairs: List[Pair] = []
 
     for problem in problems:
-        problem_name = sanitize_problem_name(problem)
-
         for model in models:
             model_prefix = get_model_prefix(model)
 
             for variant_idx in variants:
-                # Flat format: {problem}.{model}.{ext} or {problem}.{model}_{variant}.{ext}
-                variant_suffix = "" if variant_idx == 0 else f"_{variant_idx}"
-                model_with_variant = f"{model_prefix}{variant_suffix}"
-                solution_filename = format_solution_filename(problem_name, model_with_variant, ext)
+                # Nested format: {problem}/{model}.{ext}
+                solution_path = get_solution_path(
+                    solutions_dir or Path("."),
+                    problem,
+                    model_prefix,
+                    ext,
+                    variant_idx,
+                )
 
                 if validate_paths and solutions_dir:
-                    solution_path = solutions_dir / solution_filename
                     if not solution_path.exists():
                         continue
 
-                pairs.append(Pair(solution=solution_filename, problem=problem))
+                # Store relative path from solutions_dir
+                rel_path = str(solution_path.relative_to(solutions_dir)) if solutions_dir else solution_path.name
+                pairs.append(Pair(solution=rel_path, problem=problem))
 
     return pairs
 
@@ -191,10 +199,10 @@ def read_variants_file(path: Path) -> List[int]:
 
 def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
     """
-    Scan solutions directory and build pairs from flat solution files.
+    Scan solutions directory and build pairs from nested solution files.
 
-    New format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
-    Problem is parsed from the filename.
+    Nested format: {solutions_dir}/{problem}/{model}.{ext}
+    Problem is the directory path relative to solutions_dir.
 
     Args:
         solutions_dir: Path to solutions directory
@@ -202,18 +210,15 @@ def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
     Returns:
         List of Pair objects for valid solution files
     """
+    from ..gen.solution_format import scan_solutions_dir as _scan_solutions
+
     pairs: List[Pair] = []
 
     if not solutions_dir.is_dir():
         return pairs
 
-    for solution_path in sorted(solutions_dir.iterdir()):
-        if not solution_path.is_file() or solution_path.name.startswith("."):
-            continue
-
-        parsed = parse_solution_filename(solution_path.name)
-        if parsed:
-            problem, _, _ = parsed
-            pairs.append(Pair(solution=solution_path.name, problem=problem))
+    for path, problem, model, variant in _scan_solutions(solutions_dir):
+        rel_path = str(path.relative_to(solutions_dir))
+        pairs.append(Pair(solution=rel_path, problem=problem))
 
     return pairs

@@ -174,13 +174,8 @@ class BatchEvaluator:
                 else:
                     problems_dir = self.base_dir / "research" / "problems"
 
-                # Try direct path first, then resolve sanitized name
+                # With nested solution structure, pair.problem is already nested path
                 problem_path = problems_dir / pair.problem
-                if not problem_path.exists():
-                    from ..models import resolve_problem_name
-                    resolved = resolve_problem_name(pair.problem, problems_dir)
-                    if resolved:
-                        problem_path = problems_dir / resolved
 
                 if problem_path.exists():
                     problem_hash_cache[pair.problem] = hash_directory(problem_path)

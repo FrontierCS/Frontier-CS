@@ -97,25 +97,10 @@ class SkyPilotRunner(Runner):
     def get_problem_path(self, problem_id: str) -> Path:
         """Get the path to a research problem directory.
 
-        Handles both flat problem IDs (flash_attn) and sanitized nested IDs
-        (cant_be_late_high_availability -> cant_be_late/high_availability).
+        With nested solution structure, problem_id is already the nested path
+        (e.g., "cant_be_late/high_availability_loose_deadline_large_overhead").
         """
-        from ..models import resolve_problem_name
-
-        problems_dir = self.research_dir / "problems"
-
-        # First try direct path
-        direct_path = problems_dir / problem_id
-        if direct_path.is_dir():
-            return direct_path
-
-        # Try to resolve sanitized name to actual path
-        resolved = resolve_problem_name(problem_id, problems_dir)
-        if resolved:
-            return problems_dir / resolved
-
-        # Fall back to direct path (will fail later with "not found")
-        return direct_path
+        return self.research_dir / "problems" / problem_id
 
     def evaluate(
         self,

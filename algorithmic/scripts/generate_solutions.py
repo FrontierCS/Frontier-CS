@@ -33,7 +33,7 @@ from frontier_cs.gen import (
     model_name, problem_name as format_problem_name, solution_name as format_solution_name,
 )
 from frontier_cs.gen.io import read_models_file
-from frontier_cs.gen.solution_format import format_solution_filename
+from frontier_cs.gen.solution_format import get_solution_path
 
 
 # C++ competitive programming prompt
@@ -398,11 +398,9 @@ def main():
             reasoning = is_reasoning_model(model)
 
             for variant_idx in solution_indices:
-                # New flat format: {problem}.{model}.cpp or {problem}.{model}_{variant}.cpp
-                variant_suffix = "" if variant_idx == 0 else f"_{variant_idx}"
-                model_with_variant = f"{model_prefix}{variant_suffix}"
-                sol_filename = format_solution_filename(problem_id, model_with_variant, "cpp")
-                sol_path = output_dir / sol_filename
+                # Nested format: {problem}/{model}.cpp or {problem}/{model}_{variant}.cpp
+                sol_path = get_solution_path(output_dir, problem_id, model_prefix, "cpp", variant_idx)
+                sol_filename = str(sol_path.relative_to(output_dir))
 
                 if sol_path.exists() and not args.force:
                     skipped.append(sol_filename)
@@ -482,8 +480,9 @@ def main():
                 timeout=args.timeout,
             )
 
-            # Save solution (solution_name is already the full filename)
+            # Save solution to nested directory
             sol_path = output_dir / task.solution_name
+            sol_path.parent.mkdir(parents=True, exist_ok=True)
             sol_path.write_text(code, encoding="utf-8")
             print(f"  {green('✓')} Saved: {green(str(sol_path))}")
 
