@@ -27,6 +27,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout internal repository (hidden problems)
+        uses: actions/checkout@v4
+        with:
+          repository: FrontierCS/Frontier-CS-internal
+          token: ${{ secrets.INTERNAL_REPO_TOKEN }}
+          path: internal
+
+      - name: Merge internal problems
+        run: |
+          # Copy internal problems to research/problems (overwrite if exists)
+          if [ -d "internal/research/problems" ]; then
+            cp -r internal/research/problems/* research/problems/
+            echo "Merged $(ls -d internal/research/problems/*/ 2>/dev/null | wc -l) problem directories from internal repo"
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
