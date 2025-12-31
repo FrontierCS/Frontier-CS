@@ -6,3 +6,5 @@ runtime:
   docker:
     image: andylizf/triton-tlx:tlx-nv-cu122
     gpu: true
+  resources:
+    accelerators: L4:1
