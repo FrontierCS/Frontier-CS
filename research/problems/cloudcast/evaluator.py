@@ -115,6 +115,7 @@ def evaluate_search_algorithm(program_module: ModuleType, config_files: List[Pat
         }
 
     cost_score = 1.0 / (1.0 + total_cost)
+    time_score = 1.0 / (1.0 + total_transfer_time)
     combined_score = cost_score
     score_unbounded = combined_score * 100
     score = score_unbounded
