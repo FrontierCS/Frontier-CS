@@ -619,8 +619,10 @@ class SkyPilotRunner(Runner):
                 docker_config.gpu,
                 docker_config.dind,
             )
+            # Sanitize task name (problem_id may contain / for nested problems)
+            task_name = _sanitize_name(f"eval-{problem_id}")
             task = sky.Task(
-                name=f"eval-{problem_id}",
+                name=task_name,
                 run=run_script,
                 file_mounts=file_mounts,
             )

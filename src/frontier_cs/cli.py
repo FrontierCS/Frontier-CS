@@ -579,14 +579,16 @@ def run_batch(args: argparse.Namespace) -> int:
         print(f"\nRetrying failed pairs from {args.results_dir}")
         state = batch.retry_failed()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
-        return 0 if state.error_count == 0 else 1
+        # Return 0 even if some evaluations failed - individual errors are expected
+        return 0
 
     # Handle resume command
     if args.resume:
         print(f"\nResuming batch evaluation from {args.results_dir}")
         state = batch.resume()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
-        return 0 if state.error_count == 0 else 1
+        # Return 0 even if some evaluations failed - individual errors are expected
+        return 0
 
     # Determine input mode
     resume = not args.no_resume
@@ -658,7 +660,8 @@ def run_batch(args: argparse.Namespace) -> int:
     if state.error_count > 0:
         print(f"  - failed.txt: {state.error_count} failed pairs")
 
-    return 0 if state.error_count == 0 else 1
+    # Return 0 even if some evaluations failed - individual errors are expected
+    return 0
 
 
 def run_list(args: argparse.Namespace) -> int:
