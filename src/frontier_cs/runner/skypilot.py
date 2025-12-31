@@ -412,20 +412,33 @@ class SkyPilotRunner(Runner):
                 bash -c '
                     set -euo pipefail
                     cp -r /workspace/* /work/
-                    cd /work/research/{problem_id}
 
-                    # Setup environment
-                    if [ -f set_up_env.sh ]; then
-                        chmod +x set_up_env.sh
-                        ./set_up_env.sh
-                    fi
+                    # Make all scripts executable
+                    find /work -name "*.sh" -exec chmod +x {{}} \\;
 
-                    # Copy solution to execution environment
+                    # Create execution_env and copy solution BEFORE set_up_env.sh
+                    # (some scripts expect this structure to exist)
                     mkdir -p /work/execution_env/solution_env
                     cp /work/solution/solution.py /work/execution_env/solution_env/
 
+                    # Create symlink at /execution_env for scripts using wrong relative paths
+                    # (e.g., ../../../execution_env from nested problem dirs resolves to /execution_env)
+                    ln -sfn /work/execution_env /execution_env 2>/dev/null || true
+
+                    cd /work/research/{problem_id}
+
+                    # Install uv if not present (needed by set_up_env.sh)
+                    if ! command -v uv &>/dev/null; then
+                        curl -LsSf https://astral.sh/uv/install.sh | sh
+                        export PATH="$HOME/.local/bin:$PATH"
+                    fi
+
+                    # Setup environment
+                    if [ -f set_up_env.sh ]; then
+                        ./set_up_env.sh
+                    fi
+
                     # Run evaluation
-                    chmod +x evaluate.sh
                     ./evaluate.sh | tee /results/output.txt
 
                     # Extract score (last line with number(s): "85.5" or "85.5 120.3")
@@ -480,3 +493,211 @@ class SkyPilotRunner(Runner):
                 pass
 
         return score, score_unbounded, logs
+
+    # =========================================================================
+    # Cluster Pool Methods - For efficient batch evaluation with cluster reuse
+    # =========================================================================
+
+    def create_cluster(
+        self,
+        cluster_name: str,
+        *,
+        accelerators: Optional[str] = None,
+        cpus: Optional[str] = None,
+        memory: Optional[str] = None,
+        disk_size: Optional[int] = None,
+    ) -> bool:
+        """
+        Create a cluster for reuse across multiple evaluations.
+
+        Args:
+            cluster_name: Name for the cluster
+            accelerators: GPU spec (e.g., "T4:1", "L4:1")
+            cpus: CPU spec (e.g., "8+")
+            memory: Memory spec (e.g., "16+")
+            disk_size: Disk size in GB
+
+        Returns:
+            True if cluster was created successfully
+        """
+        import sky
+
+        resources = sky.Resources(
+            cloud=self.cloud,
+            region=self.region,
+            cpus=cpus or self.DEFAULT_CPUS,
+            memory=memory or self.DEFAULT_MEMORY,
+            accelerators=accelerators or self.DEFAULT_GPU,
+            disk_size=disk_size or self.DEFAULT_DISK_SIZE,
+        )
+
+        task = sky.Task(
+            name=f"setup-{cluster_name}",
+            setup=self._get_setup_script(),
+            run="echo 'Cluster ready'",
+        )
+        task.set_resources(resources)
+
+        try:
+            request_id = sky.launch(
+                task,
+                cluster_name=cluster_name,
+                idle_minutes_to_autostop=self.idle_timeout,
+            )
+            sky.stream_and_get(request_id)
+            return True
+        except Exception as e:
+            print(f"Failed to create cluster {cluster_name}: {e}")
+            return False
+
+    def exec_on_cluster(
+        self,
+        cluster_name: str,
+        problem_id: str,
+        solution_path: Path,
+        *,
+        timeout: Optional[int] = None,
+        solution_id: Optional[str] = None,
+    ) -> EvaluationResult:
+        """
+        Execute evaluation on an existing cluster using sky.launch.
+
+        Uses sky.launch instead of sky.exec because:
+        - sky.exec does NOT sync file_mounts (only workdir)
+        - sky.launch with existing cluster will:
+          1. Skip provisioning (cluster already UP)
+          2. Sync file_mounts
+          3. Skip setup (provisioning was skipped)
+          4. Execute the task
+
+        Args:
+            cluster_name: Name of existing cluster
+            problem_id: Problem ID
+            solution_path: Path to solution file
+            timeout: Optional timeout in seconds
+            solution_id: Optional solution ID
+
+        Returns:
+            EvaluationResult with score and status
+        """
+        import sky
+
+        start_time = time.time()
+
+        problem_path = self.get_problem_path(problem_id)
+        if not problem_path.exists():
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                message=f"Problem not found: {problem_path}",
+            )
+
+        if not solution_path.exists():
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                message=f"Solution file not found: {solution_path}",
+            )
+
+        # Load config
+        runtime_config = load_runtime_config(problem_path)
+        docker_config = runtime_config.docker
+
+        # Create workspace with file mounts
+        with tempfile.TemporaryDirectory(prefix="frontier_exec_") as workspace_dir:
+            workspace = Path(workspace_dir)
+            file_mounts = self._setup_mounts(workspace, problem_id, problem_path, solution_path)
+
+            # Build task with file_mounts
+            run_script = self._get_run_script(
+                problem_id,
+                docker_config.image,
+                docker_config.gpu,
+                docker_config.dind,
+            )
+            task = sky.Task(
+                name=f"eval-{problem_id}",
+                run=run_script,
+                file_mounts=file_mounts,
+            )
+
+            try:
+                # Use sky.launch on existing cluster
+                # - Skips provisioning (cluster already UP with same config)
+                # - Syncs file_mounts
+                # - Skips setup (provisioning was skipped)
+                # - Executes the task
+                request_id = sky.launch(
+                    task,
+                    cluster_name=cluster_name,
+                    idle_minutes_to_autostop=self.idle_timeout,
+                )
+                result = sky.stream_and_get(request_id)
+
+                job_id = result[0] if isinstance(result, tuple) and len(result) > 0 else None
+                handle = result[1] if isinstance(result, tuple) and len(result) > 1 else None
+
+                # Wait for completion
+                exit_code = 0
+                if job_id is not None:
+                    exit_code = sky.tail_logs(cluster_name, job_id, follow=True)
+
+                duration = time.time() - start_time
+
+                # Fetch results
+                score, score_unbounded, logs = self._fetch_results(cluster_name, handle)
+
+                if score is not None:
+                    return EvaluationResult(
+                        problem_id=problem_id,
+                        score=score,
+                        score_unbounded=score_unbounded,
+                        status=EvaluationStatus.SUCCESS,
+                        logs=logs,
+                        duration_seconds=duration,
+                    )
+
+                return EvaluationResult(
+                    problem_id=problem_id,
+                    status=EvaluationStatus.ERROR,
+                    message=f"Job failed with exit code {exit_code}",
+                    logs=logs,
+                    duration_seconds=duration,
+                )
+
+            except Exception as e:
+                return EvaluationResult(
+                    problem_id=problem_id,
+                    status=EvaluationStatus.ERROR,
+                    message=str(e),
+                    duration_seconds=time.time() - start_time,
+                )
+
+    @staticmethod
+    def down_cluster(cluster_name: str) -> bool:
+        """Terminate a cluster."""
+        import sky
+
+        try:
+            request_id = sky.down(cluster_name)
+            sky.stream_and_get(request_id)
+            return True
+        except Exception as e:
+            print(f"Failed to terminate cluster {cluster_name}: {e}")
+            return False
+
+    @staticmethod
+    def down_clusters(cluster_names: list) -> None:
+        """Terminate multiple clusters in parallel."""
+        import sky
+        from concurrent.futures import ThreadPoolExecutor
+
+        def down_one(name):
+            try:
+                request_id = sky.down(name)
+                sky.stream_and_get(request_id)
+            except Exception:
+                pass
+
+        with ThreadPoolExecutor(max_workers=len(cluster_names)) as executor:
+            executor.map(down_one, cluster_names)

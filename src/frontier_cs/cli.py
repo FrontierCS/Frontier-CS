@@ -296,6 +296,11 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Use SkyPilot for cloud evaluation",
     )
     batch_backend.add_argument(
+        "--pool-size",
+        type=int,
+        help="Number of parallel workers (alias for --max-concurrent)",
+    )
+    batch_backend.add_argument(
         "--idle-timeout",
         type=int,
         default=10,
@@ -491,18 +496,24 @@ def run_batch(args: argparse.Namespace) -> int:
         format="[%(levelname)s] %(message)s",
     )
 
-    # Create batch evaluator
+    # Determine backend
     backend = "skypilot" if args.skypilot else "docker"
+
     track = "algorithmic" if getattr(args, "algorithmic", False) else "research"
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
     judge_url = getattr(args, "judge_url", None)
+
+    # Determine pool size (--pool-size takes precedence over --max-concurrent)
+    pool_size = getattr(args, "pool_size", None) or args.max_concurrent
+
+    # Create batch evaluator
     batch = BatchEvaluator(
         results_dir=args.results_dir,
         backend=backend,
         track=track,
-        max_concurrent=args.max_concurrent,
+        pool_size=pool_size,
         timeout=args.timeout,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
@@ -592,7 +603,8 @@ def run_batch(args: argparse.Namespace) -> int:
             solution, problem = p.split(":", 1)
             pairs.append(Pair(solution=solution.strip(), problem=problem.strip()))
 
-        print(f"\nBatch evaluation: {len(pairs)} pairs")
+        backend_info = f" [backend={backend}]" if backend != "docker" else ""
+        print(f"\nBatch evaluation{backend_info}: {len(pairs)} pairs")
         state = batch.evaluate_pairs(pairs, resume=resume)
 
     elif args.pairs_file:
@@ -601,7 +613,8 @@ def run_batch(args: argparse.Namespace) -> int:
             print(f"Error: Pairs file not found: {args.pairs_file}", file=sys.stderr)
             return 1
 
-        print(f"\nBatch evaluation from pairs file: {args.pairs_file}")
+        backend_info = f" [backend={backend}]" if backend != "docker" else ""
+        print(f"\nBatch evaluation{backend_info} from pairs file: {args.pairs_file}")
         state = batch.evaluate_pairs_file(args.pairs_file, resume=resume)
 
     else:
@@ -626,7 +639,8 @@ def run_batch(args: argparse.Namespace) -> int:
             print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1
 
-        print(f"\nBatch evaluation ({track}): {len(pairs)} solutions from {solutions_dir}")
+        backend_info = f", backend={backend}" if backend != "docker" else ""
+        print(f"\nBatch evaluation ({track}{backend_info}): {len(pairs)} solutions from {solutions_dir}")
         state = batch.evaluate_pairs(pairs, resume=resume)
 
     # Print summary

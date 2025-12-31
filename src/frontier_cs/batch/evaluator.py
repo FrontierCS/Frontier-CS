@@ -4,7 +4,7 @@ Batch evaluator for running multiple evaluations with incremental progress.
 Supports:
 - Batch evaluation of multiple solution-problem pairs
 - Incremental evaluation (resume from where you left off)
-- Parallel execution (configurable concurrency)
+- Parallel execution with worker pool (configurable pool_size)
 - Both Docker and SkyPilot backends
 - Bucket storage for results (S3/GCS)
 - Progress bar with tqdm
@@ -12,7 +12,7 @@ Supports:
 """
 
 import logging
-import sys
+import queue
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -36,18 +36,21 @@ class BatchEvaluator:
     """
     Batch evaluator with incremental progress tracking.
 
+    Uses a unified worker pool model:
+    - pool_size=1: Sequential evaluation (single worker)
+    - pool_size=N: Parallel evaluation with N workers
+
+    For SkyPilot backend, workers are reusable clusters created once
+    at the start and terminated at the end, avoiding cold start overhead.
+
     Example usage:
-        # Evaluate all problems for a model
-        evaluator = BatchEvaluator(results_dir="results/gpt5")
-        evaluator.evaluate_model("gpt-5", problems=["flash_attn", "cross_entropy"])
-
-        # Resume an interrupted evaluation
-        evaluator = BatchEvaluator(results_dir="results/gpt5")
-        evaluator.resume()
-
-        # Evaluate from a pairs file
-        evaluator = BatchEvaluator(results_dir="results/batch1")
-        evaluator.# Use batch.scan_solutions_dir() or evaluate_pairs()
+        # Evaluate with 4 parallel workers
+        evaluator = BatchEvaluator(
+            results_dir="results/batch1",
+            backend="skypilot",
+            pool_size=4,
+        )
+        evaluator.evaluate_pairs(pairs)
     """
 
     STATE_FILE = ".state.json"
@@ -59,12 +62,14 @@ class BatchEvaluator:
         base_dir: Optional[Path] = None,
         backend: str = "docker",
         track: str = "research",
-        max_concurrent: int = 1,
+        pool_size: int = 1,
         timeout: Optional[int] = None,
         bucket_url: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
         judge_url: Optional[str] = None,
+        # Legacy alias
+        max_concurrent: Optional[int] = None,
     ):
         """
         Initialize batch evaluator.
@@ -74,24 +79,28 @@ class BatchEvaluator:
             base_dir: Frontier-CS base directory (auto-detected if None)
             backend: Evaluation backend ("docker" or "skypilot")
             track: Evaluation track ("research" or "algorithmic")
-            max_concurrent: Maximum concurrent evaluations
+            pool_size: Number of parallel workers (1 = sequential)
             timeout: Default timeout for evaluations (seconds)
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
-                       Only used with skypilot backend. Results are written directly
-                       to the bucket and synced incrementally.
-            keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
-            idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            keep_cluster: Keep SkyPilot clusters running after evaluation
+            idle_timeout: Minutes of idleness before autostop (default: 10)
             judge_url: URL for algorithmic judge server (default: http://localhost:8081)
+            max_concurrent: Legacy alias for pool_size
         """
         self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
         self.backend = backend
-        self.max_concurrent = max_concurrent
+        self.pool_size = max_concurrent if max_concurrent is not None else pool_size
         self.timeout = timeout
         self.bucket_url = bucket_url
+        self.keep_cluster = keep_cluster
+        self.idle_timeout = idle_timeout
         self.judge_url = judge_url or "http://localhost:8081"
         self._bucket_storage = None
+
+        # For backwards compatibility
+        self.max_concurrent = self.pool_size
 
         # Initialize bucket storage if provided
         if bucket_url:
@@ -103,120 +112,92 @@ class BatchEvaluator:
 
         self.state_path = self.results_dir / self.STATE_FILE
         self.state = EvaluationState.load(self.state_path)
-        self._pair_hashes: Dict[str, tuple] = {}  # Computed during evaluate_pairs
+        self._pair_hashes: Dict[str, tuple] = {}
 
         # Initialize runner based on track and backend
-        if track == "algorithmic":
-            if backend == "skypilot":
-                from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
-                self._runner = AlgorithmicSkyPilotRunner(
-                    base_dir=self.base_dir,
-                    keep_cluster=keep_cluster,
-                    idle_timeout=idle_timeout,
-                )
-            else:
-                from ..runner.algorithmic import AlgorithmicRunner
-                self._runner = AlgorithmicRunner(judge_url=self.judge_url)
-        else:
-            # research track
-            if backend == "docker":
-                self._runner = DockerRunner(base_dir=self.base_dir)
-            else:
-                from ..runner.skypilot import SkyPilotRunner
-                self._runner = SkyPilotRunner(
-                    base_dir=self.base_dir,
-                    bucket_url=bucket_url,
-                    keep_cluster=keep_cluster,
-                    idle_timeout=idle_timeout,
-                )
+        self._runner = self._create_runner()
+
+        # For SkyPilot cluster pool
+        self._cluster_names: List[str] = []
 
     def _find_base_dir(self) -> Path:
         """Find the Frontier-CS base directory."""
-        # src/frontier_cs/batch/evaluator.py -> repo root
         base = Path(__file__).parents[3]
         if not (base / "pyproject.toml").exists():
             raise RuntimeError(f"pyproject.toml not found in {base}")
         return base
+
+    def _create_runner(self):
+        """Create the appropriate runner based on track and backend."""
+        if self.track == "algorithmic":
+            if self.backend == "skypilot":
+                from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
+                return AlgorithmicSkyPilotRunner(
+                    base_dir=self.base_dir,
+                    keep_cluster=self.keep_cluster,
+                    idle_timeout=self.idle_timeout,
+                )
+            else:
+                from ..runner.algorithmic import AlgorithmicRunner
+                return AlgorithmicRunner(judge_url=self.judge_url)
+        else:
+            # research track
+            if self.backend == "docker":
+                return DockerRunner(base_dir=self.base_dir)
+            else:
+                from ..runner.skypilot import SkyPilotRunner
+                return SkyPilotRunner(
+                    base_dir=self.base_dir,
+                    bucket_url=self.bucket_url,
+                    keep_cluster=self.keep_cluster,
+                    idle_timeout=self.idle_timeout,
+                )
 
     def _save_state(self) -> None:
         """Save current state to disk."""
         self.state.save(self.state_path)
 
     def _compute_hashes(self, pairs: List[Pair]) -> Dict[str, tuple]:
-        """
-        Compute hashes for all pairs.
-
-        Returns:
-            Dict mapping pair.id to (solution_hash, problem_hash)
-        """
+        """Compute hashes for all pairs for cache invalidation."""
         hashes = {}
-
-        # Cache problem hashes (same problem used by multiple solutions)
         problem_hash_cache: Dict[str, Optional[str]] = {}
 
         for pair in pairs:
-            # Solution hash
             if self.track == "algorithmic":
                 solutions_dir = self.base_dir / "algorithmic" / "solutions"
             else:
                 solutions_dir = self.base_dir / "research" / "solutions"
             solution_path = solutions_dir / pair.solution
 
-            if solution_path.exists():
-                sol_hash = hash_file(solution_path)
-            else:
-                sol_hash = None
+            sol_hash = hash_file(solution_path) if solution_path.exists() else None
 
-            # Problem hash (cached)
             if pair.problem not in problem_hash_cache:
                 if self.track == "algorithmic":
                     problems_dir = self.base_dir / "algorithmic" / "problems"
                 else:
                     problems_dir = self.base_dir / "research" / "problems"
-
-                # With nested solution structure, pair.problem is already nested path
                 problem_path = problems_dir / pair.problem
+                problem_hash_cache[pair.problem] = hash_directory(problem_path) if problem_path.exists() else None
 
-                if problem_path.exists():
-                    problem_hash_cache[pair.problem] = hash_directory(problem_path)
-                else:
-                    problem_hash_cache[pair.problem] = None
-
-            prob_hash = problem_hash_cache[pair.problem]
-
-            hashes[pair.id] = (sol_hash, prob_hash)
+            hashes[pair.id] = (sol_hash, problem_hash_cache[pair.problem])
 
         return hashes
 
     def sync_from_bucket(self) -> int:
-        """
-        Sync results from bucket to local state.
-
-        Downloads new results from the bucket and merges them into the local state.
-        Uses incremental sync (--size-only) to only download changed files.
-
-        Returns:
-            Number of results synced from bucket
-        """
+        """Sync results from bucket to local state."""
         if not self._bucket_storage:
             logger.warning("No bucket storage configured")
             return 0
 
-        # Sync files from bucket to local cache
         count = self._bucket_storage.sync_from_bucket()
-
         if count == 0:
             return 0
 
-        # Read all results from bucket and merge into state
         bucket_results = self._bucket_storage.read_all_results()
         merged = 0
 
         for pair_id, result_data in bucket_results.items():
-            # Check if we need to update local state
             existing = self.state.results.get(pair_id)
-
-            # Update if: not in state, or bucket has newer/better result
             should_update = (
                 existing is None
                 or not existing.is_complete
@@ -251,7 +232,7 @@ class BatchEvaluator:
         show_progress: bool = True,
     ) -> EvaluationState:
         """
-        Evaluate a list of pairs.
+        Evaluate a list of pairs using the worker pool.
 
         Args:
             pairs: List of pairs to evaluate
@@ -262,7 +243,7 @@ class BatchEvaluator:
         Returns:
             Final evaluation state
         """
-        # Sync from bucket first if using bucket storage (get results from previous runs)
+        # Sync from bucket first if using bucket storage
         if self._bucket_storage:
             self.sync_from_bucket()
 
@@ -273,39 +254,18 @@ class BatchEvaluator:
             self.state.total_pairs = len(pairs)
         self._save_state()
 
-        # Compute hashes for all pairs (for cache invalidation)
+        # Compute hashes for cache invalidation
         logger.info("Computing hashes for solution/problem pairs...")
         self._pair_hashes = self._compute_hashes(pairs)
 
-        # Get pending pairs (with hash validation)
+        # Get pending pairs
         if resume:
             pending, invalidated = self.state.get_pending_pairs(pairs, self._pair_hashes)
-
-            # Log invalidated pairs (hash mismatch)
             if invalidated:
-                logger.warning(
-                    f"⚠️  {len(invalidated)} pair(s) invalidated due to solution/problem changes:"
-                )
-                for p in invalidated[:10]:
-                    old_result = self.state.results.get(p.id)
-                    old_sol_hash = old_result.solution_hash if old_result else None
-                    old_prob_hash = old_result.problem_hash if old_result else None
-                    new_sol_hash, new_prob_hash = self._pair_hashes.get(p.id, (None, None))
-
-                    changes = []
-                    if old_sol_hash != new_sol_hash:
-                        changes.append(f"solution: {old_sol_hash or 'none'} → {new_sol_hash or 'none'}")
-                    if old_prob_hash != new_prob_hash:
-                        changes.append(f"problem: {old_prob_hash or 'none'} → {new_prob_hash or 'none'}")
-
-                    logger.warning(f"  - {p.id}: {', '.join(changes)}")
-
-                if len(invalidated) > 10:
-                    logger.warning(f"  ... and {len(invalidated) - 10} more")
-
+                logger.warning(f"⚠️  {len(invalidated)} pair(s) invalidated due to changes")
             completed = len(pairs) - len(pending)
             if completed > 0:
-                logger.info(f"Resuming: {completed} pairs already complete (valid hashes)")
+                logger.info(f"Resuming: {completed} pairs already complete")
         else:
             pending = pairs
 
@@ -314,123 +274,74 @@ class BatchEvaluator:
             self._export_all_results(pairs)
             return self.state
 
-        logger.info(f"Evaluating {len(pending)} pairs (max_concurrent={self.max_concurrent})")
+        logger.info(f"Evaluating {len(pending)} pairs (pool_size={self.pool_size})")
 
-        # Evaluate pairs
-        if self.max_concurrent == 1:
-            self._evaluate_sequential(pending, on_progress, show_progress)
-        else:
-            self._evaluate_parallel(pending, on_progress, show_progress)
+        # Evaluate with unified worker pool
+        self._evaluate_with_workers(pending, on_progress, show_progress)
 
         # Export all results
         self._export_all_results(pairs)
 
         return self.state
 
-    def _export_all_results(self, all_pairs: Optional[List[Pair]] = None) -> None:
-        """Export all result files."""
-        # Sync from bucket to get latest results (for bucket mode)
-        if self._bucket_storage:
-            self.sync_from_bucket()
-
-        # Basic results
-        self.state.export_csv(self.results_dir / "results.csv")
-        self.state.export_summary(self.results_dir / "summary.txt")
-
-        # Failed/pending/skipped
-        failed_count = self.state.export_failed(self.results_dir / "failed.txt")
-        pending_count = self.state.export_pending(self.results_dir / "pending.txt", all_pairs)
-        skipped_count = self.state.export_skipped(self.results_dir / "skipped.txt")
-
-        # Aggregated results
-        self.state.export_aggregated_csv(self.results_dir / "by_model.csv", by="model")
-        self.state.export_aggregated_csv(self.results_dir / "by_problem.csv", by="problem")
-
-        logger.info(f"Results exported to {self.results_dir}")
-        if failed_count > 0:
-            logger.info(f"  - {failed_count} failed pairs in failed.txt")
-        if pending_count > 0:
-            logger.info(f"  - {pending_count} pending pairs in pending.txt")
-
-    def _evaluate_sequential(
+    def _evaluate_with_workers(
         self,
         pairs: List[Pair],
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]],
         show_progress: bool = True,
     ) -> None:
-        """Evaluate pairs sequentially with optional progress bar."""
-        iterator = pairs
-        pbar = None
+        """
+        Evaluate pairs using a pool of workers.
 
-        if show_progress and HAS_TQDM:
-            pbar = tqdm(total=len(pairs), desc="Evaluating", unit="pair", dynamic_ncols=True)
-            iterator = pairs  # We'll update pbar manually
+        For Docker: Each worker is a thread that runs docker evaluations.
+        For SkyPilot: Each worker is a reusable cluster. Clusters are created
+                     once at the start and reused for all evaluations.
 
-        try:
-            for i, pair in enumerate(pairs, 1):
-                if pbar:
-                    pbar.set_postfix_str(pair.id[:40])
-                else:
-                    logger.info(f"[{i}/{len(pairs)}] Evaluating {pair.id}")
+        When pool_size=1, this is equivalent to sequential evaluation.
+        """
+        # Create work queue
+        work_queue: queue.Queue[Pair] = queue.Queue()
+        for pair in pairs:
+            work_queue.put(pair)
 
-                self.state.mark_running(pair)
-                self._save_state()
-
-                try:
-                    result = self._evaluate_pair(pair)
-                    self._record_result(pair, result)
-
-                    if on_progress:
-                        on_progress(pair, result)
-
-                    # Log result
-                    status_str = "OK" if result.success else "FAIL"
-                    score_str = str(result.score) if result.success else (result.message or "error")
-                    if pbar:
-                        pbar.write(f"  [{status_str}] {pair.id}: {score_str}")
-
-                except Exception as e:
-                    logger.error(f"Error evaluating {pair.id}: {e}")
-                    self.state.record_result(
-                        pair,
-                        score=None,
-                        status="error",
-                        message=str(e),
-                    )
-                    if pbar:
-                        pbar.write(f"  [ERROR] {pair.id}: {e}")
-                finally:
-                    self._save_state()
-                    if pbar:
-                        pbar.update(1)
-        finally:
-            if pbar:
-                pbar.close()
-
-    def _evaluate_parallel(
-        self,
-        pairs: List[Pair],
-        on_progress: Optional[Callable[[Pair, EvaluationResult], None]],
-        show_progress: bool = True,
-    ) -> None:
-        """Evaluate pairs in parallel with optional progress bar."""
+        # Setup progress bar
         pbar = None
         if show_progress and HAS_TQDM:
             pbar = tqdm(total=len(pairs), desc="Evaluating", unit="pair", dynamic_ncols=True)
 
-        try:
-            with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
-                futures = {}
-                for pair in pairs:
-                    self.state.mark_running(pair)
-                    future = executor.submit(self._evaluate_pair, pair)
-                    futures[future] = pair
-                self._save_state()
+        # For SkyPilot with pool_size > 1, create reusable clusters
+        if self.backend == "skypilot" and self.pool_size > 1:
+            self._create_cluster_pool()
 
-                for future in as_completed(futures):
-                    pair = futures[future]
+        try:
+            # Define worker function
+            def worker(worker_id: int):
+                cluster_name = self._cluster_names[worker_id] if self._cluster_names else None
+
+                while True:
                     try:
-                        result = future.result()
+                        pair = work_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                    self.state.mark_running(pair)
+                    self._save_state()
+
+                    try:
+                        # Execute evaluation
+                        if cluster_name:
+                            # Use existing cluster with sky exec
+                            result = self._runner.exec_on_cluster(
+                                cluster_name,
+                                pair.problem,
+                                self._get_solution_path(pair),
+                                timeout=self.timeout,
+                                solution_id=pair.solution,
+                            )
+                        else:
+                            # Regular evaluation (docker or single skypilot)
+                            result = self._evaluate_pair(pair)
+
                         self._record_result(pair, result)
 
                         if on_progress:
@@ -456,18 +367,74 @@ class BatchEvaluator:
                         self._save_state()
                         if pbar:
                             pbar.update(1)
+                        work_queue.task_done()
+
+            # Run workers
+            with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
+                futures = [executor.submit(worker, i) for i in range(self.pool_size)]
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Worker error: {e}")
+
         finally:
             if pbar:
                 pbar.close()
 
-    def _evaluate_pair(self, pair: Pair) -> EvaluationResult:
-        """Evaluate a single pair using the configured runner."""
-        # Solutions are in track-specific directories
+            # Cleanup clusters if we created them
+            if self._cluster_names and not self.keep_cluster:
+                self._cleanup_cluster_pool()
+
+    def _create_cluster_pool(self) -> None:
+        """Create a pool of SkyPilot clusters for parallel evaluation."""
+        from ..runner.skypilot import SkyPilotRunner
+
+        logger.info(f"Creating {self.pool_size} SkyPilot clusters...")
+
+        self._cluster_names = [f"eval-worker-{i}" for i in range(self.pool_size)]
+
+        # Create clusters in parallel
+        def create_one(name: str) -> bool:
+            return self._runner.create_cluster(name)
+
+        with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
+            results = list(executor.map(create_one, self._cluster_names))
+
+        successful = sum(results)
+        if successful < self.pool_size:
+            logger.warning(f"Only {successful}/{self.pool_size} clusters created successfully")
+            # Keep only successful clusters
+            self._cluster_names = [
+                name for name, ok in zip(self._cluster_names, results) if ok
+            ]
+
+        if not self._cluster_names:
+            raise RuntimeError("Failed to create any clusters")
+
+        logger.info(f"Created {len(self._cluster_names)} clusters")
+
+    def _cleanup_cluster_pool(self) -> None:
+        """Terminate all clusters in the pool."""
+        if not self._cluster_names:
+            return
+
+        logger.info(f"Terminating {len(self._cluster_names)} clusters...")
+        from ..runner.skypilot import SkyPilotRunner
+        SkyPilotRunner.down_clusters(self._cluster_names)
+        self._cluster_names = []
+
+    def _get_solution_path(self, pair: Pair) -> Path:
+        """Get the solution file path for a pair."""
         if self.track == "algorithmic":
             solutions_dir = self.base_dir / "algorithmic" / "solutions"
         else:
             solutions_dir = self.base_dir / "research" / "solutions"
-        solution_file = solutions_dir / pair.solution
+        return solutions_dir / pair.solution
+
+    def _evaluate_pair(self, pair: Pair) -> EvaluationResult:
+        """Evaluate a single pair using the configured runner."""
+        solution_file = self._get_solution_path(pair)
 
         if not solution_file.exists():
             return EvaluationResult(
@@ -484,7 +451,7 @@ class BatchEvaluator:
         )
 
     def _record_result(self, pair: Pair, result: EvaluationResult) -> None:
-        """Record an evaluation result to state (with hashes)."""
+        """Record an evaluation result to state."""
         status_map = {
             EvaluationStatus.SUCCESS: "success",
             EvaluationStatus.ERROR: "error",
@@ -492,8 +459,7 @@ class BatchEvaluator:
             EvaluationStatus.SKIPPED: "skipped",
         }
 
-        # Get hashes computed during evaluate_pairs
-        sol_hash, prob_hash = getattr(self, "_pair_hashes", {}).get(pair.id, (None, None))
+        sol_hash, prob_hash = self._pair_hashes.get(pair.id, (None, None))
 
         self.state.record_result(
             pair,
@@ -506,6 +472,31 @@ class BatchEvaluator:
             score_unbounded=result.score_unbounded,
         )
 
+    def _export_all_results(self, all_pairs: Optional[List[Pair]] = None) -> None:
+        """Export all result files."""
+        if self._bucket_storage:
+            self.sync_from_bucket()
+
+        self.state.export_csv(self.results_dir / "results.csv")
+        self.state.export_summary(self.results_dir / "summary.txt")
+
+        failed_count = self.state.export_failed(self.results_dir / "failed.txt")
+        pending_count = self.state.export_pending(self.results_dir / "pending.txt", all_pairs)
+        self.state.export_skipped(self.results_dir / "skipped.txt")
+
+        self.state.export_aggregated_csv(self.results_dir / "by_model.csv", by="model")
+        self.state.export_aggregated_csv(self.results_dir / "by_problem.csv", by="problem")
+
+        logger.info(f"Results exported to {self.results_dir}")
+        if failed_count > 0:
+            logger.info(f"  - {failed_count} failed pairs in failed.txt")
+        if pending_count > 0:
+            logger.info(f"  - {pending_count} pending pairs in pending.txt")
+
+    # =========================================================================
+    # Convenience methods
+    # =========================================================================
+
     def evaluate_model(
         self,
         model: str,
@@ -515,32 +506,17 @@ class BatchEvaluator:
         resume: bool = True,
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
-        """
-        Evaluate all problems for a given model.
-
-        Args:
-            model: Model name (e.g., "gpt-5", "claude-sonnet-4-5")
-            problems: List of problem IDs
-            variants: List of variant indices (default: [0])
-            resume: Skip already-completed pairs
-            on_progress: Callback after each evaluation
-
-        Returns:
-            Final evaluation state
-        """
+        """Evaluate all problems for a given model."""
         if self.track == "algorithmic":
             solutions_dir = self.base_dir / "algorithmic" / "solutions"
             ext = "cpp"
         else:
             solutions_dir = self.base_dir / "research" / "solutions"
             ext = "py"
+
         pairs = expand_pairs(
-            problems,
-            [model],
-            variants,
-            solutions_dir=solutions_dir,
-            validate_paths=True,
-            ext=ext,
+            problems, [model], variants,
+            solutions_dir=solutions_dir, validate_paths=True, ext=ext,
         )
 
         if not pairs:
@@ -558,32 +534,17 @@ class BatchEvaluator:
         resume: bool = True,
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
-        """
-        Evaluate a problem across all given models.
-
-        Args:
-            problem: Problem ID (e.g., "flash_attn")
-            models: List of model names
-            variants: List of variant indices (default: [0])
-            resume: Skip already-completed pairs
-            on_progress: Callback after each evaluation
-
-        Returns:
-            Final evaluation state
-        """
+        """Evaluate a problem across all given models."""
         if self.track == "algorithmic":
             solutions_dir = self.base_dir / "algorithmic" / "solutions"
             ext = "cpp"
         else:
             solutions_dir = self.base_dir / "research" / "solutions"
             ext = "py"
+
         pairs = expand_pairs(
-            [problem],
-            models,
-            variants,
-            solutions_dir=solutions_dir,
-            validate_paths=True,
-            ext=ext,
+            [problem], models, variants,
+            solutions_dir=solutions_dir, validate_paths=True, ext=ext,
         )
 
         if not pairs:
@@ -599,17 +560,7 @@ class BatchEvaluator:
         resume: bool = True,
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
-        """
-        Evaluate pairs from a pairs file.
-
-        Args:
-            pairs_file: Path to pairs file (solution:problem per line)
-            resume: Skip already-completed pairs
-            on_progress: Callback after each evaluation
-
-        Returns:
-            Final evaluation state
-        """
+        """Evaluate pairs from a pairs file."""
         pairs = read_pairs_file(pairs_file)
         return self.evaluate_pairs(pairs, resume=resume, on_progress=on_progress)
 
@@ -622,19 +573,7 @@ class BatchEvaluator:
         resume: bool = True,
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
-        """
-        Evaluate pairs by expanding problems × models × variants.
-
-        Args:
-            problems_file: Path to problems file (one per line)
-            models_file: Path to models file (one per line)
-            variants_file: Path to variants file (optional, defaults to [0])
-            resume: Skip already-completed pairs
-            on_progress: Callback after each evaluation
-
-        Returns:
-            Final evaluation state
-        """
+        """Evaluate pairs by expanding problems × models × variants."""
         problems = read_problems_file(problems_file)
         models = read_models_file(models_file)
         variants = read_variants_file(variants_file) if variants_file else [0]
@@ -645,42 +584,27 @@ class BatchEvaluator:
         else:
             solutions_dir = self.base_dir / "research" / "solutions"
             ext = "py"
+
         pairs = expand_pairs(
-            problems,
-            models,
-            variants,
-            solutions_dir=solutions_dir,
-            validate_paths=True,
-            ext=ext,
+            problems, models, variants,
+            solutions_dir=solutions_dir, validate_paths=True, ext=ext,
         )
 
         logger.info(f"Expanded {len(problems)} problems × {len(models)} models × {len(variants)} variants = {len(pairs)} pairs")
-
         return self.evaluate_pairs(pairs, resume=resume, on_progress=on_progress)
 
     def resume(
         self,
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
-        """
-        Resume an interrupted evaluation.
-
-        Requires that the state file exists from a previous run.
-
-        Returns:
-            Final evaluation state
-        """
+        """Resume an interrupted evaluation."""
         if not self.state.results:
             raise ValueError("No previous evaluation state found")
 
-        # Reconstruct pairs from state
         pairs = [
             Pair(solution=pair_id.split(":")[0], problem=pair_id.split(":")[1])
             for pair_id in self.state.results.keys()
         ]
-
-        # Add any pairs that were never started
-        # This handles the case where we added pairs to the state but never evaluated them
 
         return self.evaluate_pairs(pairs, resume=True, on_progress=on_progress)
 
@@ -701,12 +625,7 @@ class BatchEvaluator:
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
         show_progress: bool = True,
     ) -> EvaluationState:
-        """
-        Retry all failed pairs from the current state.
-
-        Returns:
-            Final evaluation state
-        """
+        """Retry all failed pairs from the current state."""
         failed_pairs = self.state.get_failed_pairs()
         if not failed_pairs:
             logger.info("No failed pairs to retry")
@@ -714,7 +633,6 @@ class BatchEvaluator:
 
         logger.info(f"Retrying {len(failed_pairs)} failed pairs")
 
-        # Clear failed status so they can be retried
         for pair in failed_pairs:
             del self.state.results[pair.id]
         self._save_state()
@@ -730,37 +648,19 @@ class BatchEvaluator:
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
         show_progress: bool = True,
     ) -> EvaluationState:
-        """
-        Evaluate only missing pairs (those not yet in results).
-
-        Useful for completing an evaluation run after adding new models/problems.
-
-        Args:
-            problems: List of all problem IDs
-            models: List of all model names
-            variants: List of variant indices (default: [0])
-            on_progress: Callback after each evaluation
-            show_progress: Show progress bar
-
-        Returns:
-            Final evaluation state
-        """
+        """Evaluate only missing pairs (those not yet in results)."""
         if self.track == "algorithmic":
             solutions_dir = self.base_dir / "algorithmic" / "solutions"
             ext = "cpp"
         else:
             solutions_dir = self.base_dir / "research" / "solutions"
             ext = "py"
+
         all_pairs = expand_pairs(
-            problems,
-            models,
-            variants,
-            solutions_dir=solutions_dir,
-            validate_paths=True,
-            ext=ext,
+            problems, models, variants,
+            solutions_dir=solutions_dir, validate_paths=True, ext=ext,
         )
 
-        # Find pairs not in current state
         missing = [p for p in all_pairs if p.id not in self.state.results]
 
         if not missing:
@@ -769,7 +669,6 @@ class BatchEvaluator:
 
         logger.info(f"Found {len(missing)} missing pairs out of {len(all_pairs)} total")
 
-        # Update total_pairs to include all pairs
         self.state.total_pairs = len(all_pairs)
         self._save_state()
 
