@@ -11,9 +11,9 @@ on:
         required: false
         default: ''
       max_concurrent:
-        description: 'Max concurrent evaluations'
+        description: 'Max concurrent evaluations (number of SkyPilot clusters)'
         required: false
-        default: '4'
+        default: '20'
 
 env:
   SKYPILOT_CLOUD: gcp
