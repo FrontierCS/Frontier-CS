@@ -429,7 +429,11 @@ class SkyPilotRunner(Runner):
 
                     # Install uv if not present (needed by set_up_env.sh)
                     if ! command -v uv &>/dev/null; then
-                        curl -LsSf https://astral.sh/uv/install.sh | sh
+                        if command -v curl &>/dev/null; then
+                            curl -LsSf https://astral.sh/uv/install.sh | sh
+                        elif command -v wget &>/dev/null; then
+                            wget -qO- https://astral.sh/uv/install.sh | sh
+                        fi
                         export PATH="$HOME/.local/bin:$PATH"
                     fi
 
