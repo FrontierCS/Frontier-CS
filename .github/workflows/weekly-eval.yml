@@ -17,6 +17,10 @@ on:
 
 env:
   SKYPILOT_CLOUD: gcp
+  # Disable Ray object spilling to prevent disk exhaustion on GitHub Actions runner
+  # SkyPilot uses Ray autoscaler internally, which can spill objects to disk
+  # when handling many concurrent cluster operations
+  RAY_automatic_object_spilling_enabled: "false"
 
 jobs:
   evaluate:
