@@ -369,9 +369,10 @@ class BatchEvaluator:
                             pbar.update(1)
                         work_queue.task_done()
 
-            # Run workers
-            with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
-                futures = [executor.submit(worker, i) for i in range(self.pool_size)]
+            # Run workers (use actual cluster count, some may have failed to create)
+            num_workers = len(self._cluster_names) if self._cluster_names else self.pool_size
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(worker, i) for i in range(num_workers)]
                 for future in as_completed(futures):
                     try:
                         future.result()
