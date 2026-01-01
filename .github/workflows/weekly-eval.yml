@@ -86,14 +86,21 @@ jobs:
           # Clone results repo to get previous state
           git clone --depth 1 https://x-access-token:${RESULTS_REPO_TOKEN}@github.com/FrontierCS/Frontier-CS-Result.git /tmp/prev-results
 
-          # Copy previous state to results dir (for incremental evaluation)
+          # Copy previous state for research track
           mkdir -p results/batch
           if [ -f /tmp/prev-results/batch/.state.json ]; then
             cp /tmp/prev-results/batch/.state.json results/batch/
-            echo "Loaded previous state for incremental evaluation"
+            echo "Loaded previous state for research track"
           fi
 
-      - name: Run batch evaluation
+          # Copy previous state for algorithmic track
+          mkdir -p algorithmic/results/batch
+          if [ -f /tmp/prev-results/algorithmic/batch/.state.json ]; then
+            cp /tmp/prev-results/algorithmic/batch/.state.json algorithmic/results/batch/
+            echo "Loaded previous state for algorithmic track"
+          fi
+
+      - name: Run research batch evaluation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -102,12 +109,25 @@ jobs:
         run: |
           MAX_CONCURRENT="${{ github.event.inputs.max_concurrent || '4' }}"
 
-          # Auto-discover solutions from research/solutions directory
+          # Evaluate research track
           uv run frontier-eval batch \
             --solutions-dir research/solutions \
             --skypilot \
             --max-concurrent $MAX_CONCURRENT \
             --results-dir results/batch
+
+      - name: Run algorithmic batch evaluation
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          MAX_CONCURRENT="${{ github.event.inputs.max_concurrent || '4' }}"
+
+          # Evaluate algorithmic track
+          uv run frontier-eval batch \
+            --algorithmic \
+            --skypilot \
+            --max-concurrent $MAX_CONCURRENT \
+            --results-dir algorithmic/results/batch
 
       - name: Upload results
         if: always()
@@ -125,8 +145,14 @@ jobs:
           # Clone the results repository
           git clone https://x-access-token:${RESULTS_REPO_TOKEN}@github.com/FrontierCS/Frontier-CS-Result.git /tmp/results-repo
 
-          # Copy results
+          # Copy research results
           cp -r results/* /tmp/results-repo/
+
+          # Copy algorithmic results
+          mkdir -p /tmp/results-repo/algorithmic
+          if [ -d "algorithmic/results" ]; then
+            cp -r algorithmic/results/* /tmp/results-repo/algorithmic/
+          fi
 
           cd /tmp/results-repo
           git config user.name "github-actions[bot]"
