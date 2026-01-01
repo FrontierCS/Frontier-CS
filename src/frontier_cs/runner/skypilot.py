@@ -52,7 +52,7 @@ class SkyPilotRunner(Runner):
     DEFAULT_CLOUD = "gcp"
     DEFAULT_CPUS = "8+"
     DEFAULT_MEMORY = "16+"
-    DEFAULT_DISK_SIZE = 50
+    DEFAULT_DISK_SIZE = 100  # Increased for problems that pull large Docker images
     DEFAULT_GPU = "L4:1"
     DEFAULT_TIMEOUT = 1800  # 30 minutes
     DEFAULT_IDLE_TIMEOUT = 10  # 10 minutes
