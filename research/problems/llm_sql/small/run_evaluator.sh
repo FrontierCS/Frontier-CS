@@ -4,7 +4,7 @@ set -euo pipefail
 # run_evaluator.sh for llm_sql_small
 
 PROBLEM_DIR=$(pwd)
-EXEC_ROOT="../../../execution_env"
+EXEC_ROOT="/work/execution_env"
 VENV_DIR="$EXEC_ROOT/.venv"
 
 echo "[run_evaluator] Current directory: $(pwd)" >&2

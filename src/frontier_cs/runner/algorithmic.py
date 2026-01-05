@@ -3,6 +3,7 @@ Runner for algorithmic problems using the judge server.
 """
 
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -35,12 +36,14 @@ class AlgorithmicRunner(Runner):
         judge_url: str = DEFAULT_JUDGE_URL,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         auto_start: bool = True,
     ):
         self.judge_url = judge_url.rstrip("/")
         self.poll_interval = poll_interval
         self.session = requests.Session()
         self.base_dir = base_dir or self._find_base_dir()
+        self.problems_dir = problems_dir  # Not used directly, but stored for consistency
         self.auto_start = auto_start
         self._judge_started = False
 
@@ -69,14 +72,26 @@ class AlgorithmicRunner(Runner):
             logger.error(f"docker-compose.yml not found: {compose_file}")
             return False
 
-        logger.info(f"Starting judge server (docker compose up -d) in {compose_dir}")
+        # Build docker compose command
+        cmd = ["docker", "compose", "up", "-d"]
+
+        # Build environment with optional problems_dir override
+        env = None
+        if self.problems_dir:
+            problems_path = Path(self.problems_dir).resolve()
+            logger.info(f"Using problems from: {problems_path}")
+            env = os.environ.copy()
+            env["PROBLEMS_DIR"] = str(problems_path)
+
+        logger.info(f"Starting judge server in {compose_dir}")
         try:
             result = subprocess.run(
-                ["docker", "compose", "up", "-d"],
+                cmd,
                 cwd=compose_dir,
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=env,
             )
             if result.returncode != 0:
                 logger.error(f"docker compose failed: {result.stderr.strip()}")
@@ -152,7 +167,8 @@ class AlgorithmicRunner(Runner):
             solution_code: C++ solution code
             timeout: Optional timeout in seconds
             lang: Programming language (default: cpp)
-            unbounded: If True, use unbounded score (without clipping)
+            unbounded: Deprecated for storage. Both bounded and unbounded scores
+                       are always stored (score and score_unbounded fields).
 
         Returns:
             EvaluationResult with score and status
@@ -200,11 +216,18 @@ class AlgorithmicRunner(Runner):
 
         status = result.get("status", "")
         if status == "error":
+            # Build error message with available info
+            error_msg = result.get("message") or result.get("error") or "Unknown error"
+            logs = result.get("logs") or result.get("stderr") or ""
+            if not result.get("message") and logs:
+                # If no message but has logs, include first line of logs in message
+                first_line = logs.strip().split("\n")[0][:200]
+                error_msg = f"{error_msg}: {first_line}"
             return EvaluationResult(
                 problem_id=pid,
                 status=EvaluationStatus.ERROR,
-                message=result.get("message", "Unknown error"),
-                logs=result.get("logs"),
+                message=error_msg,
+                logs=logs,
                 duration_seconds=duration,
             )
 
@@ -212,10 +235,10 @@ class AlgorithmicRunner(Runner):
         bounded_score = result.get("score", 0.0)
         unbounded_score = result.get("scoreUnbounded")
 
-        # Return requested score as primary, include both
+        # Always store bounded in score, unbounded in score_unbounded
         return EvaluationResult(
             problem_id=pid,
-            score=unbounded_score if unbounded and unbounded_score is not None else bounded_score,
+            score=bounded_score,
             score_unbounded=unbounded_score,
             status=EvaluationStatus.SUCCESS,
             duration_seconds=duration,

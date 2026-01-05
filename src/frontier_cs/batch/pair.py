@@ -229,7 +229,12 @@ def read_variants_file(path: Path) -> List[int]:
     return variants if variants else [0]
 
 
-def scan_solutions_dir(solutions_dir: Path, *, interleave: bool = True) -> List[Pair]:
+def scan_solutions_dir(
+    solutions_dir: Path,
+    *,
+    problems_dir: Optional[Path] = None,
+    interleave: bool = True,
+) -> List[Pair]:
     """
     Scan solutions directory and build pairs from nested solution files.
 
@@ -238,6 +243,7 @@ def scan_solutions_dir(solutions_dir: Path, *, interleave: bool = True) -> List[
 
     Args:
         solutions_dir: Path to solutions directory
+        problems_dir: Optional problems directory for validation (skip invalid problems)
         interleave: Interleave pairs by problem for load balancing (default: True)
 
     Returns:
@@ -251,6 +257,19 @@ def scan_solutions_dir(solutions_dir: Path, *, interleave: bool = True) -> List[
         return pairs
 
     for path, problem, model, variant in _scan_solutions(solutions_dir):
+        # Validate problem directory if problems_dir is provided
+        if problems_dir:
+            problem_path = problems_dir / problem
+            # A valid problem has evaluator.py/evaluate.sh (research) or config.yaml/testdata (algorithmic)
+            is_valid_problem = (
+                (problem_path / "evaluator.py").exists() or
+                (problem_path / "evaluate.sh").exists() or
+                (problem_path / "config.yaml").exists() or
+                (problem_path / "testdata").is_dir()
+            )
+            if not is_valid_problem:
+                continue
+
         rel_path = str(path.relative_to(solutions_dir))
         pairs.append(Pair(solution=rel_path, problem=problem))
 

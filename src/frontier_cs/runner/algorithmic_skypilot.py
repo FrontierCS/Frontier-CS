@@ -36,6 +36,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         cloud: Optional[str] = None,
         region: Optional[str] = None,
         keep_cluster: bool = False,
@@ -46,13 +47,14 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         Args:
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
+            problems_dir: Problems directory (not used directly, for consistency)
             cloud: Cloud provider override (default: use yaml config)
             region: Cloud region override (optional)
             keep_cluster: Keep cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
         # Initialize parent class with placeholder URL (will be updated when cluster is ready)
-        super().__init__(judge_url="http://localhost:8081")
+        super().__init__(judge_url="http://localhost:8081", problems_dir=problems_dir)
 
         self.base_dir = base_dir or self._find_base_dir()
         self.cloud = cloud
@@ -137,7 +139,15 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
             # Set absolute path for file_mounts to avoid CWD issues
             algorithmic_dir = str(self.base_dir / "algorithmic")
-            task.update_file_mounts({"~/algorithmic": algorithmic_dir})
+            file_mounts = {"~/algorithmic": algorithmic_dir}
+
+            # Override problems directory if specified
+            if self.problems_dir:
+                problems_path = str(Path(self.problems_dir).resolve())
+                logger.info(f"Using problems from: {problems_path}")
+                file_mounts["~/algorithmic/problems"] = problems_path
+
+            task.update_file_mounts(file_mounts)
 
             if self.cloud or self.region:
                 resources = list(task.resources)[0] if task.resources else sky.Resources()

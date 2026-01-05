@@ -358,7 +358,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate VDB design solution")
     parser.add_argument(
         "--solution",
-        default="../../execution_env/solution_env/solution.py",
+        default="/work/execution_env/solution_env/solution.py",
         help="Path to solution.py",
     )
     parser.add_argument(

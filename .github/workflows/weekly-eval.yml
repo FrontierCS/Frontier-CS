@@ -6,10 +6,15 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
     inputs:
-      problems:
-        description: 'Comma-separated problem IDs (leave empty for all)'
+      track:
+        description: 'Track to evaluate (research, algorithmic, or both)'
         required: false
-        default: ''
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - research
+          - algorithmic
       workers:
         description: 'Number of parallel workers'
         required: false
@@ -21,9 +26,6 @@ on:
 
 env:
   SKYPILOT_CLOUD: gcp
-  # Disable Ray object spilling to prevent disk exhaustion on GitHub Actions runner
-  # SkyPilot uses Ray autoscaler internally, which can spill objects to disk
-  # when handling many concurrent cluster operations
   RAY_automatic_object_spilling_enabled: "false"
 
 jobs:
@@ -35,20 +37,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout internal repository (hidden problems)
+      - name: Checkout internal repository
         uses: actions/checkout@v4
         with:
           repository: FrontierCS/Frontier-CS-internal
           token: ${{ secrets.INTERNAL_REPO_TOKEN }}
           path: internal
 
-      - name: Merge internal problems
-        run: |
-          # Copy internal problems to research/problems (overwrite if exists)
-          if [ -d "internal/research/problems" ]; then
-            cp -r internal/research/problems/* research/problems/
-            echo "Merged $(ls -d internal/research/problems/*/ 2>/dev/null | wc -l) problem directories from internal repo"
-          fi
+      - name: Checkout results repository
+        uses: actions/checkout@v4
+        with:
+          repository: FrontierCS/Frontier-CS-Result
+          token: ${{ secrets.RESULTS_REPO_TOKEN }}
+          path: results-repo
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -64,10 +65,8 @@ jobs:
       - name: Set up GCP credentials
         run: |
           echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/gcp-key.json
-          # Set as application default credentials for SkyPilot
           mkdir -p ~/.config/gcloud
           cp /tmp/gcp-key.json ~/.config/gcloud/application_default_credentials.json
-          # For service account, also activate with gcloud
           if grep -q '"type": "service_account"' /tmp/gcp-key.json; then
             gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
           fi
@@ -78,33 +77,16 @@ jobs:
       - name: Configure SkyPilot
         run: |
           mkdir -p ~/.sky
-          # SkyPilot uses GCP project from gcloud config or ADC
           uv run sky check gcp || true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
-      - name: Fetch previous state for incremental evaluation
-        env:
-          RESULTS_REPO_TOKEN: ${{ secrets.RESULTS_REPO_TOKEN }}
+      - name: Check internal ⊇ public
         run: |
-          # Clone results repo to get previous state
-          git clone --depth 1 https://x-access-token:${RESULTS_REPO_TOKEN}@github.com/FrontierCS/Frontier-CS-Result.git /tmp/prev-results
+          ./scripts/run_eval.sh --check-overlap --internal-dir internal
 
-          # Copy previous state for research track
-          mkdir -p results/batch
-          if [ -f /tmp/prev-results/batch/.state.research.json ]; then
-            cp /tmp/prev-results/batch/.state.research.json results/batch/
-            echo "Loaded previous state for research track"
-          fi
-
-          # Copy previous state for algorithmic track
-          mkdir -p algorithmic/results/batch
-          if [ -f /tmp/prev-results/algorithmic/batch/.state.algorithmic.json ]; then
-            cp /tmp/prev-results/algorithmic/batch/.state.algorithmic.json algorithmic/results/batch/
-            echo "Loaded previous state for algorithmic track"
-          fi
-
-      - name: Run research batch evaluation
+      - name: Run research evaluation
+        if: ${{ github.event.inputs.track == 'both' || github.event.inputs.track == 'research' || github.event.inputs.track == '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -114,33 +96,36 @@ jobs:
           WORKERS="${{ github.event.inputs.workers || '4' }}"
           CLUSTERS="${{ github.event.inputs.clusters || '4' }}"
 
-          # Evaluate research track
-          uv run frontier-eval batch \
-            --solutions-dir research/solutions \
-            --skypilot \
+          ./scripts/run_eval.sh \
+            --track research \
+            --internal-dir internal \
+            --results-repo results-repo \
             --workers $WORKERS \
             --clusters $CLUSTERS \
-            --results-dir results/batch
+            --skypilot \
+            --push
 
-      - name: Run algorithmic batch evaluation
+      - name: Run algorithmic evaluation
+        if: ${{ github.event.inputs.track == 'both' || github.event.inputs.track == 'algorithmic' || github.event.inputs.track == '' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           WORKERS="${{ github.event.inputs.workers || '4' }}"
 
-          # Evaluate algorithmic track (uses single go-judge cluster, workers control HTTP concurrency)
-          uv run frontier-eval batch \
-            --algorithmic \
-            --skypilot \
+          ./scripts/run_eval.sh \
+            --track algorithmic \
+            --internal-dir internal \
+            --results-repo results-repo \
             --workers $WORKERS \
-            --results-dir algorithmic/results/batch
+            --skypilot \
+            --push
 
-      - name: Upload results
+      - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results-${{ github.run_id }}
-          path: results/
+          path: internal/results/
           retention-days: 90
 
       - name: Push results to results repository
@@ -148,19 +133,16 @@ jobs:
         env:
           RESULTS_REPO_TOKEN: ${{ secrets.RESULTS_REPO_TOKEN }}
         run: |
-          # Clone the results repository
-          git clone https://x-access-token:${RESULTS_REPO_TOKEN}@github.com/FrontierCS/Frontier-CS-Result.git /tmp/results-repo
-
-          # Copy research results
-          cp -r results/* /tmp/results-repo/
-
-          # Copy algorithmic results
-          mkdir -p /tmp/results-repo/algorithmic
-          if [ -d "algorithmic/results" ]; then
-            cp -r algorithmic/results/* /tmp/results-repo/algorithmic/
+          # Copy results from internal to results-repo
+          if [ -d "internal/results" ]; then
+            cp -r internal/results/* results-repo/
+          fi
+          if [ -d "internal/algorithmic/results" ]; then
+            mkdir -p results-repo/algorithmic
+            cp -r internal/algorithmic/results/* results-repo/algorithmic/
           fi
 
-          cd /tmp/results-repo
+          cd results-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -174,7 +156,6 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           echo "Cleaning up SkyPilot clusters..."
-          # Get all eval-* clusters and delete them in parallel
           CLUSTERS=$(uv run sky status --refresh 2>/dev/null | grep -E '^eval-' | awk '{print $1}' || true)
           if [ -n "$CLUSTERS" ]; then
             echo "$CLUSTERS" | while read cluster; do

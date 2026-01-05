@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
-from .base import Runner, EvaluationResult, EvaluationStatus
+from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from ..config import load_problem_config
 
 
@@ -39,7 +39,7 @@ def _sanitize_name(name: str) -> str:
     return "".join(cleaned).strip("-") or "job"
 
 
-class SkyPilotRunner(Runner):
+class SkyPilotRunner(ResearchRunner):
     """
     Runner for research problems using SkyPilot.
 
@@ -60,6 +60,7 @@ class SkyPilotRunner(Runner):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         cloud: str = DEFAULT_CLOUD,
         region: Optional[str] = None,
         keep_cluster: bool = False,
@@ -71,6 +72,7 @@ class SkyPilotRunner(Runner):
 
         Args:
             base_dir: Base directory of Frontier-CS repo
+            problems_dir: Problems directory (overrides base_dir/research/problems if set)
             cloud: Cloud provider (gcp, aws, azure)
             region: Cloud region (optional)
             keep_cluster: Keep cluster running after evaluation (disables autostop)
@@ -78,29 +80,12 @@ class SkyPilotRunner(Runner):
             bucket_url: Optional bucket URL for result storage (s3://... or gs://...)
                        If provided, results are written to bucket instead of fetched via scp
         """
-        self.base_dir = base_dir or self._find_base_dir()
-        self.research_dir = self.base_dir / "research"
+        super().__init__(base_dir=base_dir, problems_dir=problems_dir)
         self.cloud = cloud
         self.region = region
         self.keep_cluster = keep_cluster
         self.idle_timeout = idle_timeout if not keep_cluster else None
         self.bucket_url = bucket_url
-
-    def _find_base_dir(self) -> Path:
-        """Find the Frontier-CS base directory."""
-        # src/frontier_cs/runner/skypilot.py -> repo root
-        base = Path(__file__).parents[3]
-        if not (base / "research").is_dir():
-            raise RuntimeError(f"research/ not found in {base}")
-        return base
-
-    def get_problem_path(self, problem_id: str) -> Path:
-        """Get the path to a research problem directory.
-
-        With nested solution structure, problem_id is already the nested path
-        (e.g., "cant_be_late/high_availability_loose_deadline_large_overhead").
-        """
-        return self.research_dir / "problems" / problem_id
 
     def evaluate(
         self,
@@ -336,7 +321,7 @@ class SkyPilotRunner(Runner):
         parts = problem_id.split("/")
         for i in range(1, len(parts)):
             parent = "/".join(parts[:i])
-            common_dir = self.research_dir / "problems" / parent / "common"
+            common_dir = self.problems_dir / parent / "common"
             if common_dir.is_dir():
                 mounts[f"{remote_base}/research/{parent}/common"] = str(common_dir.resolve())
 
@@ -416,14 +401,17 @@ class SkyPilotRunner(Runner):
         else:
             bucket_write = ""
 
-        # Build uv sync command if uv_project is specified in config.yaml
+        # Build uv pip install command if uv_project is specified in config.yaml
+        # If uv_overrides.txt exists in the project, use it to protect system packages
         if uv_project:
             uv_sync_cmd = textwrap.dedent(f'''
                     if [ -d "{uv_project}" ] && [ -f "{uv_project}/pyproject.toml" ]; then
                         echo "[framework] Installing dependencies from {uv_project}"
-                        # Install to system Python (uv does not support --system-site-packages properly)
-                        # See: https://github.com/astral-sh/uv/issues/7358
-                        uv pip install --system -e "{uv_project}"
+                        if [ -f "{uv_project}/uv_overrides.txt" ]; then
+                            uv pip install --system --overrides "{uv_project}/uv_overrides.txt" -e "{uv_project}"
+                        else
+                            uv pip install --system -e "{uv_project}"
+                        fi
                     fi''').strip()
         else:
             uv_sync_cmd = "# No uv_project specified in config.yaml"
@@ -453,10 +441,6 @@ class SkyPilotRunner(Runner):
                     # (some scripts expect this structure to exist)
                     mkdir -p /work/execution_env/solution_env
                     cp /work/solution/solution.py /work/execution_env/solution_env/
-
-                    # Create symlink at /execution_env for scripts using wrong relative paths
-                    # (e.g., ../../../execution_env from nested problem dirs resolves to /execution_env)
-                    ln -sfn /work/execution_env /execution_env 2>/dev/null || true
 
                     cd /work/research/{problem_id}
 

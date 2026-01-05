@@ -184,7 +184,7 @@ def evaluate(solution_path: Path, spec_path: Path) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate cloudcast broadcast optimizer")
-    parser.add_argument("--solution", default="../../execution_env/solution_env/solution.py")
+    parser.add_argument("--solution", default="/work/execution_env/solution_env/solution.py")
     parser.add_argument("--spec", default=str(SPEC_PATH))
     parser.add_argument("--out", default="results.json")
     args = parser.parse_args()

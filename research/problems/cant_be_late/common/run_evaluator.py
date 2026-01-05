@@ -226,7 +226,7 @@ def evaluate(
 
 def main(
     resources_dir: str,
-    default_solution: str = "../../execution_env/solution_env/solution.py",
+    default_solution: str = "/work/execution_env/solution_env/solution.py",
     env_paths: Optional[list] = None,
     job_configs: Optional[list] = None,
     changeover_delays: Optional[list] = None,

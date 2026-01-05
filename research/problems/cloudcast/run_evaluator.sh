@@ -2,7 +2,7 @@
 echo "DEBUG: run_evaluator.sh started!" >&2
 set -euo pipefail
 
-EXEC_ROOT="../../execution_env"
+EXEC_ROOT="/work/execution_env"
 VENV_DIR="$EXEC_ROOT/.venv"
 
 echo "[run_evaluator] EXEC_ROOT: $EXEC_ROOT" >&2

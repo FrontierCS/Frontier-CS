@@ -141,6 +141,7 @@ class EvaluationState:
             state.results[pair_id] = PairResult(
                 pair_id=pair_id,
                 score=result_data.get("score"),
+                score_unbounded=result_data.get("score_unbounded"),
                 status=result_data.get("status", "pending"),
                 message=result_data.get("message"),
                 duration_seconds=result_data.get("duration_seconds"),

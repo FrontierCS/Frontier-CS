@@ -496,7 +496,7 @@ def evaluate(solution_path: Path, task_ids: List[str], gt_poc_lens: Optional[dic
 def main(
     task_ids: List[str],
     gt_poc_lens: Optional[dict] = None,
-    default_solution: str = "../../execution_env/solution_env/solution.py",
+    default_solution: str = "/work/execution_env/solution_env/solution.py",
 ) -> None:
     """
     Main entry point for variant evaluators.

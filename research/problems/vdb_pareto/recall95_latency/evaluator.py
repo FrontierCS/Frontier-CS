@@ -263,7 +263,7 @@ def evaluate(solution_path: Path, k: int = 1) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate VDB design solution")
-    parser.add_argument("--solution", default="../../execution_env/solution_env/solution.py", help="Path to solution.py")
+    parser.add_argument("--solution", default="/work/execution_env/solution_env/solution.py", help="Path to solution.py")
     parser.add_argument("--out", default="results.json", help="Output JSON file path")
     parser.add_argument("--k", type=int, default=1, help="Number of nearest neighbors to retrieve")
     args = parser.parse_args()

@@ -140,8 +140,17 @@ def run_single_simulation(program_path: str, trace_file: str, config: dict):
             with os.fdopen(spec_fd, "w") as f:
                 json.dump(spec_data, f)
 
-            # Create instance via solve(spec_path)
-            strategy = strategy_cls.__new__(strategy_cls)
+            # Create args for Strategy.__init__()
+            import argparse
+            args = argparse.Namespace(
+                deadline_hours=config["deadline"],
+                restart_overhead_hours=[config["overhead"]],
+                inter_task_overhead=[0.0],
+            )
+
+            # Normal instantiation - calls __init__(args) which sets self.args
+            # and any other instance variables defined by the solution
+            strategy = strategy_cls(args)
             strategy.solve(spec_path)
         finally:
             try:

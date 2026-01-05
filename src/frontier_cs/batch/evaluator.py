@@ -65,6 +65,7 @@ class BatchEvaluator:
         results_dir: Path,
         *,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         backend: str = "docker",
         track: str = "research",
         workers: int = 1,
@@ -81,6 +82,7 @@ class BatchEvaluator:
         Args:
             results_dir: Directory for results and state
             base_dir: Frontier-CS base directory (auto-detected if None)
+            problems_dir: Problems directory (overrides base_dir for problem lookup if set)
             backend: Evaluation backend ("docker" or "skypilot")
             track: Evaluation track ("research" or "algorithmic")
             workers: Number of parallel workers/concurrent evaluations (default: 1)
@@ -94,6 +96,7 @@ class BatchEvaluator:
         self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
+        self.problems_dir = Path(problems_dir) if problems_dir else None
         self.backend = backend
         self.clusters = clusters if clusters is not None else workers  # Default: same as workers
         # Ensure workers >= clusters to avoid idle clusters
@@ -139,20 +142,28 @@ class BatchEvaluator:
                 from ..runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
                 return AlgorithmicSkyPilotRunner(
                     base_dir=self.base_dir,
+                    problems_dir=self.problems_dir,
                     keep_cluster=self.keep_cluster,
                     idle_timeout=self.idle_timeout,
                 )
             else:
                 from ..runner.algorithmic import AlgorithmicRunner
-                return AlgorithmicRunner(judge_url=self.judge_url)
+                return AlgorithmicRunner(
+                    judge_url=self.judge_url,
+                    problems_dir=self.problems_dir,
+                )
         else:
             # research track
             if self.backend == "docker":
-                return DockerRunner(base_dir=self.base_dir)
+                return DockerRunner(
+                    base_dir=self.base_dir,
+                    problems_dir=self.problems_dir,
+                )
             else:
                 from ..runner.skypilot import SkyPilotRunner
                 return SkyPilotRunner(
                     base_dir=self.base_dir,
+                    problems_dir=self.problems_dir,
                     bucket_url=self.bucket_url,
                     keep_cluster=self.keep_cluster,
                     idle_timeout=self.idle_timeout,
@@ -177,11 +188,14 @@ class BatchEvaluator:
             sol_hash = hash_file(solution_path) if solution_path.exists() else None
 
             if pair.problem not in problem_hash_cache:
-                if self.track == "algorithmic":
-                    problems_dir = self.base_dir / "algorithmic" / "problems"
+                if self.problems_dir:
+                    # Use explicit problems_dir if set
+                    probs_dir = self.problems_dir
+                elif self.track == "algorithmic":
+                    probs_dir = self.base_dir / "algorithmic" / "problems"
                 else:
-                    problems_dir = self.base_dir / "research" / "problems"
-                problem_path = problems_dir / pair.problem
+                    probs_dir = self.base_dir / "research" / "problems"
+                problem_path = probs_dir / pair.problem
                 problem_hash_cache[pair.problem] = hash_directory(problem_path) if problem_path.exists() else None
 
             hashes[pair.id] = (sol_hash, problem_hash_cache[pair.problem])

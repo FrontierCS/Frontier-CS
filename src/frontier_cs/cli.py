@@ -268,6 +268,12 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Solutions directory to scan (default: solutions/)",
     )
 
+    batch_parser.add_argument(
+        "--problems-dir",
+        type=Path,
+        help="Problems directory (default: auto-detect from code location)",
+    )
+
     batch_output = batch_parser.add_argument_group("Output Options")
     batch_output.add_argument(
         "--results-dir",
@@ -510,8 +516,10 @@ def run_batch(args: argparse.Namespace) -> int:
     clusters = args.clusters  # None means same as workers
 
     # Create batch evaluator
+    problems_dir = getattr(args, "problems_dir", None)
     batch = BatchEvaluator(
         results_dir=args.results_dir,
+        problems_dir=problems_dir,
         backend=backend,
         track=track,
         workers=workers,
@@ -639,7 +647,14 @@ def run_batch(args: argparse.Namespace) -> int:
             print("Use --solutions-dir or --pairs-file to specify", file=sys.stderr)
             return 1
 
-        pairs = scan_solutions_dir(solutions_dir)
+        # Determine problems_dir for validation
+        probs_dir = problems_dir
+        if probs_dir is None:
+            base_dir = Path(__file__).parents[2]
+            track_dir = "algorithmic" if track == "algorithmic" else "research"
+            probs_dir = base_dir / track_dir / "problems"
+
+        pairs = scan_solutions_dir(solutions_dir, problems_dir=probs_dir)
         if not pairs:
             print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1

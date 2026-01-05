@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-EXEC_ROOT="$SCRIPT_DIR/../../../execution_env"
+EXEC_ROOT="/work/execution_env"
 SOLUTION_PATH="$EXEC_ROOT/solution_env/solution.py"
 VENV_DIR="$EXEC_ROOT/.venv_symbolic_regression"
 OUTPUT_PATH="$SCRIPT_DIR/result.json"
