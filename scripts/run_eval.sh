@@ -251,50 +251,6 @@ check_superset() {
     return 0
 }
 
-# Load previous state from results repo
-load_state() {
-    local results_repo="$1"
-    local track="$2"
-    local results_dir="$3"
-
-    if [[ -z "$results_repo" ]] || [[ ! -d "$results_repo" ]]; then
-        return
-    fi
-
-    mkdir -p "$results_dir"
-
-    if [[ "$track" == "algorithmic" ]]; then
-        state_file="$results_repo/algorithmic/batch/.state.algorithmic.json"
-    else
-        state_file="$results_repo/batch/.state.research.json"
-    fi
-
-    if [[ -f "$state_file" ]]; then
-        cp "$state_file" "$results_dir/"
-        echo "Loaded previous state from: $state_file"
-    fi
-}
-
-# Save results back to results repo
-save_state() {
-    local results_repo="$1"
-    local track="$2"
-    local results_dir="$3"
-
-    if [[ -z "$results_repo" ]] || [[ ! -d "$results_repo" ]]; then
-        return
-    fi
-
-    if [[ "$track" == "algorithmic" ]]; then
-        mkdir -p "$results_repo/algorithmic/batch"
-        cp -r "$results_dir"/* "$results_repo/algorithmic/batch/" 2>/dev/null || true
-    else
-        mkdir -p "$results_repo/batch"
-        cp -r "$results_dir"/* "$results_repo/batch/" 2>/dev/null || true
-    fi
-    echo "Saved results to: $results_repo"
-}
-
 # Commit and push results to remote
 push_results() {
     local results_repo="$1"
@@ -369,7 +325,43 @@ fi
 # Auto-clone results repo if not provided
 if [[ -z "$RESULTS_REPO" ]] && $AUTO_CLONE; then
     RESULTS_REPO="$DEFAULT_RESULTS_REPO"
-    ensure_repo "$RESULTS_REPO_URL" "$RESULTS_REPO" "results repo"
+
+    # Check if results repo exists and has uncommitted changes
+    if [[ -d "$RESULTS_REPO/.git" ]]; then
+        if ! git -C "$RESULTS_REPO" diff --quiet 2>/dev/null || \
+           git -C "$RESULTS_REPO" status --porcelain 2>/dev/null | grep -q .; then
+            echo ""
+            echo "⚠️  Results repo has uncommitted changes!"
+            echo "    Path: $RESULTS_REPO"
+            echo ""
+            git -C "$RESULTS_REPO" status --short | head -20
+            echo ""
+
+            # Non-interactive: abort
+            if [[ ! -t 0 ]]; then
+                echo "ERROR: Uncommitted changes in results repo. Aborting."
+                echo "       Commit or stash changes, then retry."
+                exit 1
+            fi
+
+            # Interactive: let user choose
+            echo "Options:"
+            echo "  [C] Continue - skip pull, use local state"
+            echo "  [A] Abort    - exit and resolve manually"
+            read -p "Choice [C/A]: " -n 1 -r
+            echo ""
+
+            if [[ ! $REPLY =~ ^[Cc]$ ]]; then
+                echo "Aborted"
+                exit 1
+            fi
+            echo "Continuing with local state (skipping pull)"
+        else
+            ensure_repo "$RESULTS_REPO_URL" "$RESULTS_REPO" "results repo"
+        fi
+    else
+        ensure_repo "$RESULTS_REPO_URL" "$RESULTS_REPO" "results repo"
+    fi
 fi
 
 # Check overlap mode
@@ -413,14 +405,15 @@ echo "Running tools from: $PUBLIC_DIR"
 
 # Set paths based on track
 # Solutions always from public, problems from internal (more test cases)
+# Results saved directly to results repo
 if [[ "$TRACK" == "algorithmic" ]]; then
     SOLUTIONS_DIR="$PUBLIC_DIR/algorithmic/solutions"
-    RESULTS_DIR="$INTERNAL_DIR/algorithmic/results/batch"
+    RESULTS_DIR="$RESULTS_REPO/algorithmic/batch"
     PROBLEMS_DIR="$INTERNAL_DIR/algorithmic/problems"
     EXTRA_ARGS="--algorithmic"
 else
     SOLUTIONS_DIR="$PUBLIC_DIR/research/solutions"
-    RESULTS_DIR="$INTERNAL_DIR/results/batch"
+    RESULTS_DIR="$RESULTS_REPO/batch"
     PROBLEMS_DIR="$INTERNAL_DIR/research/problems"
     EXTRA_ARGS=""
 fi
@@ -430,8 +423,8 @@ if [[ ! -d "$SOLUTIONS_DIR" ]]; then
     exit 1
 fi
 
-# Load previous state
-load_state "$RESULTS_REPO" "$TRACK" "$RESULTS_DIR"
+# Ensure results directory exists
+mkdir -p "$RESULTS_DIR"
 
 # Build command
 CMD="uv run frontier-eval batch"
@@ -463,11 +456,8 @@ fi
 cd "$PUBLIC_DIR"
 $CMD
 
-# Post-evaluation: save results back to results repo
-echo ""
-save_state "$RESULTS_REPO" "$TRACK" "$RESULTS_DIR"
-
 # Push results if requested
+echo ""
 if confirm_push; then
     push_results "$RESULTS_REPO"
 fi

@@ -374,8 +374,13 @@ class SkyPilotRunner(ResearchRunner):
                         chmod +x /usr/local/bin/docker
                         rm -rf /tmp/docker
                     fi''').strip()
+            dind_cleanup_cmd = textwrap.dedent('''
+                    # Clean up Docker images to prevent disk space issues
+                    echo "[framework] Cleaning up Docker images..."
+                    docker image prune -af 2>/dev/null || true''').strip()
         else:
             dind_install_cmd = "# DinD not enabled"
+            dind_cleanup_cmd = ""
 
         # Build bucket write command if pair_id is provided
         if pair_id:
@@ -476,6 +481,8 @@ class SkyPilotRunner(ResearchRunner):
 
                     # Extract score (last line with number(s): "85.5" or "85.5 120.3")
                     grep -E "^-?[0-9]+\\.?[0-9]*(\\s+-?[0-9]+\\.?[0-9]*)?$" /results/output.txt | tail -1 > /results/score.txt || true
+
+                    {dind_cleanup_cmd}
                 '
             {bucket_write}
         """)
