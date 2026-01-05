@@ -272,14 +272,22 @@ def evaluate_fuzzer(fuzz_func: Any, resources_dir: Path, time_budget: float = 60
     line_cov = coverage_result["line_coverage"]
     branch_cov = coverage_result["branch_coverage"]
     
-    # Base coverage score: 60% line + 40% branch, scaled to 0-80
-    coverage_score = 0.8 * (0.6 * line_cov + 0.4 * branch_cov)
+    # Weighted coverage: 60% line + 40% branch
+    weighted_cov = 0.6 * line_cov + 0.4 * branch_cov
     
-    # Efficiency bonus: fewer parse calls = higher bonus
-    # Formula: 20 * 2^(-N/N_ref) where N_ref = 1000
-    N_REF = 1000
+    # Non-linear coverage score: cubic function to reward high coverage more
+    # Basic coverage is easy to achieve; advanced coverage is more valuable
+    # adjusted_cov = (weighted_cov / 100)^3 * 100
+    adjusted_cov = math.pow(weighted_cov / 100, 3) * 100
+    
+    # Coverage score: 70% weight, scaled to 0-70 points
+    coverage_score = 0.7 * adjusted_cov
+    
+    # Efficiency bonus: fewer parse calls = higher bonus (30% weight, 0-30 points)
+    # Formula: 30 * 2^(-N/N_ref) where N_ref = 500
+    N_REF = 500
     parse_calls = coverage_result["parse_call_count"]
-    efficiency_bonus = 20 * math.pow(2, -parse_calls / N_REF) if parse_calls > 0 else 20
+    efficiency_bonus = 30 * math.pow(2, -parse_calls / N_REF) if parse_calls > 0 else 30
     
     score = coverage_score + efficiency_bonus
     

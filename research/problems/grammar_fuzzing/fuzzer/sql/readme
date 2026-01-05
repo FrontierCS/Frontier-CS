@@ -111,19 +111,22 @@ Performance is measured based on code coverage achieved:
 line_coverage = lines_covered / total_lines * 100
 branch_coverage = branches_covered / total_branches * 100
 
-# Base coverage score (0-80 points)
-# Weighted: 60% line coverage + 40% branch coverage
-coverage_score = 0.8 * (0.6 * line_coverage + 0.4 * branch_coverage)
+# Weighted coverage (0-100)
+weighted_cov = 0.6 * line_coverage + 0.4 * branch_coverage
 
-# Efficiency bonus (0-20 points): fewer parser calls = higher bonus
-# N = number of parse_sql calls, N_ref = 1000 (reference count)
-efficiency_bonus = 20 * 2^(-N / N_ref)
+# Non-linear coverage score (0-70 points)
+adjusted_cov = (weighted_cov / 100)^3 * 100
+coverage_score = 0.7 * adjusted_cov
+
+# Efficiency bonus (0-30 points): fewer parser calls = higher bonus
+# N = number of parse_sql calls, N_ref = 500 (reference count)
+efficiency_bonus = 30 * 2^(-N / N_ref)
 
 score = coverage_score + efficiency_bonus
 ```
 
-- Coverage determines 80% of the score
-- Efficiency bonus rewards achieving coverage with fewer parser invocations
+- Coverage determines 70% of the score (non-linear: high coverage is rewarded more)
+- Efficiency bonus (30%) rewards achieving coverage with fewer parser invocations
 - Achieving high coverage efficiently yields higher scores
 
 Evaluation Details

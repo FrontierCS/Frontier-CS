@@ -212,25 +212,33 @@ class Evaluator:
                 **coverage_result,
             }
 
-        # Scoring formula (similar to poc_generation)
-        # - Base score from coverage (0-80 points)
-        # - Efficiency bonus for fewer test cases (0-20 points)
+        # Scoring formula:
+        # - Non-linear coverage score (0-70 points) - rewards high coverage more
+        # - Efficiency bonus for fewer test cases (0-30 points)
         
+        import math
         num_tests = coverage_result["total_statements"]
         line_cov = coverage_result["line_coverage"]
         branch_cov = coverage_result["branch_coverage"]
         
-        # Base coverage score: 60% line + 40% branch, scaled to 0-80
-        coverage_score = 0.8 * (0.6 * line_cov + 0.4 * branch_cov)
+        # Weighted coverage: 60% line + 40% branch
+        weighted_cov = 0.6 * line_cov + 0.4 * branch_cov
         
-        # Efficiency bonus: fewer test cases = higher bonus
-        # Formula: 20 * 2^(-N/N_ref) where N_ref = 100
-        # - 1 test: ~20 points
-        # - 100 tests: ~10 points
-        # - 1000 tests: ~0 points
-        import math
-        N_REF = 100
-        efficiency_bonus = 20 * math.pow(2, -num_tests / N_REF) if num_tests > 0 else 0
+        # Non-linear coverage score: cubic function to reward high coverage more
+        # Basic coverage is easy to achieve; advanced coverage is more valuable
+        # adjusted_cov = (weighted_cov / 100)^3 * 100
+        adjusted_cov = math.pow(weighted_cov / 100, 3) * 100
+        
+        # Coverage score: 70% weight, scaled to 0-70 points
+        coverage_score = 0.7 * adjusted_cov
+        
+        # Efficiency bonus: fewer test cases = higher bonus (30% weight, 0-30 points)
+        # Formula: 30 * 2^(-N/N_ref) where N_ref = 50
+        # - 1 test: ~30 points
+        # - 50 tests: ~15 points
+        # - 200 tests: ~3.75 points
+        N_REF = 50
+        efficiency_bonus = 30 * math.pow(2, -num_tests / N_REF) if num_tests > 0 else 0
         
         score = coverage_score + efficiency_bonus
 
