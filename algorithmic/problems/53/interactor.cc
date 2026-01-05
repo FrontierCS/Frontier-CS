@@ -24,6 +24,7 @@ int main(int argc, char* argv[]) {
     cout << t << endl;
 
     double total_score = 0.0;
+    double tot_unbounded_score = 0.0;
 
     int num_queries = 0;
     int num_base_queries = 0;
@@ -113,16 +114,21 @@ int main(int argc, char* argv[]) {
             double ratio = (L - queries) / (L - O);
             score = ratio * ratio;
         }
+
+        double unbounded_score = max(0.0, (L - queries) / (L - O));
+        unbounded_score = unbounded_score * unbounded_score;
+        tot_unbounded_score += unbounded_score;
         
         total_score += score;
     }
 
     // --- Final Verdict ---
-    double final_score = total_score / t;
-    
+    double score_ratio = total_score / t;
+
+    double unbounded_score_ratio = tot_unbounded_score / t;
     // Output partial score. "quitp" is testlib's function for partial credit.
 
-    quitp(final_score, "Correct guess in %lld queries. Theoretical limit: %lld. Ratio: %.4f", num_queries, num_base_queries, final_score);
+    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", num_queries, score_ratio, unbounded_score_ratio);
     
     return 0;
 }

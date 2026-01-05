@@ -30,6 +30,7 @@ int main(int argc, char* argv[]) {
     double total_score = 0.0;
     long long tot_moves = 0;
     long long tot_base_move_count = 0;
+    double tot_unbounded_score = 0.0;
 
     for (int g = 0; g < n_graphs; ++g) {
         // --- Read Graph Data ---
@@ -78,8 +79,8 @@ int main(int argc, char* argv[]) {
         bool solved = false;
         
         // We set a hard limit slightly above the 0-point threshold to prevent infinite loops.
-        // At 2500 queries, score is 0. We allow a tiny buffer before killing it.
-        int hard_limit = 2505; 
+        // At 2500 queries, score is 0.
+        int hard_limit = 2500; 
 
         while (true) {
             // Read query type from user output
@@ -141,14 +142,17 @@ int main(int argc, char* argv[]) {
             }
         }
         
+        double unbounded_case_score = 1.0 * (2500.0 - queries) / 2000.0;
+        unbounded_case_score = unbounded_case_score * unbounded_case_score;
+        tot_unbounded_score += unbounded_case_score;
         total_score += case_score;
     }
 
     // --- Final Verdict ---
     double score_ratio = total_score / (double)n_graphs;
-    
+    double unbounded_score_ratio = tot_unbounded_score / (double)n_graphs;
     // Output final score using quitp for partial scoring support
-    quitp(score_ratio, "Correct guess in %lld queries. Theoretical limit: %lld. Ratio: %.4f", tot_moves, tot_base_move_count, score_ratio);
-    
+    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
+
     return 0;
 }

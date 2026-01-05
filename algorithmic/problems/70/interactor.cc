@@ -23,6 +23,7 @@ int main(int argc, char* argv[]) {
     double tot_score = 0.0;
     long long tot_moves = 0.0;
     long long tot_base_move_count = 0.0;
+    double tot_unbounded_score = 0.0;
 
     for (int k = 0; k < t; ++k) {
         int n = inf.readInt(2, 300, "n");
@@ -108,6 +109,10 @@ int main(int argc, char* argv[]) {
                 current_score = ratio * ratio;
             } else
                 current_score = 0.0;
+
+            double unbounded_score = ((2.0 * base_dbl) - moves_dbl) / base_dbl;
+            unbounded_score = unbounded_score * unbounded_score;
+            tot_unbounded_score += unbounded_score;
         
             if (current_score < 0)
                 current_score = 0.0;
@@ -121,7 +126,8 @@ int main(int argc, char* argv[]) {
     }
 
     double score_ratio = tot_score / t;
-    quitp(score_ratio, "Correct guess in %lld queries. Theoretical limit: %lld. Ratio: %.4f", tot_moves, tot_base_move_count, score_ratio);
+    double unbounded_score_ratio = tot_unbounded_score / t;
+    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
 
     return 0;
 }
