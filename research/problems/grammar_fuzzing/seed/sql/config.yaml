@@ -1,0 +1,10 @@
+tag: pl
+variant_id: grammar_fuzzing_sql_seed
+dependencies:
+  uv_project: resources
+datasets: []
+runtime:
+  docker:
+    image: python:3.11-slim
+    dind: false
+  timeout_seconds: 300
