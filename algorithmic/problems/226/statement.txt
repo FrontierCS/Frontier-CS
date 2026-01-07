@@ -1,0 +1,16 @@
+Let's call a set of positive integers $S$ **correct** if the following two conditions are met:
+
+- $S \subseteq \{1, 2, \dots, n\}$;
+- If $a \in S$ and $b \in S$, then $|a-b| \ne x$ and $|a-b| \ne y$.
+
+For the given values $n$, $x$, and $y$, you have to find the maximum size of a correct set.
+
+## Input format
+- A single line contains three integers $n$, $x$ and $y$ ($1 \le n \le 10^9$; $1 \le x, y \le 2^{22}$).
+
+## Output format
+- Print one integer — the maximum size of a correct set.
+
+## Scoring 
+- Assume the ground truth answer is $ans$, and your answer is $cnt$.
+- Your score is $max(0, 1 - \log_{10}(abs(cnt - ans) + 1) / 10)$.
