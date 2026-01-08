@@ -89,10 +89,10 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < nb; i++) {
         int x = inf.readInt(0, n - 1);
         int y = inf.readInt(0, m - 1);
-        long long g = inf.readLong(0, 1000);
-        long long c = inf.readLong(0, 2000);
-        long long d = inf.readLong(1, 10);
-        long long v = inf.readLong(1, 200);
+        long long g = inf.readLong(0LL, 1000LL);
+        long long c = inf.readLong(0LL, 2000LL);
+        long long d = inf.readLong(1LL, 10LL);
+        long long v = inf.readLong(1LL, 200LL);
         (void)d;
         (void)v;
         blue[keyXY(x, y)] = BlueBase{g, c};
@@ -103,10 +103,10 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < nr; i++) {
         int x = inf.readInt(0, n - 1);
         int y = inf.readInt(0, m - 1);
-        long long g = inf.readLong(0, 1000);
-        long long c = inf.readLong(0, 2000);
-        long long d = inf.readLong(1, 10);
-        long long v = inf.readLong(1, 200);
+        long long g = inf.readLong(0LL, 1000LL);
+        long long c = inf.readLong(0LL, 2000LL);
+        long long d = inf.readLong(1LL, 10LL);
+        long long v = inf.readLong(1LL, 200LL);
         (void)g;
         (void)c;
         red[keyXY(x, y)] = RedBase{d, v};
@@ -118,8 +118,8 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < k; i++) {
         int x = inf.readInt(0, n - 1);
         int y = inf.readInt(0, m - 1);
-        long long capG = inf.readLong(1, 500);
-        long long capC = inf.readLong(1, 1000);
+        long long capG = inf.readLong(1LL, 500LL);
+        long long capC = inf.readLong(1LL, 1000LL);
         fighters[i] = Fighter{x, y, capG, capC, 0, 0};
     }
 
