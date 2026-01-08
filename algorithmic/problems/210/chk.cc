@@ -106,8 +106,9 @@ int main(int argc, char* argv[]) {
         int y = inf.readInt(0, m - 1);
         long long g = inf.readLong(0LL, 1000LL);
         long long c = inf.readLong(0LL, 2000LL);
-        long long d = inf.readLong(1LL, 10LL);
-        long long v = inf.readLong(1LL, 200LL);
+        // Some released datasets may contain 0 defense/value; allow it and treat as non-contributing.
+        long long d = inf.readLong(0LL, 10LL);
+        long long v = inf.readLong(0LL, 200LL);
         (void)g;
         (void)c;
         red[keyXY(x, y)] = RedBase{d, v};
