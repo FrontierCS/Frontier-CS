@@ -91,8 +91,9 @@ int main(int argc, char* argv[]) {
         int y = inf.readInt(0, m - 1);
         long long g = inf.readLong(0LL, 1000LL);
         long long c = inf.readLong(0LL, 2000LL);
-        long long d = inf.readLong(1LL, 10LL);
-        long long v = inf.readLong(1LL, 200LL);
+        // Blue-side defense/value are unused; allow 0 for compatibility with released datasets.
+        long long d = inf.readLong(0LL, 10LL);
+        long long v = inf.readLong(0LL, 200LL);
         (void)d;
         (void)v;
         blue[keyXY(x, y)] = BlueBase{g, c};
