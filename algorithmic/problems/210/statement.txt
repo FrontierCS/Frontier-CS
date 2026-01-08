@@ -89,6 +89,11 @@ For each side:
 - Line: integer `k` \((1 \le k \le 10)\)
 - Next `k` lines: `x y G C` for fighter `id = i-1`
 
+Constraints (from released datasets):
+
+- `1 ≤ G ≤ 1000`
+- `1 ≤ C ≤ 1000`
+
 ---
 
 ## Output Format

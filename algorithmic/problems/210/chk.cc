@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < k; i++) {
         int x = inf.readInt(0, n - 1);
         int y = inf.readInt(0, m - 1);
-        long long capG = inf.readLong(1LL, 500LL);
+        long long capG = inf.readLong(1LL, 1000LL);
         long long capC = inf.readLong(1LL, 1000LL);
         fighters[i] = Fighter{x, y, capG, capC, 0, 0};
     }
