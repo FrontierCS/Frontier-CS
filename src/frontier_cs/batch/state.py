@@ -177,7 +177,7 @@ class EvaluationState:
                     "solution_hash": r.solution_hash,
                     "problem_hash": r.problem_hash,
                 }
-                for pair_id, r in self.results.items()
+                for pair_id, r in list(self.results.items())
             },
         }
 

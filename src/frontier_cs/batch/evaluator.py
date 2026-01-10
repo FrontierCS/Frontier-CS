@@ -271,12 +271,12 @@ class BatchEvaluator:
         if self._bucket_storage:
             self.sync_from_bucket()
 
-        # Initialize state
+        # Initialize state (only save if first run)
         if not self.state.started_at:
             self.state.started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
             self.state.backend = self.backend
             self.state.total_pairs = len(pairs)
-        self._save_state()
+            self._save_state()
 
         # Compute hashes for cache invalidation
         logger.info("Computing hashes for solution/problem pairs...")
