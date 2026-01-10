@@ -5,7 +5,7 @@ type: interactive
 interactor: interactor.cc
 
 # Time and memory limits still apply to the contestant's solution
-time: 2s
+time: 4s
 memory: 512m
 
 # The subtasks section works the same way
