@@ -580,6 +580,12 @@ def run_batch(args: argparse.Namespace) -> int:
         for problem, stats in sorted(by_problem.items()):
             avg = f"{stats['avg_score']:.4f}" if stats['avg_score'] is not None else "N/A"
             print(f"  {problem}: {stats['successful']}/{stats['total']} successful, avg={avg}")
+
+        # Also export CSV files
+        results_dir = Path(args.results_dir)
+        batch.state.export_aggregated_csv(results_dir / "by_model.csv", by="model")
+        batch.state.export_aggregated_csv(results_dir / "by_problem.csv", by="problem")
+        print(f"\nCSV files exported to {results_dir}")
         return 0
 
     # Handle export-failed command

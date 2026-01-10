@@ -441,6 +441,7 @@ class EvaluationState:
         for model, results in by_model.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[model] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -448,6 +449,9 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
@@ -464,6 +468,7 @@ class EvaluationState:
         for problem, results in by_problem.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[problem] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -471,6 +476,9 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
@@ -487,7 +495,7 @@ class EvaluationState:
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score"])
+            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score", "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"])
             for key, stats in sorted(data.items()):
                 writer.writerow([
                     key,
@@ -497,4 +505,7 @@ class EvaluationState:
                     f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
                     f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
                     f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
+                    f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
+                    f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
+                    f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
                 ])
