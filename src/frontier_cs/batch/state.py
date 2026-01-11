@@ -426,10 +426,23 @@ class EvaluationState:
             if r.is_success
         ]
 
-    def aggregate_by_model(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by model (solution prefix before first _)."""
+    def aggregate_by_model(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by model (solution prefix before first _).
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_model: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None:
+                problem = pair_id.split(":")[1]
+                if problem not in valid_problems:
+                    continue
+
             solution = pair_id.split(":")[0]
             # Extract model prefix (e.g., "gpt5_flash_attn" -> "gpt5")
             model = solution.split("_")[0] if "_" in solution else solution
@@ -455,11 +468,21 @@ class EvaluationState:
             }
         return aggregated
 
-    def aggregate_by_problem(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by problem."""
+    def aggregate_by_problem(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by problem.
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_problem: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
             problem = pair_id.split(":")[1]
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None and problem not in valid_problems:
+                continue
             if problem not in by_problem:
                 by_problem[problem] = []
             by_problem[problem].append(result)
@@ -482,15 +505,25 @@ class EvaluationState:
             }
         return aggregated
 
-    def export_aggregated_csv(self, path: Path, by: str = "model") -> None:
-        """Export aggregated results to CSV (by 'model' or 'problem')."""
+    def export_aggregated_csv(
+        self, path: Path, by: str = "model", valid_problems: Optional[Set[str]] = None
+    ) -> None:
+        """Export aggregated results to CSV (by 'model' or 'problem').
+
+        Args:
+            path: Output CSV path
+            by: Aggregation key - 'model' or 'problem'
+            valid_problems: If provided, only include results for these problems.
+                           Used to filter out orphaned results (results for problems
+                           that have been restructured or removed from the filesystem).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if by == "model":
-            data = self.aggregate_by_model()
+            data = self.aggregate_by_model(valid_problems)
             key_name = "model"
         else:
-            data = self.aggregate_by_problem()
+            data = self.aggregate_by_problem(valid_problems)
             key_name = "problem"
 
         with path.open("w", newline="", encoding="utf-8") as f:
