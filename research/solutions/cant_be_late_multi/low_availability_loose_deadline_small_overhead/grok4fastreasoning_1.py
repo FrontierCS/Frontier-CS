@@ -30,7 +30,7 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        self.consecutive_none = 0
+        self.consecutive_no_spot = 0
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
@@ -50,34 +50,33 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
+        progress = sum(self.task_done_time)
+        remaining_work = self.task_duration - progress
+        if remaining_work <= 0:
+            return ClusterType.NONE
+
+        time_left = self.deadline - self.env.elapsed_seconds
+        effective_time_left = time_left - self.remaining_restart_overhead
+        is_tight = effective_time_left <= remaining_work + self.restart_overhead * 2
+
         if has_spot:
-            self.consecutive_none = 0
+            self.consecutive_no_spot = 0
             return ClusterType.SPOT
 
-        current = self.env.get_current_region()
-        num = self.env.get_num_regions()
-        gap = self.env.gap_seconds
-
-        total_done = sum(self.task_done_time)
-        rem_work = self.task_duration - total_done
-        rem_time = self.deadline - self.env.elapsed_seconds - self.remaining_restart_overhead
-        if rem_time <= 0 or gap <= 0:
+        # no spot
+        if is_tight:
+            self.consecutive_no_spot = 0
             return ClusterType.ON_DEMAND
 
-        approx_steps_rem = rem_time / gap
-        approx_work_steps_rem = rem_work / gap
+        # not tight, track consecutive no spot
+        self.consecutive_no_spot += 1
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
 
-        hurry = (approx_work_steps_rem + 5 > approx_steps_rem)
-
-        if num == 1 or hurry:
-            self.consecutive_none = 0
+        if self.consecutive_no_spot > 3 and num_regions > 1:
+            next_r = (current_region + 1) % num_regions
+            self.env.switch_region(next_r)
+            self.consecutive_no_spot = 0
             return ClusterType.ON_DEMAND
-
-        self.consecutive_none += 1
-        if self.consecutive_none > num + 5:
-            self.consecutive_none = 0
+        else:
             return ClusterType.ON_DEMAND
-
-        next_r = (current + 1) % num
-        self.env.switch_region(next_r)
-        return ClusterType.NONE

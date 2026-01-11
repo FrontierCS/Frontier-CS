@@ -1,6 +1,6 @@
 import json
+import math
 from argparse import Namespace
-from collections import deque
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -32,26 +32,20 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.num_regions = self.env.get_num_regions()
-        
-        # Hyperparameters
-        self.history_window = 36
-        self.uptime_threshold = 0.6
-        self.panic_buffer_factor = 1.25
-        self.min_time_between_switches = self.restart_overhead * 3
-        
-        # State tracking
-        self.region_history = [
-            deque(maxlen=self.history_window) for _ in range(self.num_regions)
-        ]
-        
-        # Seed history to encourage exploration
-        for i in range(self.num_regions):
-            self.region_history[i].append(1)
+        self.is_initialized = False
+        self.GAMBLE_SLACK_THRESHOLD = 6.0 * 3600
 
-        self.last_switch_time = -self.min_time_between_switches * 2
-
+        self.region_stats = None
+        self.total_steps_overall = 0
         return self
+
+    def _initialize(self):
+        """One-time initialization on the first step."""
+        num_regions = self.env.get_num_regions()
+        self.region_stats = {
+            i: {'up_steps': 0, 'total_steps': 0} for i in range(num_regions)
+        }
+        self.is_initialized = True
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
@@ -70,79 +64,67 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
+        if not self.is_initialized:
+            self._initialize()
+
+        self.total_steps_overall += 1
+
         current_region = self.env.get_current_region()
-        time_elapsed = self.env.elapsed_seconds
+        self.region_stats[current_region]['total_steps'] += 1
+        if has_spot:
+            self.region_stats[current_region]['up_steps'] += 1
 
-        # Update history for the current region
-        self.region_history[current_region].append(1 if has_spot else 0)
-
-        # Calculate remaining work
         work_done = sum(self.task_done_time)
         work_remaining = self.task_duration - work_done
 
-        # If task is done, do nothing to save cost
         if work_remaining <= 0:
             return ClusterType.NONE
 
-        # Calculate time left until deadline
-        time_remaining_until_deadline = self.deadline - time_elapsed
+        time_left = self.deadline - self.env.elapsed_seconds
+        time_needed_guaranteed = work_remaining + self.restart_overhead
 
-        # Failsafe for being at/past the deadline
-        if time_remaining_until_deadline <= 1e-6:
+        if time_left <= time_needed_guaranteed:
             return ClusterType.ON_DEMAND
 
-        # Determine if we are in a "critical" or "panic" state
-        # This happens when remaining time is close to the minimum time needed to finish
-        # assuming reliable On-Demand usage, plus a safety buffer for one more restart event.
-        time_needed_for_safe_completion = work_remaining + self.panic_buffer_factor * self.restart_overhead
-        is_critical = time_remaining_until_deadline <= time_needed_for_safe_completion
-
-        if is_critical:
-            # Panic Mode: Guarantee progress with On-Demand
-            return ClusterType.ON_DEMAND
-
-        # Normal Mode: We have slack, prioritize cost savings
         if has_spot:
-            # Use cheap Spot when available
             return ClusterType.SPOT
+
+        slack = time_left - time_needed_guaranteed
+
+        if slack <= self.GAMBLE_SLACK_THRESHOLD:
+            return ClusterType.ON_DEMAND
         else:
-            # Spot is unavailable. Decide between On-Demand or switching region.
+            num_regions = self.env.get_num_regions()
+            best_region = -1
+
+            unexplored_region = -1
+            for r in range(num_regions):
+                if r != current_region and self.region_stats[r]['total_steps'] == 0:
+                    unexplored_region = r
+                    break
             
-            # Avoid switching too frequently ("thrashing")
-            time_since_last_switch = time_elapsed - self.last_switch_time
-            if time_since_last_switch < self.min_time_between_switches:
-                return ClusterType.ON_DEMAND
-
-            # Evaluate other regions based on historical spot uptime
-            uptimes = []
-            for i in range(self.num_regions):
-                hist = self.region_history[i]
-                if not hist:
-                    uptimes.append(1.0)  # Assume 100% uptime if no history
-                else:
-                    uptimes.append(sum(hist) / len(hist))
-
-            # Find the best alternative region to switch to
-            best_other_region_idx = -1
-            max_uptime = -1.0
-            
-            # Iterate through potential regions in a fixed order to break ties
-            candidate_indices = (
-                list(range(current_region + 1, self.num_regions)) +
-                list(range(0, current_region))
-            )
-
-            for i in candidate_indices:
-                if uptimes[i] > max_uptime:
-                    max_uptime = uptimes[i]
-                    best_other_region_idx = i
-
-            # If a promising region is found, switch to it
-            if best_other_region_idx != -1 and max_uptime > self.uptime_threshold:
-                self.env.switch_region(best_other_region_idx)
-                self.last_switch_time = time_elapsed
-                # A switch incurs overhead, so return NONE to save cost this step
-                return ClusterType.NONE
+            if unexplored_region != -1:
+                best_region = unexplored_region
             else:
-                # No other region looks good enough, so use On-Demand to make progress
+                max_ucb_score = -1.0
+                N = self.total_steps_overall
+                for r in range(num_regions):
+                    if r == current_region:
+                        continue
+                    
+                    stats = self.region_stats[r]
+                    n_r = stats['total_steps']
+                    
+                    p_hat_r = stats['up_steps'] / n_r
+                    exploration_term = math.sqrt(2 * math.log(N) / n_r)
+                    ucb_score = p_hat_r + exploration_term
+
+                    if ucb_score > max_ucb_score:
+                        max_ucb_score = ucb_score
+                        best_region = r
+
+            if best_region == -1:
                 return ClusterType.ON_DEMAND
+            else:
+                self.env.switch_region(best_region)
+                return ClusterType.NONE

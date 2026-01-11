@@ -1,4 +1,5 @@
 import json
+import math
 from argparse import Namespace
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
@@ -6,7 +7,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cbmrs_v1"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -19,42 +20,42 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        self._commit_to_ondemand = False
-        self._epsilon = 1.0  # small safety slack in seconds
+        self._committed_on_demand = False
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Remaining work and time
+        if not hasattr(self, "_committed_on_demand"):
+            self._committed_on_demand = False
+
+        # If already on on-demand, keep running to avoid extra overhead
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            self._committed_on_demand = True
+
+        # Compute remaining work and time left
         remaining_work = max(0.0, self.task_duration - sum(self.task_done_time))
         if remaining_work <= 0.0:
             return ClusterType.NONE
 
-        time_left = self.deadline - self.env.elapsed_seconds
-        gap = self.env.gap_seconds
+        time_left = max(0.0, self.deadline - self.env.elapsed_seconds)
+        g = self.env.gap_seconds
+        o = self.restart_overhead
 
-        # Time to finish if we commit to On-Demand now
-        if self.env.cluster_type == ClusterType.ON_DEMAND:
-            od_overhead_now = max(0.0, self.remaining_restart_overhead)
-        else:
-            od_overhead_now = self.restart_overhead
-        t_od_finish_now = remaining_work + od_overhead_now
-
-        # Commit condition: once committed, stick to On-Demand
-        if self._commit_to_ondemand or time_left <= t_od_finish_now + self._epsilon:
-            self._commit_to_ondemand = True
+        # If committed to on-demand, continue
+        if self._committed_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Prefer Spot when available, if not committed to On-Demand
+        # Time needed to finish if we start ON_DEMAND now:
+        # First step costs gap + overhead time and yields (gap - overhead) progress.
+        # Total time = overhead + ceil((remaining_work + overhead) / gap) * gap
+        steps_needed = int(math.ceil((remaining_work + o) / g)) if g > 0 else 0
+        ondemand_time_needed_now = o + steps_needed * g
+
+        # If delaying one more step could cause missing deadline, start ON_DEMAND now.
+        if time_left - g < ondemand_time_needed_now:
+            self._committed_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Otherwise, use Spot when available, else pause to save cost.
         if has_spot:
             return ClusterType.SPOT
-
-        # Spot unavailable: decide to wait (NONE) or switch to On-Demand
-        # If we wait one step, can we still finish on OD?
-        time_left_after_wait = time_left - gap
-        t_od_finish_after_wait = remaining_work + self.restart_overhead
-        if time_left_after_wait > t_od_finish_after_wait + self._epsilon:
-            return ClusterType.NONE
-
-        # Otherwise, commit to On-Demand to ensure deadline
-        self._commit_to_ondemand = True
-        return ClusterType.ON_DEMAND
+        return ClusterType.NONE

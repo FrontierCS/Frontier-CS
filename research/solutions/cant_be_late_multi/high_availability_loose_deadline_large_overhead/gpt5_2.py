@@ -1,12 +1,13 @@
 import json
 from argparse import Namespace
+from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_rr_guard"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -20,82 +21,93 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state
-        self._od_lock = False
-        self._acc_done = 0.0
-        self._last_done_len = 0
-        self._rr_initialized = False
+        # Initialize internal state
+        self._commit_on_demand = False
+        self._last_work_done = 0.0
+        self._alpha_prior = 1.0
+        self._beta_prior = 1.0
+        self._last_switch_target = None
+
+        num_regions = self.env.get_num_regions()
+        self._region_avail: List[int] = [0 for _ in range(num_regions)]
+        self._region_total: List[int] = [0 for _ in range(num_regions)]
+        self._visited_steps: List[int] = [0 for _ in range(num_regions)]
         return self
 
-    def _update_acc_done(self):
-        l = len(self.task_done_time)
-        if l > self._last_done_len:
-            # Incremental sum of new segments only
-            add = 0.0
-            for i in range(self._last_done_len, l):
-                add += self.task_done_time[i]
-            self._acc_done += add
-            self._last_done_len = l
+    def _choose_best_region_to_try(self) -> int:
+        n = self.env.get_num_regions()
+        current = self.env.get_current_region()
 
-    def _must_use_on_demand(self, last_cluster_type: ClusterType, time_left: float, remaining_work: float) -> bool:
-        # Overhead we need if we choose ON_DEMAND now and keep it
-        if self._od_lock or last_cluster_type == ClusterType.ON_DEMAND:
-            od_overhead = self.remaining_restart_overhead
-        else:
-            od_overhead = self.restart_overhead
+        # Compute smoothed availability score
+        scores = []
+        for i in range(n):
+            avail = self._region_avail[i]
+            total = self._region_total[i]
+            score = (avail + self._alpha_prior) / (total + self._alpha_prior + self._beta_prior)
+            # Light recency boost for regions we have recently seen good availability
+            scores.append((score, i))
 
-        # Add small safety to guard discretization/edge cases
-        gap = getattr(self.env, "gap_seconds", 0.0) or 0.0
-        safety = min(gap, self.restart_overhead)
+        # Sort descending by score
+        scores.sort(key=lambda x: (-x[0], x[1]))
 
-        required = od_overhead + remaining_work
-        return time_left <= required + safety
+        # Prefer a region different from current; avoid immediate repeat to the same failed target if possible.
+        for _, idx in scores:
+            if idx != current and idx != self._last_switch_target:
+                self._last_switch_target = idx
+                return idx
+
+        # Fallbacks: if all else fails, choose next region round-robin
+        idx = (current + 1) % n
+        self._last_switch_target = idx
+        return idx
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Initialize round-robin region starting point
-        if not self._rr_initialized:
-            try:
-                self._rr_initialized = True
-                self._rr_last_region = self.env.get_current_region()
-            except Exception:
-                self._rr_initialized = True
-                self._rr_last_region = 0
-
-        # Update accumulated work done efficiently
-        self._update_acc_done()
-
-        # Remaining work and time left
-        remaining_work = max(0.0, self.task_duration - self._acc_done)
-        time_left = self.deadline - self.env.elapsed_seconds
-
-        if remaining_work <= 0.0:
-            # Already finished; no more actions needed
+        # If already done, don't run anything.
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
+        if work_remaining <= 0:
+            self._commit_on_demand = False
             return ClusterType.NONE
 
-        # If already locked into on-demand, keep it to avoid extra restarts
-        if self._od_lock:
+        now = self.env.elapsed_seconds
+        time_left = self.deadline - now
+        gap = self.env.gap_seconds
+
+        # Update per-region availability stats from observation at current region
+        current_region = self.env.get_current_region()
+        if 0 <= current_region < self.env.get_num_regions():
+            self._region_total[current_region] += 1
+            if has_spot:
+                self._region_avail[current_region] += 1
+
+        # If we have already committed to on-demand, keep running it to guarantee finish.
+        if self._commit_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Decide if we must switch to (or stay on) on-demand to guarantee finish
-        if self._must_use_on_demand(last_cluster_type, time_left, remaining_work):
-            self._od_lock = True
+        # Compute minimum time to finish if we start On-Demand now (includes restart overhead)
+        # Use conservative full overhead on switch.
+        time_needed_if_od_now = self.restart_overhead + work_remaining
+
+        # If waiting one more step would make OD insufficient to meet deadline, start OD now.
+        if now + gap + time_needed_if_od_now > self.deadline:
+            self._commit_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Not yet forced to use on-demand; prefer spot to minimize cost
+        # Prefer Spot when available in the current region.
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot not available here; we can wait (NONE) as we still have slack.
-        # Opportunistically round-robin to another region to increase chance of spot next step.
-        try:
-            n = self.env.get_num_regions()
-            if n and n > 1:
-                current = self.env.get_current_region()
-                nxt = (current + 1) % n
-                if nxt != current:
-                    self.env.switch_region(nxt)
-                    self._rr_last_region = nxt
-        except Exception:
-            pass
+        # Spot not available in current region; assess slack and decide to search/wait or start OD.
+        slack_after_od = time_left - time_needed_if_od_now
+        if slack_after_od <= 0:
+            # No slack left; must start OD now.
+            self._commit_on_demand = True
+            return ClusterType.ON_DEMAND
 
+        # There is slack to wait/search. Try switching to the most promising region and wait this step.
+        target = self._choose_best_region_to_try()
+        if target != current_region:
+            self.env.switch_region(target)
+
+        # Wait one step to observe availability in the new region (or same region if no better choice).
         return ClusterType.NONE

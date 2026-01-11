@@ -1,5 +1,4 @@
 import json
-import math
 from argparse import Namespace
 from typing import Optional, List
 
@@ -8,7 +7,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_v1"
+    NAME = "cant_be_late_multiregion_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,172 +20,116 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-
-        self._init_done_cache()
-        self._commit_on_demand = False
-
-        self._n_regions: Optional[int] = None
-        self._alpha_up: Optional[List[float]] = None
-        self._alpha_total: Optional[List[float]] = None
-        self._total_obs: float = 0.0
-
-        self._down_streak = 0
-        self._switches_in_streak = 0
-        self._last_region: Optional[int] = None
-
         return self
 
-    def _init_done_cache(self) -> None:
+    def _lazy_init(self) -> None:
+        self._inited = True
+        self._num_regions = int(self.env.get_num_regions())
         self._done_len = 0
-        self._done_sum = 0.0
+        self._work_done = 0.0
+        self._none_waste_seconds = 0.0
+        self._last_elapsed: Optional[float] = None
+        self._critical_mode = False
 
-    def _update_done_cache(self) -> float:
-        td = self.task_done_time
-        l = len(td)
-        if l > self._done_len:
-            s = self._done_sum
-            for i in range(self._done_len, l):
-                s += float(td[i])
-            self._done_sum = s
-            self._done_len = l
-        return self._done_sum
+        task_duration = self._get_task_duration()
+        deadline = float(self.deadline)
+        total_slack = max(0.0, deadline - task_duration)
 
-    def _lazy_init_regions(self) -> None:
-        if self._n_regions is not None:
+        self._critical_slack = max(3600.0, 0.15 * total_slack)
+        self._max_wait_budget = max(0.0, total_slack - self._critical_slack)
+
+        self._obs_total = [0] * self._num_regions
+        self._obs_true = [0] * self._num_regions
+
+    def _get_task_duration(self) -> float:
+        td = getattr(self, "task_duration", 0.0)
+        if isinstance(td, (list, tuple)):
+            return float(td[0]) if td else 0.0
+        return float(td)
+
+    def _update_work_done(self) -> None:
+        tdt = getattr(self, "task_done_time", None)
+        if not tdt:
+            self._done_len = 0
+            self._work_done = 0.0
             return
-        try:
-            n = int(self.env.get_num_regions())
-        except Exception:
-            n = 1
-        if n <= 0:
-            n = 1
-        self._n_regions = n
-        # Beta(1,1) prior => mean 0.5
-        self._alpha_up = [1.0] * n
-        self._alpha_total = [2.0] * n
-        self._total_obs = 0.0
+        n = len(tdt)
+        if n > self._done_len:
+            self._work_done += float(sum(tdt[self._done_len:n]))
+            self._done_len = n
 
-    def _update_region_stats(self, region: int, has_spot: bool) -> None:
-        if self._alpha_up is None or self._alpha_total is None:
-            return
-        if region < 0 or region >= self._n_regions:
-            return
-        self._alpha_total[region] += 1.0
-        if has_spot:
-            self._alpha_up[region] += 1.0
-        self._total_obs += 1.0
+    def _region_score(self, idx: int) -> float:
+        # Beta(1,1) prior mean
+        tot = self._obs_total[idx]
+        tru = self._obs_true[idx]
+        return (tru + 1.0) / (tot + 2.0)
 
-    def _pick_best_other_region(self, current: int) -> int:
-        n = self._n_regions or 1
-        if n <= 1:
+    def _pick_next_region(self, current: int) -> int:
+        if self._num_regions <= 1:
             return current
-        up = self._alpha_up
-        tot = self._alpha_total
-        if up is None or tot is None:
-            return (current + 1) % n
-
-        logt = math.log(self._total_obs + 2.0)
-        best_idx = current
-        best_score = -1e18
-        for r in range(n):
-            if r == current:
+        best_idx = -1
+        best_score = -1.0
+        for i in range(self._num_regions):
+            if i == current:
                 continue
-            tr = tot[r]
-            if tr <= 0.0:
-                tr = 1.0
-            mean = up[r] / tr
-            bonus = 0.35 * math.sqrt(logt / tr)
-            score = mean + bonus
-            if score > best_score:
-                best_score = score
-                best_idx = r
+            s = self._region_score(i)
+            if s > best_score:
+                best_score = s
+                best_idx = i
+        if best_idx < 0:
+            return (current + 1) % self._num_regions
         return best_idx
 
-    def _must_commit_on_demand(self, remaining_work: float, time_remaining: float, last_cluster_type: ClusterType, has_spot: bool) -> bool:
-        if remaining_work <= 0.0:
-            return False
-        if time_remaining <= 0.0:
-            return True
-
-        gap = float(getattr(self.env, "gap_seconds", 1.0) or 1.0)
-        overhead = float(self.restart_overhead)
-
-        # Conservative cushion to absorb step discretization + jitter in restart modeling.
-        buffer = overhead + 2.0 * gap
-        if buffer > 1800.0:
-            buffer = 1800.0
-
-        # If we are not making progress (no spot), ensure we don't wait too long.
-        if not has_spot:
-            # If waiting one more step could jeopardize the on-demand-only completion plan, commit now.
-            if time_remaining - gap <= remaining_work + overhead + buffer:
-                return True
-
-        # General "last safe point" to still finish with on-demand after paying restart overhead once.
-        if time_remaining <= remaining_work + overhead + buffer:
-            return True
-
-        # If already on-demand for some reason, prefer to keep it to avoid thrash.
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            return True
-
-        return False
-
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._lazy_init_regions()
+        if not hasattr(self, "_inited") or not self._inited:
+            self._lazy_init()
 
-        done = self._update_done_cache()
-        remaining_work = float(self.task_duration) - float(done)
-        if remaining_work <= 0.0:
+        now = float(self.env.elapsed_seconds)
+        if self._last_elapsed is not None:
+            dt = now - self._last_elapsed
+            if dt > 0 and last_cluster_type == ClusterType.NONE:
+                self._none_waste_seconds += dt
+        self._last_elapsed = now
+
+        region = int(self.env.get_current_region())
+        if 0 <= region < self._num_regions:
+            self._obs_total[region] += 1
+            if has_spot:
+                self._obs_true[region] += 1
+
+        self._update_work_done()
+        task_duration = self._get_task_duration()
+        remaining_work = task_duration - self._work_done
+        if remaining_work <= 1e-9:
             return ClusterType.NONE
 
-        elapsed = float(self.env.elapsed_seconds)
-        time_remaining = float(self.deadline) - elapsed
-        if time_remaining <= 0.0:
-            return ClusterType.NONE
+        remaining_time = float(self.deadline) - now
+        pending_overhead = float(getattr(self, "remaining_restart_overhead", 0.0) or 0.0)
+        if pending_overhead < 0:
+            pending_overhead = 0.0
 
-        cur_region = int(self.env.get_current_region())
-        if self._last_region is None:
-            self._last_region = cur_region
-        self._update_region_stats(cur_region, bool(has_spot))
+        safe_slack = remaining_time - (remaining_work + pending_overhead)
 
-        if self._commit_on_demand:
+        if (not self._critical_mode) and (safe_slack <= self._critical_slack):
+            self._critical_mode = True
+
+        if self._critical_mode:
             return ClusterType.ON_DEMAND
 
-        if self._must_commit_on_demand(remaining_work, time_remaining, last_cluster_type, bool(has_spot)):
-            self._commit_on_demand = True
-            return ClusterType.ON_DEMAND
-
-        # Not committed: use spot whenever possible; otherwise pause (NONE) and optionally switch regions.
         if has_spot:
-            self._down_streak = 0
-            self._switches_in_streak = 0
             return ClusterType.SPOT
 
-        # Spot unavailable: consider region switch while pausing.
-        self._down_streak += 1
-        n = self._n_regions or 1
-        if n > 1:
-            gap = float(getattr(self.env, "gap_seconds", 1.0) or 1.0)
-            overhead = float(self.restart_overhead)
-            cooldown_steps = int(max(1.0, overhead / gap)) if gap > 0.0 else 1
-            max_switches = min(3, n - 1)
+        gap = float(getattr(self.env, "gap_seconds", 0.0) or 0.0)
+        allow_wait = (
+            safe_slack > (self._critical_slack + max(gap, 1e-9))
+            and self._none_waste_seconds < self._max_wait_budget
+        )
 
-            do_switch = False
-            if self._switches_in_streak < max_switches:
-                if self._down_streak == 1:
-                    do_switch = True
-                elif cooldown_steps > 0 and (self._down_streak % cooldown_steps) == 0:
-                    do_switch = True
+        if allow_wait:
+            next_region = self._pick_next_region(region)
+            if next_region != region:
+                self.env.switch_region(next_region)
+            return ClusterType.NONE
 
-            if do_switch:
-                new_region = self._pick_best_other_region(cur_region)
-                if new_region != cur_region:
-                    try:
-                        self.env.switch_region(new_region)
-                        self._switches_in_streak += 1
-                        self._last_region = new_region
-                    except Exception:
-                        pass
-
-        return ClusterType.NONE
+        self._critical_mode = True
+        return ClusterType.ON_DEMAND

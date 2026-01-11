@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -30,6 +31,19 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
+
+        # Load availability traces
+        self.availability: List[List[bool]] = []
+        trace_files = config.get("trace_files", [])
+        for path in trace_files:
+            try:
+                with open(path, 'r') as tf:
+                    data = json.load(tf)
+                    avail = data.get("availability", [])
+                    self.availability.append(avail)
+            except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                self.availability.append([])
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
@@ -50,12 +64,23 @@ class Solution(MultiRegionStrategy):
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
         # Your decision logic here
-        current = self.env.get_current_region()
-        num = self.env.get_num_regions()
-        if not has_spot:
-            new_region = (current + 1) % num
-            if new_region != current:
-                self.env.switch_region(new_region)
+        gap = self.env.gap_seconds
+        elapsed = self.env.elapsed_seconds
+        t = int(elapsed // gap)
+        current_r = self.env.get_current_region()
+        num_r = self.env.get_num_regions()
+
+        # Use SPOT if available in current region
         if has_spot:
             return ClusterType.SPOT
+
+        # Check other regions for current timestep spot availability
+        for r in range(num_r):
+            if r == current_r:
+                continue
+            if t < len(self.availability[r]) and self.availability[r][t]:
+                self.env.switch_region(r)
+                return ClusterType.SPOT
+
+        # No spot available anywhere, fall back to ON_DEMAND
         return ClusterType.ON_DEMAND

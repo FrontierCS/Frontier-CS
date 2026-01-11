@@ -32,13 +32,20 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Load traces
-        self.num_regions = len(config["trace_files"])
+        trace_files = config.get("trace_files", [])
+        self.num_regions = len(trace_files)
         self.traces = []
-        for tf in config["trace_files"]:
-            with open(tf, 'r') as tf_file:
-                raw = json.load(tf_file)
-                trace = [bool(x) for x in raw]
+        self.streaks = []
+        for path in trace_files:
+            with open(path, 'r') as tf:
+                trace = json.load(tf)
             self.traces.append(trace)
+            L = len(trace)
+            streak = [0] * L
+            for tt in range(L - 1, -1, -1):
+                if trace[tt]:
+                    streak[tt] = 1 + (streak[tt + 1] if tt + 1 < L else 0)
+            self.streaks.append(streak)
 
         return self
 
@@ -59,32 +66,37 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        current_region = self.env.get_current_region()
-        t = int(self.env.elapsed_seconds // self.env.gap_seconds)
-
-        best_r = -1
-        best_streak = -1
-
-        for r in range(self.num_regions):
-            if t >= len(self.traces[r]):
-                continue
-            if not self.traces[r][t]:
-                continue
-            # Compute streak
-            streak = 0
-            tt = t
-            while tt < len(self.traces[r]) and self.traces[r][tt]:
-                streak += 1
-                tt += 1
-            # Prefer longer streak, or same streak but current region
-            if streak > best_streak or (streak == best_streak and r == current_region):
-                best_streak = streak
-                best_r = r
-
-        if best_r != -1:
-            if best_r != current_region:
-                self.env.switch_region(best_r)
-            return ClusterType.SPOT
-        else:
-            # No spot available anywhere, use ON_DEMAND
+        if not hasattr(self, 'traces') or not self.traces:
+            # Fallback if no traces
+            if has_spot:
+                return ClusterType.SPOT
             return ClusterType.ON_DEMAND
+
+        curr_r = self.env.get_current_region()
+        gap = self.env.gap_seconds
+        elapsed = self.env.elapsed_seconds
+        t = int(elapsed // gap)
+        num_r = self.env.get_num_regions()
+
+        candidates = []
+        for r in range(num_r):
+            trace = self.traces[r]
+            streak = self.streaks[r]
+            if t < len(trace) and trace[t]:
+                k = streak[t] if t < len(streak) else 1
+                candidates.append((k, r))
+
+        if not candidates:
+            return ClusterType.ON_DEMAND
+
+        max_k = max(k for k, r in candidates)
+        best_rs = [r for k, r in candidates if k == max_k]
+        if curr_r in best_rs:
+            best_r = curr_r
+        else:
+            best_r = min(best_rs)
+
+        if best_r != curr_r:
+            self.env.switch_region(best_r)
+
+        return ClusterType.SPOT

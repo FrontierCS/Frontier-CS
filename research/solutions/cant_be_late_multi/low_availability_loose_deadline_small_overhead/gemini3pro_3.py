@@ -1,16 +1,24 @@
 import json
 from argparse import Namespace
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
+
 
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "cost_optimized_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -28,44 +36,46 @@ class Solution(MultiRegionStrategy):
         """
         Decide next action based on current state.
         """
-        # Calculate current state
-        elapsed = self.env.elapsed_seconds
-        done = sum(self.task_done_time)
-        total_work = self.task_duration
-        remaining_work = total_work - done
+        # Calculate state
+        accumulated_work = sum(self.task_done_time)
+        remaining_work = self.task_duration - accumulated_work
+        time_left = self.deadline - self.env.elapsed_seconds
         
-        # Check if work is already done (handling float precision)
-        if remaining_work <= 1e-6:
-            return ClusterType.NONE
-
-        remaining_time = self.deadline - elapsed
-        gap = self.env.gap_seconds
+        # Conservative overhead estimate (in seconds)
         overhead = self.restart_overhead
         
-        # Calculate panic threshold.
-        # We switch to ON_DEMAND if time is running out.
-        # Buffer required:
-        # 1. remaining_work: Time needed to execute code.
-        # 2. switch_overhead: Time needed to spin up OD (if not already running).
-        # 3. gap: To account for the granularity of the current step (safety margin).
+        # Panic Threshold:
+        # If time remaining is dangerously close to the minimum time needed to finish
+        # (work + overhead), we must switch to On-Demand and stay there to guarantee completion.
+        # We add a safety buffer of 2 timesteps (gap_seconds) to account for simulator granularity.
+        panic_buffer = 2.0 * self.env.gap_seconds
+        panic_threshold = remaining_work + overhead + panic_buffer
         
-        switch_overhead = 0.0 if last_cluster_type == ClusterType.ON_DEMAND else overhead
-        panic_threshold = remaining_work + switch_overhead + 1.1 * gap
-        
-        # If we are close to the deadline, force On-Demand to guarantee completion.
-        if remaining_time < panic_threshold:
+        if time_left < panic_threshold:
+            # Panic mode: Force On-Demand, do not switch regions to ensure stability.
             return ClusterType.ON_DEMAND
-            
-        # Normal operation: Prefer Spot to save costs
+
+        # If Spot is available in the current region, use it (cheapest option).
         if has_spot:
             return ClusterType.SPOT
-        else:
-            # Spot is not available in the current region.
-            # Since we have slack (not in panic mode), we search for Spot in other regions.
-            # Switch to the next region and return NONE (pause) for this step.
-            # The availability in the new region will be checked in the next step.
-            num_regions = self.env.get_num_regions()
-            current_region = self.env.get_current_region()
-            next_region = (current_region + 1) % num_regions
-            self.env.switch_region(next_region)
+
+        # Hunt Mode:
+        # Spot is unavailable in current region. We should look elsewhere.
+        # Switch to the next region in a round-robin fashion.
+        num_regions = self.env.get_num_regions()
+        curr_region = self.env.get_current_region()
+        self.env.switch_region((curr_region + 1) % num_regions)
+        
+        # Decide whether to Probe (pause) or Run (OD) in the new region.
+        # If we have substantial slack, we return NONE to "peek" at the next step's availability
+        # without incurring OD costs. 
+        # Probe Threshold is set to allow hunting as long as we have ~6 steps of slack buffer.
+        probe_threshold = remaining_work + overhead + (6.0 * self.env.gap_seconds)
+        
+        if time_left > probe_threshold:
+            # Plenty of time: Pause to save money and check spot availability in new region next tick.
             return ClusterType.NONE
+        else:
+            # Slack is tightening: Run OD in new region to ensure progress while still potentially 
+            # switching to Spot next tick if it becomes available (since we switched region).
+            return ClusterType.ON_DEMAND

@@ -1,7 +1,6 @@
 import json
-import math
-import os
 from argparse import Namespace
+import numpy as np
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -27,87 +26,95 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.spot_traces = []
-        spec_dir = os.path.dirname(spec_path)
-        for trace_file in config["trace_files"]:
-            if not os.path.isabs(trace_file):
-                trace_file_path = os.path.join(spec_dir, trace_file)
-            else:
-                trace_file_path = trace_file
-
-            trace = []
-            with open(trace_file_path) as tf:
-                for line in tf:
-                    trace.append(bool(int(line.strip())))
-            self.spot_traces.append(trace)
+        self.num_regions = self.env.get_num_regions()
         
-        self.lookahead_hours = 3.0
-        self.safety_buffer_factor = 2.0
-        self.wait_slack_factor = 4.0
+        # Statistics for each region to feed into the UCB1 algorithm
+        self.region_stats = [
+            {'seen': 0, 'available': 0} for _ in range(self.num_regions)
+        ]
+        self.total_steps = 0
+
+        # --- Hyperparameters ---
+        
+        # If slack drops below this, use On-Demand unconditionally. (2 hours)
+        self.CRITICAL_SLACK_SECONDS = 2 * 3600.0
+        
+        # If no spot is available and slack is above this, wait. Otherwise, use On-Demand. (12 hours)
+        self.WAIT_SLACK_SECONDS = 12 * 3600.0
+        
+        # UCB1 exploration constant.
+        self.EXPLORATION_CONSTANT = np.sqrt(2.0)
 
         return self
+
+    def _get_ucb_score(self, region_idx: int) -> float:
+        """
+        Calculates the UCB1 score for a given region to balance exploration and exploitation.
+        """
+        stats = self.region_stats[region_idx]
+        
+        if stats['seen'] == 0:
+            return float('inf')
+        
+        availability_rate = stats['available'] / stats['seen']
+        
+        # Add a small epsilon to avoid log(0) if total_steps is 0, though it's incremented first.
+        exploration_term = self.EXPLORATION_CONSTANT * np.sqrt(
+            np.log(self.total_steps) / stats['seen']
+        )
+        
+        return availability_rate + exploration_term
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
         """
-        work_rem = self.task_duration - sum(self.task_done_time)
-        if work_rem <= 0:
+        self.total_steps += 1
+
+        # 1. Calculate current work and time state
+        work_done = sum(self.task_done_time)
+        remaining_work = self.task_duration - work_done
+
+        if remaining_work <= 0:
             return ClusterType.NONE
 
-        time_now = self.env.elapsed_seconds
-        current_step = int(time_now / self.env.gap_seconds) if self.env.gap_seconds > 0 else 0
-        time_available = self.deadline - time_now
-
-        od_steps_needed = math.ceil(work_rem / self.env.gap_seconds)
-        time_for_od_work = od_steps_needed * self.env.gap_seconds
+        time_to_deadline = self.deadline - self.env.elapsed_seconds
+        current_slack = time_to_deadline - remaining_work
         
-        potential_overhead = 0
-        if last_cluster_type != ClusterType.ON_DEMAND:
-            potential_overhead = self.restart_overhead
-        
-        time_needed_to_finish_on_od = time_for_od_work + potential_overhead
-        safety_buffer = self.restart_overhead * self.safety_buffer_factor
+        current_region = self.env.get_current_region()
 
-        if time_needed_to_finish_on_od + safety_buffer >= time_available:
+        # 2. Update statistics for the current region
+        self.region_stats[current_region]['seen'] += 1
+        if has_spot:
+            self.region_stats[current_region]['available'] += 1
+
+        # 3. Safety net: Check if we are approaching the deadline
+        if current_slack < self.CRITICAL_SLACK_SECONDS:
             return ClusterType.ON_DEMAND
 
+        # 4. Primary choice: Use Spot if available
         if has_spot:
             return ClusterType.SPOT
 
-        current_region = self.env.get_current_region()
-        num_regions = self.env.get_num_regions()
-        
-        lookahead_steps = int((self.lookahead_hours * 3600) / self.env.gap_seconds)
-        lookahead_steps = max(1, lookahead_steps)
+        # 5. No Spot: Decide whether to switch, wait, or use On-Demand
+        scores = [self._get_ucb_score(i) for i in range(self.num_regions)]
+        best_region_idx = np.argmax(scores)
 
-        promise = [0.0] * num_regions
-        for r_idx in range(num_regions):
-            trace = self.spot_traces[r_idx]
-            if current_step >= len(trace):
-                continue
-            
-            end_step = min(current_step + lookahead_steps, len(trace))
-            future_availability = trace[current_step:end_step]
-            
-            if future_availability:
-                promise[r_idx] = sum(future_availability) / len(future_availability)
-
-        best_region_idx = promise.index(max(promise))
-        
-        promise_gain = promise[best_region_idx] - promise[current_region]
-        cost_of_switch_in_promise = (self.restart_overhead / self.env.gap_seconds) / lookahead_steps
-        
-        if promise[best_region_idx] > 0 and best_region_idx != current_region and promise_gain > cost_of_switch_in_promise:
-            self.env.switch_region(best_region_idx)
-            if current_step < len(self.spot_traces[best_region_idx]) and self.spot_traces[best_region_idx][current_step]:
-                return ClusterType.SPOT
-            else:
-                return ClusterType.NONE
-        else:
-            slack = time_available - time_needed_to_finish_on_od
-            wait_threshold = self.restart_overhead * self.wait_slack_factor
-            if slack > wait_threshold:
+        if best_region_idx == current_region:
+            # The current region is still the best bet.
+            if current_slack > self.WAIT_SLACK_SECONDS:
+                # We have a large time buffer, so we can afford to wait.
                 return ClusterType.NONE
             else:
+                # The time buffer is not large enough to risk waiting. Use On-Demand.
                 return ClusterType.ON_DEMAND
+        else:
+            # Another region looks more promising. Consider switching.
+            slack_after_switch = current_slack - self.restart_overhead
+            if slack_after_switch < self.CRITICAL_SLACK_SECONDS:
+                # Switching is too risky. Stay and use On-Demand.
+                return ClusterType.ON_DEMAND
+            else:
+                # It's safe to switch. Switch and wait one step to observe.
+                self.env.switch_region(best_region_idx)
+                return ClusterType.NONE

@@ -1,6 +1,6 @@
 import json
+import os
 from argparse import Namespace
-import sys
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -9,11 +9,11 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "predictive_slack_based"
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from spec_path config and pre-process trace data.
+        Initialize the solution from spec_path config.
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -26,108 +26,91 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.trace_files = config.get("trace_files", [])
         self.spot_availability = []
-        if not self.trace_files:
-            return self
-
-        for trace_file in self.trace_files:
+        spec_dir = os.path.dirname(os.path.abspath(spec_path))
+        for trace_file in config["trace_files"]:
+            full_trace_path = os.path.join(spec_dir, trace_file)
+            region_trace = []
             try:
-                with open(trace_file) as tf:
-                    trace_data = [
-                        line.strip() == '1' for line in tf if line.strip()
-                    ]
-                    self.spot_availability.append(trace_data)
-            except FileNotFoundError:
+                with open(full_trace_path) as tf:
+                    for line in tf:
+                        line = line.strip()
+                        if line:
+                            availability = int(line.split(',')[0])
+                            region_trace.append(availability == 1)
+            except (FileNotFoundError, ValueError, IndexError):
+                # In case of file issues, assume no availability
                 pass
+            self.spot_availability.append(region_trace)
         
-        if not self.spot_availability or not any(self.spot_availability):
-            self.num_timesteps = 0
-            self.num_regions = 0
-            return self
-
         self.num_regions = len(self.spot_availability)
-        self.num_timesteps = 0
-        if self.spot_availability:
-            self.num_timesteps = max((len(t) for t in self.spot_availability), default=0)
         
-        for r in range(self.num_regions):
-            if len(self.spot_availability[r]) < self.num_timesteps:
-                padding = [False] * (self.num_timesteps - len(self.spot_availability[r]))
-                self.spot_availability[r].extend(padding)
-
-        self.suffix_avail = [[0] * (self.num_timesteps + 1) for _ in range(self.num_regions)]
-        for r in range(self.num_regions):
-            for t in range(self.num_timesteps - 1, -1, -1):
-                self.suffix_avail[r][t] = self.suffix_avail[r][t+1] + self.spot_availability[r][t]
-        
-        self.panic_buffer_factor = 1.0
-        self.wait_buffer_factor = 1.5
+        if self.env and hasattr(self.env, 'gap_seconds') and self.deadline is not None:
+            self.total_timesteps = int(self.deadline / self.env.gap_seconds) + 5
+            for i in range(self.num_regions):
+                if len(self.spot_availability[i]) < self.total_timesteps:
+                    padding = [False] * (self.total_timesteps - len(self.spot_availability[i]))
+                    self.spot_availability[i].extend(padding)
 
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide next action based on a heuristic that balances cost and risk.
+        Decide next action based on current state.
         """
-        if not hasattr(self, 'spot_availability') or not self.spot_availability:
-            work_remaining = self.task_duration - sum(self.task_done_time)
-            if work_remaining <= 0: return ClusterType.NONE
-            if has_spot: return ClusterType.SPOT
-            return ClusterType.ON_DEMAND
-
-        work_remaining = self.task_duration - sum(self.task_done_time)
-        if work_remaining <= 0:
+        work_done = sum(self.task_done_time)
+        work_rem = self.task_duration - work_done
+        
+        if work_rem <= 0:
             return ClusterType.NONE
 
-        elapsed_seconds = self.env.elapsed_seconds
-        time_idx = int(elapsed_seconds / self.env.gap_seconds)
-        
-        if time_idx >= self.num_timesteps:
-            return ClusterType.ON_DEMAND
-
-        # 1. Panic Check
-        time_if_od = work_remaining + self.restart_overhead
-        panic_buffer = self.panic_buffer_factor * self.restart_overhead
-        if elapsed_seconds + time_if_od >= self.deadline - panic_buffer:
-            return ClusterType.ON_DEMAND
-
-        # 2. Normal Mode: Find and use best SPOT option
+        t_current = self.env.elapsed_seconds
+        t_idx = int(t_current / self.env.gap_seconds)
+        time_rem = self.deadline - t_current
         current_region = self.env.get_current_region()
+        slack = time_rem - work_rem
 
-        best_now_spot_region = -1
-        max_future_avail = -1
-        for r in range(self.num_regions):
-            if self.spot_availability[r][time_idx]:
-                future_avail = self.suffix_avail[r][time_idx]
-                if future_avail > max_future_avail:
-                    max_future_avail = future_avail
-                    best_now_spot_region = r
-        
-        if best_now_spot_region != -1:
-            if best_now_spot_region != current_region:
-                self.env.switch_region(best_now_spot_region)
+        if slack < self.restart_overhead:
+            return ClusterType.ON_DEMAND
+
+        if has_spot:
             return ClusterType.SPOT
 
-        # 3. No SPOT available: Decide between ON_DEMAND and NONE
-        time_if_wait = self.env.gap_seconds + work_remaining + self.restart_overhead
-        wait_buffer = self.wait_buffer_factor * self.restart_overhead
-        
-        best_future_spot_region = -1
-        max_future_avail_next_step = -1
-        next_time_idx = time_idx + 1
-        
-        if next_time_idx < self.num_timesteps:
-             for r in range(self.num_regions):
-                future_avail = self.suffix_avail[r][next_time_idx]
-                if future_avail > max_future_avail_next_step:
-                    max_future_avail_next_step = future_avail
-                    best_future_spot_region = r
+        best_uptime = 0
+        best_switch_region = -1
+        for r in range(self.num_regions):
+            if r == current_region:
+                continue
+            
+            if t_idx < len(self.spot_availability[r]) and self.spot_availability[r][t_idx]:
+                uptime = 0
+                for k in range(t_idx, len(self.spot_availability[r])):
+                    if self.spot_availability[r][k]:
+                        uptime += 1
+                    else:
+                        break
+                if uptime > best_uptime:
+                    best_uptime = uptime
+                    best_switch_region = r
 
-        if best_future_spot_region != -1 and best_future_spot_region != current_region:
-            self.env.switch_region(best_future_spot_region)
-        
-        if elapsed_seconds + time_if_wait >= self.deadline - wait_buffer:
-            return ClusterType.ON_DEMAND
+        wait_steps = 0
+        limit = len(self.spot_availability[current_region]) if current_region < self.num_regions else 0
+        for k in range(t_idx, limit):
+            if self.spot_availability[current_region][k]:
+                break
+            wait_steps += 1
         else:
+            wait_steps = float('inf')
+
+        time_cost_switch = self.restart_overhead
+        time_cost_wait = wait_steps * self.env.gap_seconds
+        
+        if best_switch_region != -1 and time_cost_switch < time_cost_wait:
+            if slack >= time_cost_switch:
+                self.env.switch_region(best_switch_region)
+                return ClusterType.SPOT
+
+        if slack >= time_cost_wait:
             return ClusterType.NONE
+        else:
+            return ClusterType.ON_DEMAND

@@ -52,4 +52,9 @@ class Solution(MultiRegionStrategy):
         # Your decision logic here
         if has_spot:
             return ClusterType.SPOT
-        return ClusterType.ON_DEMAND
+        else:
+            current = self.env.get_current_region()
+            num_regions = self.env.get_num_regions()
+            next_r = (current + 1) % num_regions
+            self.env.switch_region(next_r)
+            return ClusterType.ON_DEMAND

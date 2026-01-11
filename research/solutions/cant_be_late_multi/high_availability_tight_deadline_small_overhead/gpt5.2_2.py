@@ -1,33 +1,232 @@
 import os
 import json
 import math
-from argparse import Namespace
 from array import array
-from typing import List, Optional, Sequence
+from argparse import Namespace
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
-def _get_ct_none():
-    if hasattr(ClusterType, "NONE"):
-        return ClusterType.NONE
-    if hasattr(ClusterType, "None"):
-        return getattr(ClusterType, "None")
-    for name in ("NO_CLUSTER", "NULL", "EMPTY"):
-        if hasattr(ClusterType, name):
-            return getattr(ClusterType, name)
-    return None
+def _as_float_scalar(x: Any) -> float:
+    if isinstance(x, (list, tuple)) and x:
+        return float(x[0])
+    return float(x)
 
 
-_CT_NONE = _get_ct_none()
+def _is_boolish_true(s: str) -> bool:
+    sl = s.strip().lower()
+    return sl in ("1", "true", "t", "yes", "y", "on")
+
+
+def _parse_trace_file(path: str) -> Optional[Union[List[int], Tuple[List[float], List[int]]]]:
+    # Returns either:
+    # - list[int] availability (0/1) per record, or
+    # - (times, values) where times are floats and values are 0/1
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+        if head.startswith(b"\x93NUMPY"):
+            try:
+                import numpy as np  # type: ignore
+
+                arr = np.load(path, allow_pickle=False)
+                arr = arr.reshape(-1)
+                vals = []
+                for v in arr.tolist():
+                    try:
+                        fv = float(v)
+                        vals.append(1 if fv > 0 else 0)
+                    except Exception:
+                        vals.append(1 if bool(v) else 0)
+                return vals
+            except Exception:
+                return None
+
+        with open(path, "r", encoding="utf-8") as f:
+            txt = f.read().strip()
+        if not txt:
+            return None
+
+        if txt[0] in "[{":
+            try:
+                obj = json.loads(txt)
+            except Exception:
+                obj = None
+            if obj is None:
+                return None
+
+            if isinstance(obj, list):
+                if not obj:
+                    return []
+                if isinstance(obj[0], (list, tuple)) and len(obj[0]) >= 2:
+                    times: List[float] = []
+                    vals: List[int] = []
+                    for row in obj:
+                        try:
+                            t = float(row[0])
+                            v = row[1]
+                            if isinstance(v, str):
+                                iv = 1 if _is_boolish_true(v) else 0
+                            else:
+                                iv = 1 if float(v) > 0 else 0
+                            times.append(t)
+                            vals.append(iv)
+                        except Exception:
+                            continue
+                    if times and vals and len(times) == len(vals):
+                        return (times, vals)
+                    return None
+                vals = []
+                for v in obj:
+                    try:
+                        if isinstance(v, str):
+                            vals.append(1 if _is_boolish_true(v) else 0)
+                        else:
+                            vals.append(1 if float(v) > 0 else 0)
+                    except Exception:
+                        vals.append(1 if bool(v) else 0)
+                return vals
+
+            if isinstance(obj, dict):
+                # Try common keys
+                candidates = [
+                    ("timestamps", "availability"),
+                    ("times", "availability"),
+                    ("time", "availability"),
+                    ("timestamp", "available"),
+                    ("t", "v"),
+                    ("x", "y"),
+                ]
+                for tk, vk in candidates:
+                    if tk in obj and vk in obj:
+                        try:
+                            times_raw = obj[tk]
+                            vals_raw = obj[vk]
+                            if isinstance(times_raw, list) and isinstance(vals_raw, list):
+                                n = min(len(times_raw), len(vals_raw))
+                                times = []
+                                vals = []
+                                for i in range(n):
+                                    try:
+                                        t = float(times_raw[i])
+                                        v = vals_raw[i]
+                                        if isinstance(v, str):
+                                            iv = 1 if _is_boolish_true(v) else 0
+                                        else:
+                                            iv = 1 if float(v) > 0 else 0
+                                        times.append(t)
+                                        vals.append(iv)
+                                    except Exception:
+                                        continue
+                                if times and vals:
+                                    return (times, vals)
+                        except Exception:
+                            pass
+
+                # If dict contains a list under some key, try it
+                for k, v in obj.items():
+                    if isinstance(v, list) and v:
+                        if isinstance(v[0], (int, float, str, bool)):
+                            vals = []
+                            for x in v:
+                                try:
+                                    if isinstance(x, str):
+                                        vals.append(1 if _is_boolish_true(x) else 0)
+                                    else:
+                                        vals.append(1 if float(x) > 0 else 0)
+                                except Exception:
+                                    vals.append(1 if bool(x) else 0)
+                            return vals
+                        if isinstance(v[0], (list, tuple)) and len(v[0]) >= 2:
+                            times = []
+                            vals = []
+                            for row in v:
+                                try:
+                                    t = float(row[0])
+                                    x = row[1]
+                                    if isinstance(x, str):
+                                        iv = 1 if _is_boolish_true(x) else 0
+                                    else:
+                                        iv = 1 if float(x) > 0 else 0
+                                    times.append(t)
+                                    vals.append(iv)
+                                except Exception:
+                                    continue
+                            if times and vals:
+                                return (times, vals)
+                return None
+
+        # Text / CSV-like
+        lines = txt.splitlines()
+        times: List[float] = []
+        vals: List[int] = []
+        vals_only: List[int] = []
+        parsed_pairs = 0
+        parsed_single = 0
+
+        for line in lines:
+            s = line.strip()
+            if not s or s.startswith("#") or s.startswith("//"):
+                continue
+            # Remove possible trailing comments
+            if "#" in s:
+                s = s.split("#", 1)[0].strip()
+                if not s:
+                    continue
+            if "," in s:
+                parts = [p.strip() for p in s.split(",") if p.strip() != ""]
+            else:
+                parts = [p for p in s.split() if p]
+            if not parts:
+                continue
+
+            # Skip headers
+            if any(ch.isalpha() for ch in parts[0]) and len(parts) >= 2 and any(ch.isalpha() for ch in parts[1]):
+                continue
+
+            if len(parts) >= 2:
+                try:
+                    t = float(parts[0])
+                    v = parts[1]
+                    if isinstance(v, str):
+                        iv = 1 if _is_boolish_true(v) else (1 if float(v) > 0 else 0)
+                    else:
+                        iv = 1 if float(v) > 0 else 0
+                    times.append(t)
+                    vals.append(iv)
+                    parsed_pairs += 1
+                    continue
+                except Exception:
+                    pass
+
+            # single value
+            try:
+                v = parts[0]
+                if isinstance(v, str):
+                    iv = 1 if _is_boolish_true(v) else (1 if float(v) > 0 else 0)
+                else:
+                    iv = 1 if float(v) > 0 else 0
+                vals_only.append(iv)
+                parsed_single += 1
+            except Exception:
+                continue
+
+        if parsed_pairs >= max(5, parsed_single // 2) and parsed_pairs > 0:
+            return (times, vals)
+        if parsed_single > 0:
+            return vals_only
+        return None
+    except Exception:
+        return None
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_v1"
+    NAME = "cant_be_late_region_v1"
 
     def solve(self, spec_path: str) -> "Solution":
-        with open(spec_path, "r") as f:
+        with open(spec_path) as f:
             config = json.load(f)
 
         args = Namespace(
@@ -38,315 +237,309 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        base_dir = os.path.dirname(os.path.abspath(spec_path))
+        self._spec_dir = os.path.dirname(os.path.abspath(spec_path))
         trace_files = config.get("trace_files", []) or []
-        self._trace_files = [
-            (p if os.path.isabs(p) else os.path.join(base_dir, p)) for p in trace_files
-        ]
+        self._trace_paths: List[str] = []
+        for p in trace_files:
+            if not isinstance(p, str):
+                continue
+            if os.path.isabs(p):
+                self._trace_paths.append(p)
+            else:
+                self._trace_paths.append(os.path.join(self._spec_dir, p))
 
-        self._raw_traces: List[bytearray] = []
-        for p in self._trace_files:
-            self._raw_traces.append(self._load_trace_file(p))
+        self._raw_traces: List[Optional[Union[List[int], Tuple[List[float], List[int]]]]] = []
+        for p in self._trace_paths:
+            self._raw_traces.append(_parse_trace_file(p))
 
-        self._precomputed = False
-        self._gap = None
-        self._steps = None
-        self._num_regions = None
+        self._initialized = False
+        self._trace_ready = False
+        self._use_traces = False
 
-        self._avail: List[memoryview] = []
-        self._run_len: List[array] = []
+        self._avail: List[bytearray] = []
+        self._streak: List[array] = []
+        self._next_spot: List[array] = []
         self._any_spot: Optional[bytearray] = None
-        self._best_region: Optional[array] = None
-        self._best_run: Optional[array] = None
         self._next_any_spot: Optional[array] = None
 
-        self._committed_region: Optional[int] = None
-        self._commit_until: int = 0
+        self._td_len = 0
+        self._work_done = 0.0
 
-        self._done_sum: float = 0.0
-        self._last_done_len: int = 0
+        self._trace_check_count = 0
+        self._trace_mismatch_count = 0
+        self._trace_check_limit = 200
+        self._trace_mismatch_limit_rate = 0.15
 
-        self._idle_slack_min: float = 0.0
-        self._switch_slack_min: float = 0.0
-        self._finish_spot_run_need: float = 0.0
-
+        self._last_wait_target_region: Optional[int] = None
         return self
 
-    @staticmethod
-    def _tok_to_bit(tok: str) -> Optional[int]:
-        if not tok:
-            return None
-        c = tok[0]
-        if c in ("1", "T", "t", "Y", "y"):
-            return 1
-        if c in ("0", "F", "f", "N", "n"):
-            return 0
+    def _init_trace_structures(self) -> None:
+        if self._initialized:
+            return
+        self._initialized = True
+
         try:
-            return 1 if float(tok) > 0.5 else 0
+            num_regions = int(self.env.get_num_regions())
         except Exception:
-            return None
+            num_regions = 1
 
-    def _load_trace_file(self, path: str) -> bytearray:
-        ext = os.path.splitext(path)[1].lower()
-        if ext in (".npy", ".npz"):
-            try:
-                import numpy as np  # type: ignore
+        gap = float(getattr(self.env, "gap_seconds", 1.0))
+        deadline = _as_float_scalar(getattr(self, "deadline", 0.0))
+        horizon_steps = int(math.ceil(deadline / gap)) + 5
+        if horizon_steps < 1:
+            horizon_steps = 1
 
-                obj = np.load(path, allow_pickle=False)
-                if hasattr(obj, "files"):
-                    key = obj.files[0]
-                    arr = obj[key]
-                else:
-                    arr = obj
-                arr = arr.astype("uint8", copy=False).ravel()
-                return bytearray((1 if int(x) else 0) for x in arr.tolist())
-            except Exception:
-                pass
+        self._trace_ready = False
+        self._use_traces = False
+        self._avail = [bytearray(horizon_steps) for _ in range(num_regions)]
+        self._streak = [array("I", [0]) * horizon_steps for _ in range(num_regions)]
+        self._next_spot = [array("I", [0]) * horizon_steps for _ in range(num_regions)]
+        self._any_spot = bytearray(horizon_steps)
+        self._next_any_spot = array("I", [0]) * horizon_steps
 
-        if ext == ".json":
-            try:
-                with open(path, "r") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    for k in ("availability", "trace", "data", "spot"):
-                        if k in data and isinstance(data[k], list):
-                            data = data[k]
-                            break
-                if isinstance(data, list):
-                    out = bytearray()
-                    out_extend = out.extend
-                    chunk = bytearray()
-                    for v in data:
-                        if isinstance(v, bool):
-                            chunk.append(1 if v else 0)
-                        elif isinstance(v, (int, float)):
-                            chunk.append(1 if v else 0)
-                        elif isinstance(v, str):
-                            b = self._tok_to_bit(v.strip())
-                            if b is not None:
-                                chunk.append(b)
-                        if len(chunk) >= 65536:
-                            out_extend(chunk)
-                            chunk.clear()
-                    if chunk:
-                        out_extend(chunk)
-                    return out
-            except Exception:
-                pass
-
-        out = bytearray()
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line[0] == "#":
-                    continue
-                s = line.replace(",", " ")
-                parts = s.split()
-                if not parts:
-                    continue
-                tok = parts[-1]
-                b = self._tok_to_bit(tok)
-                if b is None and len(parts) >= 2:
-                    b = self._tok_to_bit(parts[0])
-                if b is None:
-                    continue
-                out.append(b)
-        return out
-
-    @staticmethod
-    def _downsample(raw: Sequence[int], target_len: int) -> bytearray:
-        L = len(raw)
-        if target_len <= 0:
-            return bytearray()
-        if L == 0:
-            return bytearray([0]) * target_len
-        if L == target_len:
-            return bytearray(raw)
-        out = bytearray(target_len)
-        if L > target_len and (L % target_len == 0):
-            factor = L // target_len
-            idx = 0
-            for i in range(target_len):
-                out[i] = 1 if raw[idx] else 0
-                idx += factor
-            return out
-        for i in range(target_len):
-            j = (i * L) // target_len
-            out[i] = 1 if raw[j] else 0
-        return out
-
-    def _ensure_precomputed(self, has_spot: bool) -> None:
-        if self._precomputed:
+        if not self._raw_traces:
             return
 
-        self._gap = float(self.env.gap_seconds)
-        gap = self._gap
-        steps = int(math.ceil(self.deadline / gap)) + 1
-        self._steps = steps
-        R = int(self.env.get_num_regions())
-        self._num_regions = R
+        sentinel = horizon_steps + 1
 
-        avail_list: List[memoryview] = []
-        for r in range(R):
-            if r < len(self._raw_traces):
-                raw = self._raw_traces[r]
-                ds = self._downsample(raw, steps)
-            else:
-                ds = bytearray([0]) * steps
-            avail_list.append(memoryview(ds))
-        self._avail = avail_list
+        for r in range(num_regions):
+            raw = self._raw_traces[r] if r < len(self._raw_traces) else None
+            if raw is None:
+                continue
 
-        run_len_list: List[array] = []
-        for r in range(R):
-            runs = array("I", [0]) * (steps + 1)
-            av = avail_list[r]
-            nxt = 0
-            for t in range(steps - 1, -1, -1):
-                if av[t]:
-                    nxt = nxt + 1
-                    runs[t] = nxt
+            dest = self._avail[r]
+
+            if isinstance(raw, tuple):
+                times, vals = raw
+                if not times or not vals:
+                    continue
+
+                # Normalize and possibly scale timestamps
+                t0 = float(times[0])
+                norm_times = [float(t) - t0 for t in times]
+                max_t = max(norm_times) if norm_times else 0.0
+
+                if max_t > 10.0 * deadline and deadline > 0:
+                    norm_times = [t / 1000.0 for t in norm_times]
+                    max_t = max(norm_times) if norm_times else 0.0
+
+                # Ensure non-decreasing order; if not, fall back to per-index
+                nondecreasing = True
+                last = norm_times[0]
+                for tt in norm_times[1:]:
+                    if tt < last:
+                        nondecreasing = False
+                        break
+                    last = tt
+
+                if not nondecreasing:
+                    n = min(len(vals), horizon_steps)
+                    for i in range(n):
+                        dest[i] = 1 if vals[i] else 0
                 else:
-                    nxt = 0
-                    runs[t] = 0
-            run_len_list.append(runs)
-        self._run_len = run_len_list
+                    j = 0
+                    nsrc = len(norm_times)
+                    for k in range(horizon_steps):
+                        t = k * gap
+                        while j + 1 < nsrc and norm_times[j + 1] <= t:
+                            j += 1
+                        v = vals[j]
+                        dest[k] = 1 if v else 0
+            else:
+                vals = raw
+                n = min(len(vals), horizon_steps)
+                for i in range(n):
+                    dest[i] = 1 if vals[i] else 0
 
-        any_spot = bytearray(steps)
-        best_region = array("b", [-1]) * steps
-        best_run = array("I", [0]) * steps
+        # Precompute streaks and next spot
+        for r in range(num_regions):
+            dest = self._avail[r]
+            streak = self._streak[r]
+            next_sp = self._next_spot[r]
 
-        for t in range(steps):
-            br = -1
-            brlen = 0
-            anyv = 0
-            for r in range(R):
-                if avail_list[r][t]:
-                    anyv = 1
-                    rl = run_len_list[r][t]
-                    if rl > brlen:
-                        brlen = rl
-                        br = r
-            any_spot[t] = anyv
-            best_region[t] = br
-            best_run[t] = brlen
+            nxt = sentinel
+            run = 0
+            for t in range(horizon_steps - 1, -1, -1):
+                if dest[t]:
+                    run += 1
+                    nxt = t
+                else:
+                    run = 0
+                streak[t] = run
+                next_sp[t] = nxt
 
-        next_any = array("I", [steps]) * (steps + 1)
-        next_any[steps] = steps
-        nxt = steps
-        for t in range(steps - 1, -1, -1):
-            if any_spot[t]:
+        # any_spot and next_any_spot
+        any_sp = self._any_spot
+        next_any = self._next_any_spot
+        for t in range(horizon_steps):
+            v = 0
+            for r in range(num_regions):
+                if self._avail[r][t]:
+                    v = 1
+                    break
+            any_sp[t] = v
+
+        nxt = sentinel
+        for t in range(horizon_steps - 1, -1, -1):
+            if any_sp[t]:
                 nxt = t
             next_any[t] = nxt
 
-        self._any_spot = any_spot
-        self._best_region = best_region
-        self._best_run = best_run
-        self._next_any_spot = next_any
+        self._trace_ready = True
+        self._use_traces = False  # enable after sanity checks
 
-        ro = float(self.restart_overhead)
-        self._idle_slack_min = max(2.0 * gap, 4.0 * ro)
-        self._switch_slack_min = max(2.0 * ro, gap)
-        self._finish_spot_run_need = ro + gap
-
-        self._precomputed = True
-
-    def _update_done_sum(self) -> None:
-        lst = self.task_done_time
-        n = len(lst)
-        i = self._last_done_len
-        if n <= i:
+    def _update_work_done(self) -> None:
+        td = getattr(self, "task_done_time", None)
+        if not td:
             return
-        s = self._done_sum
-        for k in range(i, n):
-            s += float(lst[k])
-        self._done_sum = s
-        self._last_done_len = n
+        l = len(td)
+        if l <= self._td_len:
+            return
+        self._work_done += sum(td[self._td_len : l])
+        self._td_len = l
 
-    def _spot_avail(self, region: int, step: int, has_spot: bool) -> bool:
-        if region < 0 or region >= self._num_regions:
-            return False
-        if step < 0:
-            step = 0
-        if step >= self._steps:
-            step = self._steps - 1
-        try:
-            return bool(self._avail[region][step])
-        except Exception:
-            return bool(has_spot)
+    def _time_index(self) -> int:
+        gap = float(getattr(self.env, "gap_seconds", 1.0))
+        if gap <= 0:
+            return 0
+        return int(float(getattr(self.env, "elapsed_seconds", 0.0)) // gap)
+
+    def _best_region_to_wait_for_spot(self, t: int) -> Optional[int]:
+        if not (self._trace_ready and self._next_spot):
+            return None
+        num_regions = len(self._next_spot)
+        if num_regions <= 0:
+            return None
+        sentinel = len(self._any_spot) + 1 if self._any_spot is not None else 10**9
+
+        best_r = 0
+        best_next = sentinel
+        best_streak = 0
+        for r in range(num_regions):
+            ns = self._next_spot[r]
+            n = ns[t] if 0 <= t < len(ns) else sentinel
+            if n < best_next:
+                best_next = n
+                best_r = r
+                best_streak = 0
+                if n < sentinel and 0 <= n < len(self._streak[r]):
+                    best_streak = self._streak[r][n]
+            elif n == best_next:
+                st = 0
+                if n < sentinel and 0 <= n < len(self._streak[r]):
+                    st = self._streak[r][n]
+                if st > best_streak:
+                    best_streak = st
+                    best_r = r
+        return best_r
+
+    def _sanity_check_trace_alignment(self, t: int, current_region: int, has_spot: bool) -> None:
+        if not self._trace_ready or self._use_traces:
+            return
+        if self._trace_check_count >= self._trace_check_limit:
+            # decide whether to trust traces
+            if self._trace_check_count > 0:
+                rate = self._trace_mismatch_count / float(self._trace_check_count)
+                self._use_traces = rate <= self._trace_mismatch_limit_rate
+            else:
+                self._use_traces = False
+            return
+
+        if 0 <= current_region < len(self._avail) and 0 <= t < len(self._avail[current_region]):
+            pred = bool(self._avail[current_region][t])
+            if pred != bool(has_spot):
+                self._trace_mismatch_count += 1
+            self._trace_check_count += 1
+
+        if self._trace_check_count >= self._trace_check_limit:
+            rate = self._trace_mismatch_count / float(self._trace_check_count)
+            self._use_traces = rate <= self._trace_mismatch_limit_rate
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._ensure_precomputed(has_spot)
-        self._update_done_sum()
+        self._init_trace_structures()
+        self._update_work_done()
 
-        if self._done_sum >= float(self.task_duration) - 1e-9:
-            return _CT_NONE
+        elapsed = float(getattr(self.env, "elapsed_seconds", 0.0))
+        task_duration = _as_float_scalar(getattr(self, "task_duration", 0.0))
+        deadline = _as_float_scalar(getattr(self, "deadline", 0.0))
+        restart_overhead = _as_float_scalar(getattr(self, "restart_overhead", 0.0))
+        gap = float(getattr(self.env, "gap_seconds", 1.0))
+        if gap <= 0:
+            gap = 1.0
 
-        elapsed = float(self.env.elapsed_seconds)
-        if elapsed >= float(self.deadline) - 1e-9:
-            return _CT_NONE
+        remaining_work = task_duration - float(self._work_done)
+        if remaining_work <= 0:
+            return ClusterType.NONE
 
-        gap = self._gap
-        step = int(elapsed // gap)
-        if step < 0:
-            step = 0
-        if step >= self._steps:
-            step = self._steps - 1
+        remaining_time = deadline - elapsed
+        if remaining_time <= 0:
+            return ClusterType.ON_DEMAND
 
-        remaining_work = float(self.task_duration) - self._done_sum
-        remaining_time = float(self.deadline) - elapsed
         slack = remaining_time - remaining_work
 
-        cur_region = int(self.env.get_current_region())
+        try:
+            cur_region = int(self.env.get_current_region())
+        except Exception:
+            cur_region = 0
 
-        if getattr(self, "remaining_restart_overhead", 0.0) > 1e-9:
-            if last_cluster_type == ClusterType.ON_DEMAND:
+        t = self._time_index()
+        self._sanity_check_trace_alignment(t, cur_region, has_spot)
+
+        # Panic mode: ensure completion.
+        # Avoid pausing/switching when too close to deadline.
+        if remaining_time <= remaining_work + 2.0 * restart_overhead + gap:
+            return ClusterType.ON_DEMAND
+
+        rro = float(getattr(self, "remaining_restart_overhead", 0.0))
+        if rro > 0:
+            if last_cluster_type == ClusterType.SPOT and not has_spot:
                 return ClusterType.ON_DEMAND
-            if last_cluster_type == ClusterType.SPOT and self._spot_avail(cur_region, step, has_spot):
-                return ClusterType.SPOT
+            if last_cluster_type == ClusterType.NONE:
+                return ClusterType.SPOT if has_spot else ClusterType.ON_DEMAND
+            return last_cluster_type
 
-        any_spot_now = bool(self._any_spot[step])
+        # If spot available, generally run spot unless switching from ON_DEMAND is too risky time-wise.
+        if has_spot:
+            self._last_wait_target_region = None
+            if last_cluster_type == ClusterType.ON_DEMAND and slack < 1.2 * restart_overhead:
+                return ClusterType.ON_DEMAND
+            return ClusterType.SPOT
 
-        if any_spot_now:
-            if self._committed_region is None or step >= self._commit_until or not self._spot_avail(self._committed_region, step, has_spot):
-                r = int(self._best_region[step])
-                if r < 0:
-                    self._committed_region = None
-                    self._commit_until = step
+        # No spot in current region.
+        if slack <= 0:
+            return ClusterType.ON_DEMAND
+
+        # Decide whether to wait (NONE) vs use ON_DEMAND.
+        # Waiting is beneficial to avoid ON_DEMAND cost, but must preserve enough slack.
+        if self._use_traces and self._trace_ready and self._best_region_to_wait_for_spot is not None:
+            # Switch regions only when we choose to wait (NONE), to avoid paying overhead while computing.
+            best_r = self._best_region_to_wait_for_spot(t)
+            wait_steps = None
+            if best_r is not None and 0 <= best_r < len(self._next_spot):
+                sentinel = (len(self._any_spot) + 1) if self._any_spot is not None else (10**9)
+                nidx = self._next_spot[best_r][t] if 0 <= t < len(self._next_spot[best_r]) else sentinel
+                if nidx >= sentinel:
+                    wait_steps = None
                 else:
-                    self._committed_region = r
-                    self._commit_until = step + int(self._run_len[r][step])
+                    # At least one step since we cannot return SPOT in a step where has_spot is False.
+                    wait_steps = max(1, int(nidx - t))
+            if wait_steps is None:
+                # No more spot expected -> ON_DEMAND
+                return ClusterType.ON_DEMAND
 
-            target = self._committed_region
-            if target is not None and target >= 0:
-                if cur_region != target:
-                    self.env.switch_region(target)
-                    cur_region = target
-                if self._spot_avail(cur_region, step, has_spot):
-                    if last_cluster_type == ClusterType.ON_DEMAND and slack < self._switch_slack_min:
-                        return ClusterType.ON_DEMAND
-                    if slack < -1e-6:
-                        return ClusterType.ON_DEMAND
-                    if slack <= 0.0:
-                        run_seconds = float(self._run_len[cur_region][step]) * gap
-                        if run_seconds + 1e-9 >= remaining_work + self._finish_spot_run_need:
-                            return ClusterType.SPOT
-                        return ClusterType.ON_DEMAND
-                    return ClusterType.SPOT
-
-        self._committed_region = None
-        self._commit_until = step
-
-        if slack <= 0.0:
+            wait_time = wait_steps * gap
+            if slack >= wait_time + restart_overhead:
+                if best_r is not None and best_r != cur_region:
+                    if self._last_wait_target_region != best_r:
+                        try:
+                            self.env.switch_region(best_r)
+                        except Exception:
+                            pass
+                        self._last_wait_target_region = best_r
+                return ClusterType.NONE
             return ClusterType.ON_DEMAND
 
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            return ClusterType.ON_DEMAND
-
-        next_step = int(self._next_any_spot[step])
-        if next_step >= self._steps:
-            return ClusterType.ON_DEMAND
-
-        if slack > self._idle_slack_min:
-            return _CT_NONE
-
+        # Fallback (no trusted trace info): wait if there is enough slack to skip a full step.
+        if slack >= gap + restart_overhead:
+            return ClusterType.NONE
         return ClusterType.ON_DEMAND

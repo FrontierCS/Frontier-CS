@@ -6,11 +6,20 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Safe cost-aware multi-region scheduling strategy."""
+    """Multi-region scheduling strategy focusing on spot usage with safe on-demand fallback."""
 
-    NAME = "safe_spot_ondemand_hybrid"
+    NAME = "cb_late_multi_region_v1"
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -22,64 +31,62 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state initialization
-        self._done_work_sum = 0.0
-        self._task_segments_len = 0
-        self._committed_ondemand = False
-
-        # Precompute a conservative commit margin (seconds).
-        # Ensure it's at least ~2 steps plus two restart overheads.
-        gap = float(getattr(self.env, "gap_seconds", 3600.0))
-        restart_overhead = float(self.restart_overhead)
-        self._commit_margin = max(2.0 * gap, 2.0 * restart_overhead)
+        # Internal strategy state
+        self._commit_to_on_demand = False
+        self._initialized_local = False
+        self._gap_seconds = None
 
         return self
 
-    def _update_done_work_sum(self) -> None:
-        """Incrementally track total completed work to avoid O(N^2) summations."""
-        segments = self.task_done_time
-        current_len = len(segments)
-        if current_len > self._task_segments_len:
-            # Add any new segments since last step.
-            for i in range(self._task_segments_len, current_len):
-                self._done_work_sum += float(segments[i])
-            self._task_segments_len = current_len
+    def _ensure_initialized(self):
+        if not self._initialized_local:
+            # Cache gap_seconds for faster access
+            self._gap_seconds = float(self.env.gap_seconds)
+            self._initialized_local = True
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Update cached total work done.
-        self._update_done_work_sum()
+        """
+        Decide next action based on current state.
 
-        # Remaining work in seconds.
-        remaining_work = float(self.task_duration) - self._done_work_sum
-        if remaining_work <= 0.0:
-            # Task logically complete; no need to run any more clusters.
-            self._committed_ondemand = True
+        Strategy:
+        - Use Spot whenever available while there is sufficient slack until deadline.
+        - Once time slack (considering worst-case switch to On-Demand) becomes small,
+          permanently switch to On-Demand-only to guarantee meeting the deadline.
+        - Never use Spot when has_spot is False.
+        """
+        self._ensure_initialized()
+
+        # Current progress and remaining work
+        work_done = sum(self.task_done_time) if self.task_done_time else 0.0
+
+        # If task already completed, run nothing to avoid extra cost.
+        if work_done >= self.task_duration - 1e-6:
             return ClusterType.NONE
 
-        # If we have already committed to on-demand, always stay on it.
-        if self._committed_ondemand:
+        remaining_work = self.task_duration - work_done
+        remaining_time = self.deadline - self.env.elapsed_seconds
+
+        # If there's no time left (should not usually happen), avoid extra cost.
+        if remaining_time <= 0.0:
+            return ClusterType.NONE
+
+        # Decide whether to permanently commit to On-Demand.
+        # Slack delta = remaining_time - (remaining_work + restart_overhead)
+        # We commit when delta <= 2 * gap_seconds to guarantee completion by deadline,
+        # even under discrete time steps and one restart overhead.
+        if not self._commit_to_on_demand:
+            delta = remaining_time - (remaining_work + self.restart_overhead)
+            threshold = 2.0 * self._gap_seconds
+            if delta <= threshold:
+                self._commit_to_on_demand = True
+
+        # If committed, always use On-Demand until completion.
+        if self._commit_to_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Compute slack if we were to switch to pure on-demand now.
-        now = float(self.env.elapsed_seconds)
-        deadline = float(self.deadline)
-        restart_overhead = float(self.restart_overhead)
-
-        # Worst-case additional time to finish if we use only on-demand from now:
-        # restart_overhead (once) + remaining_work
-        finish_time_if_od_now = now + restart_overhead + remaining_work
-        slack_if_od = deadline - finish_time_if_od_now
-
-        # If slack is small, commit to on-demand to guarantee deadline.
-        # We commit as soon as slack_if_od <= commit_margin to ensure we don't
-        # cross into negative slack between steps.
-        if slack_if_od <= self._commit_margin:
-            self._committed_ondemand = True
-            return ClusterType.ON_DEMAND
-
-        # Pre-commit phase: prefer Spot when available, otherwise pause.
+        # Spot-first phase: use Spot if available; otherwise, wait.
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot unavailable and we still have comfortable slack: wait to save cost.
+        # No Spot and not yet in On-Demand phase: pause to save cost.
         return ClusterType.NONE
