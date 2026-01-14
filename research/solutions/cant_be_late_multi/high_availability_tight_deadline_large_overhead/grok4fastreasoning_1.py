@@ -1,5 +1,7 @@
 import json
 from argparse import Namespace
+from typing import List
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
@@ -19,59 +21,50 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        trace_files = config["trace_files"]
-        self.num_regions = len(trace_files)
-        self.availability = []
-        for path in trace_files:
-            with open(path, 'r') as f:
-                trace = json.load(f)
-            self.availability.append([bool(x) for x in trace])
+        self.availabilities: List[List[bool]] = []
+        for path in config["trace_files"]:
+            with open(path, 'r') as tf:
+                data = json.load(tf)
+                if isinstance(data, dict) and "availability" in data:
+                    avail = data["availability"]
+                else:
+                    avail = data
+                self.availabilities.append([bool(x) for x in avail])
+        self.num_regions = len(self.availabilities)
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        if sum(self.task_done_time) >= self.task_duration:
-            return ClusterType.NONE
+        if has_spot:
+            return ClusterType.SPOT
 
-        step = int(round(self.env.elapsed_seconds / self.env.gap_seconds))
         current_region = self.env.get_current_region()
-        num_regions = self.num_regions
-        max_steps = len(self.availability[0]) if self.availability else 0
+        elapsed = self.env.elapsed_seconds
+        gap = self.env.gap_seconds
+        current_hour = int(elapsed // 3600)
+        num_regions = self.env.get_num_regions()
 
-        if step >= max_steps:
-            return ClusterType.ON_DEMAND
+        best_region = -1
+        best_streak = -1
+        look_ahead = 24
 
-        # Prefer current region if possible
-        best_r = current_region
-        best_streak = 0
-        if step < len(self.availability[current_region]) and self.availability[current_region][step]:
-            streak = 0
-            for s in range(step, len(self.availability[current_region])):
-                if not self.availability[current_region][s]:
-                    break
-                streak += 1
-            best_streak = streak
-        else:
-            best_r = -1
-            best_streak = 0
-
-        # Check other regions for better streak
         for r in range(num_regions):
-            if r == current_region:
+            if current_hour >= len(self.availabilities[r]):
                 continue
-            if step >= len(self.availability[r]) or not self.availability[r][step]:
+            if not self.availabilities[r][current_hour]:
                 continue
             streak = 0
-            for s in range(step, len(self.availability[r])):
-                if not self.availability[r][s]:
+            max_t = min(current_hour + look_ahead, len(self.availabilities[r]))
+            for t in range(current_hour, max_t):
+                if self.availabilities[r][t]:
+                    streak += 1
+                else:
                     break
-                streak += 1
             if streak > best_streak:
                 best_streak = streak
-                best_r = r
+                best_region = r
 
-        if best_streak > 0:
-            if best_r != current_region:
-                self.env.switch_region(best_r)
+        if best_region != -1:
+            self.env.switch_region(best_region)
             return ClusterType.SPOT
         else:
             return ClusterType.ON_DEMAND

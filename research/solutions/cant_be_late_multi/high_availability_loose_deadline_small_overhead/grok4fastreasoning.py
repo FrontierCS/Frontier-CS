@@ -7,18 +7,22 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "greedy_streak"
+    """Your multi-region scheduling strategy."""
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
-
-        self.num_regions = len(config["trace_files"])
-        self.traces: List[List[bool]] = [None] * self.num_regions
-        for i, path in enumerate(config["trace_files"]):
-            with open(path, 'r') as tf:
-                trace_data = json.load(tf)
-                self.traces[i] = [bool(x) for x in trace_data]
 
         args = Namespace(
             deadline_hours=float(config["deadline"]),
@@ -30,42 +34,41 @@ class Solution(MultiRegionStrategy):
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        current_region = self.env.get_current_region()
-        gap = self.env.gap_seconds
-        current_t = int(self.env.elapsed_seconds // gap)
+        """
+        Decide next action based on current state.
 
-        done_work = sum(self.task_done_time)
-        remaining_work = self.task_duration - done_work
-        remaining_time = self.deadline - self.env.elapsed_seconds - self.remaining_restart_overhead
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
 
-        if remaining_work > remaining_time:
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        progress: float = sum(self.task_done_time)
+        if progress >= self.task_duration:
+            return ClusterType.NONE
+
+        remaining_work = self.task_duration - progress
+        time_elapsed = self.env.elapsed_seconds
+        time_left = self.deadline - time_elapsed
+        effective_time_left = time_left - self.remaining_restart_overhead
+
+        # If we can't finish with remaining time, use on-demand to be safe
+        if effective_time_left < remaining_work:
             return ClusterType.ON_DEMAND
 
-        # Compute streaks
-        streaks = [0] * self.num_regions
-        for r in range(self.num_regions):
-            streak = 0
-            for tt in range(current_t, len(self.traces[r])):
-                if self.traces[r][tt]:
-                    streak += 1
-                else:
-                    break
-            streaks[r] = streak
-
-        current_streak = streaks[current_region]
-        if current_streak > 0:
+        if has_spot:
             return ClusterType.SPOT
-
-        # Find best other region
-        best_r = -1
-        best_streak = 0
-        for r in range(self.num_regions):
-            if r != current_region and streaks[r] > best_streak:
-                best_streak = streaks[r]
-                best_r = r
-
-        if best_r != -1 and best_streak > 0:
-            self.env.switch_region(best_r)
-            return ClusterType.SPOT
-
-        return ClusterType.ON_DEMAND
+        else:
+            # Switch to next region and use on-demand safely
+            current_region = self.env.get_current_region()
+            num_regions = self.env.get_num_regions()
+            next_region = (current_region + 1) % num_regions
+            self.env.switch_region(next_region)
+            return ClusterType.ON_DEMAND

@@ -1,18 +1,24 @@
 import json
 from argparse import Namespace
-import math
-import sys
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
+    """
+    A multi-region scheduling strategy that uses pre-computed trace data
+    to make informed, proactive decisions. It balances cost-saving on spot
+    instances with the need to meet a hard deadline by employing a
+    "panic mode" to switch to reliable on-demand instances when necessary.
+    """
 
-    NAME = "CantBeLate_v4"
+    NAME = "lookahead_optimizer"
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initializes the strategy and pre-computes lookahead data from traces.
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -24,115 +30,115 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.spot_availability_traces = []
-        if "trace_files" in config:
-            for trace_file in config["trace_files"]:
-                with open(trace_file) as f:
-                    self.spot_availability_traces.append(
-                        [bool(int(line.strip())) for line in f if line.strip()]
-                    )
+        # --- Pre-computation Stage ---
 
-        if not self.spot_availability_traces:
+        # 1. Load spot availability traces from files
+        self.spot_traces = []
+        for trace_file in config["trace_files"]:
+            with open(trace_file) as f:
+                trace = [line.strip() == '1' for line in f if line.strip()]
+                self.spot_traces.append(trace)
+
+        if not self.spot_traces:
+            self.max_steps = 0
+            self.streaks_cache = []
+            self.next_spot_cache = []
             return self
 
-        self.num_trace_steps = len(self.spot_availability_traces[0])
-        
-        self.spot_prefix_sums = []
-        for trace in self.spot_availability_traces:
-            prefix_sum = [0] * (self.num_trace_steps + 1)
-            current_sum = 0
-            for i in range(self.num_trace_steps):
-                current_sum += trace[i]
-                prefix_sum[i + 1] = current_sum
-            self.spot_prefix_sums.append(prefix_sum)
+        self.max_steps = len(self.spot_traces[0])
+        num_regions = len(self.spot_traces)
 
-        self.next_spot_steps = []
-        for trace in self.spot_availability_traces:
-            next_spot = [self.num_trace_steps] * self.num_trace_steps
-            last_seen_spot = self.num_trace_steps
-            for i in range(self.num_trace_steps - 1, -1, -1):
+        # 2. Pre-compute future consecutive spot streaks for each step
+        # This allows for O(1) lookup of a region's quality at any time step.
+        self.streaks_cache = [[0] * self.max_steps for _ in range(num_regions)]
+        for r in range(num_regions):
+            trace = self.spot_traces[r]
+            current_streak = 0
+            for i in range(self.max_steps - 1, -1, -1):
                 if trace[i]:
-                    last_seen_spot = i
-                next_spot[i] = last_seen_spot
-            self.next_spot_steps.append(next_spot)
+                    current_streak += 1
+                else:
+                    current_streak = 0
+                self.streaks_cache[r][i] = current_streak
 
-        self.PRICE_ON_DEMAND = 3.06
-        self.PRICE_SPOT = 0.9701
-        
-        overhead_hours = self.restart_overhead / 3600.0
-        price_diff = self.PRICE_ON_DEMAND - self.PRICE_SPOT
-        if price_diff > 1e-9:
-             self.BREAK_EVEN_SPOT_HOURS_GAIN = (overhead_hours * self.PRICE_ON_DEMAND) / price_diff
-        else:
-             self.BREAK_EVEN_SPOT_HOURS_GAIN = float('inf')
-
-        self.LOOKAHEAD_STEPS = int(4 * 3600 / self.env.gap_seconds)
-        self.SAFETY_BUFFER = self.restart_overhead
+        # 3. Pre-compute the next available spot step for each step
+        # This helps decide efficiently whether to wait (NONE) or use On-Demand.
+        self.next_spot_cache = [[-1] * self.max_steps for _ in range(num_regions)]
+        for r in range(num_regions):
+            trace = self.spot_traces[r]
+            next_available_step = -1
+            for i in range(self.max_steps - 1, -1, -1):
+                self.next_spot_cache[r][i] = next_available_step
+                if trace[i]:
+                    next_available_step = i
 
         return self
 
-    def _get_region_quality(self, region_idx: int, start_step: int, num_steps: int) -> int:
-        if start_step >= self.num_trace_steps:
-            return 0
-        end_step = min(start_step + num_steps, self.num_trace_steps)
-        return self.spot_prefix_sums[region_idx][end_step] - self.spot_prefix_sums[region_idx][start_step]
-
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        if not hasattr(self, 'spot_availability_traces') or not self.spot_availability_traces:
-             return ClusterType.ON_DEMAND if not has_spot else ClusterType.SPOT
+        """
+        Decides the next action at each time step based on pre-computed data.
+        """
+        # 1. State Calculation
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
 
-        remaining_work = self.task_duration - sum(self.task_done_time)
-        if remaining_work <= 0:
+        if work_remaining <= 0:
             return ClusterType.NONE
 
-        current_step = int(self.env.elapsed_seconds / self.env.gap_seconds)
-        if current_step >= self.num_trace_steps:
-             return ClusterType.ON_DEMAND
-
         time_to_deadline = self.deadline - self.env.elapsed_seconds
-        time_needed_on_demand = remaining_work + self.remaining_restart_overhead
         
-        if time_to_deadline <= time_needed_on_demand + self.SAFETY_BUFFER:
+        current_step = int(self.env.elapsed_seconds // self.env.gap_seconds)
+        if current_step >= self.max_steps:
+            # Beyond known trace data, act conservatively
+            current_step = self.max_steps - 1
+        
+        # 2. Panic Mode: Switch to On-Demand if deadline is critical
+        # This is a conservative check assuming a restart is needed to switch to OD.
+        required_time = work_remaining + self.restart_overhead
+        if time_to_deadline <= required_time:
             return ClusterType.ON_DEMAND
 
+        # 3. Region Selection Logic
         current_region = self.env.get_current_region()
         num_regions = self.env.get_num_regions()
 
-        if num_regions > 1:
-            qualities = [self._get_region_quality(j, current_step, self.LOOKAHEAD_STEPS) for j in range(num_regions)]
-            
-            best_region_idx = qualities.index(max(qualities))
+        # Find the best region based on pre-computed future spot streaks
+        best_streak = 0
+        best_region_idx = -1
+        for r in range(num_regions):
+            streak = self.streaks_cache[r][current_step]
+            if streak > best_streak:
+                best_streak = streak
+                best_region_idx = r
+        
+        current_streak = self.streaks_cache[current_region][current_step]
 
-            if best_region_idx != current_region:
-                current_quality = qualities[current_region]
-                best_quality = qualities[best_region_idx]
-                
-                actual_spot_steps_gain = best_quality - current_quality
-                actual_spot_hours_gain = actual_spot_steps_gain * self.env.gap_seconds / 3600.0
+        # Decide whether to switch region. We switch if the current region has no
+        # spot available now, a better one exists, and we can afford the time
+        # cost of the switch.
+        if best_region_idx != -1 and best_region_idx != current_region and current_streak == 0:
+            slack = time_to_deadline - work_remaining
+            if slack > self.restart_overhead + self.env.gap_seconds:
+                self.env.switch_region(best_region_idx)
+                # After switching to a region with a good spot streak, use SPOT
+                return ClusterType.SPOT
 
-                slack = time_to_deadline - time_needed_on_demand
-
-                if (actual_spot_hours_gain > self.BREAK_EVEN_SPOT_HOURS_GAIN and
-                    slack > self.restart_overhead + self.SAFETY_BUFFER):
-                    
-                    self.env.switch_region(best_region_idx)
-                    current_region = best_region_idx
-                    has_spot = self.spot_availability_traces[current_region][current_step]
-
+        # 4. Action in Current Region (if no switch was made)
         if has_spot:
             return ClusterType.SPOT
         else:
-            next_spot_avail_step = self.next_spot_steps[current_region][current_step]
+            # No spot available here. Decide between waiting (NONE) or using OD.
+            slack = time_to_deadline - work_remaining
             
-            if next_spot_avail_step >= self.num_trace_steps:
-                return ClusterType.ON_DEMAND
-
-            wait_steps = next_spot_avail_step - current_step
-            wait_time = wait_steps * self.env.gap_seconds
+            # Find when spot is next available in this region using the cache
+            next_spot_step = self.next_spot_cache[current_region][current_step]
             
-            slack = time_to_deadline - time_needed_on_demand
+            if next_spot_step != -1:
+                # Time we would lose by waiting for the next spot window
+                time_to_wait = (next_spot_step - current_step) * self.env.gap_seconds
+                # If we have more slack than the time we need to wait, pause.
+                if slack > time_to_wait:
+                    return ClusterType.NONE
             
-            if slack > wait_time + self.SAFETY_BUFFER:
-                return ClusterType.NONE
-            else:
-                return ClusterType.ON_DEMAND
+            # If no future spot or not enough slack to wait, use ON_DEMAND.
+            return ClusterType.ON_DEMAND

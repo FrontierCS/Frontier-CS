@@ -7,9 +7,20 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "my_strategy"
+    """Your multi-region scheduling strategy."""
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -22,56 +33,67 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Load traces
-        self.traces: List[List] = []
+        self.traces: List[List[bool]] = []
         trace_files = config.get("trace_files", [])
-        self.num_regions = len(trace_files)
         for path in trace_files:
             with open(path, 'r') as tf:
-                trace = json.load(tf)
-                self.traces.append(trace)
-        self.T = len(self.traces[0]) if self.traces else 0
-
-        # Precompute streaks
-        self.streaks = [[0] * self.T for _ in range(self.num_regions)]
-        for r in range(self.num_regions):
-            for t in range(self.T - 1, -1, -1):
-                if bool(self.traces[r][t]):
-                    self.streaks[r][t] = 1 + (self.streaks[r][t + 1] if t + 1 < self.T else 0)
-                else:
-                    self.streaks[r][t] = 0
+                self.traces.append(json.load(tf))  # Assume list of bools per timestep
 
         return self
 
+    def _get_streak(self, region: int, step: int) -> int:
+        if step >= len(self.traces[region]):
+            return 0
+        streak = 0
+        while step + streak < len(self.traces[region]) and self.traces[region][step + streak]:
+            streak += 1
+        return streak
+
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        current_region = self.env.get_current_region()
-        elapsed = self.env.elapsed_seconds
+        """
+        Decide next action based on current state.
+
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        current_r = self.env.get_current_region()
+        num_r = self.env.get_num_regions()
         gap = self.env.gap_seconds
-        current_step = int(elapsed // gap)
-        if current_step >= self.T:
-            return ClusterType.ON_DEMAND
+        current_step = int(self.env.elapsed_seconds // gap)
 
-        use_spot = False
-        target_region = current_region
-        if has_spot:
-            use_spot = True
-        else:
-            # Find best region with spot now
-            best_streak = -1
-            best_r = -1
-            for r in range(self.num_regions):
-                if bool(self.traces[r][current_step]):
-                    streak = self.streaks[r][current_step]
-                    if streak > best_streak:
-                        best_streak = streak
-                        best_r = r
-            if best_r != -1:
-                target_region = best_r
-                use_spot = True
+        # Find best region for spot streak starting now
+        max_streak = 0
+        best_r = current_r
+        for r in range(num_r):
+            streak = self._get_streak(r, current_step)
+            if streak > max_streak:
+                max_streak = streak
+                best_r = r
 
-        if use_spot:
-            if target_region != current_region:
-                self.env.switch_region(target_region)
+        if max_streak > 0:
+            if best_r != current_r:
+                self.env.switch_region(best_r)
             return ClusterType.SPOT
         else:
-            # No spot anywhere, use ON_DEMAND, stay
+            # No spot now, find best for next step
+            next_step = current_step + 1
+            max_streak = 0
+            best_r = current_r
+            for r in range(num_r):
+                streak = self._get_streak(r, next_step) if next_step < len(self.traces[r]) else 0
+                if streak > max_streak:
+                    max_streak = streak
+                    best_r = r
+            if best_r != current_r:
+                self.env.switch_region(best_r)
             return ClusterType.ON_DEMAND

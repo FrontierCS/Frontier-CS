@@ -1,420 +1,313 @@
 import json
-import os
-import math
-import pickle
 from argparse import Namespace
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Optional, List, Tuple
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
-try:
-    import numpy as np
-except Exception:  # pragma: no cover
-    np = None
 
-
-_CT_SPOT = getattr(ClusterType, "SPOT")
-_CT_ONDEMAND = getattr(ClusterType, "ON_DEMAND")
-_CT_NONE = getattr(ClusterType, "NONE", None)
-if _CT_NONE is None:
-    _CT_NONE = getattr(ClusterType, "None")
-
-
-def _as_bool_array(x: Any) -> Any:
-    if np is None:
-        if isinstance(x, (bytes, bytearray)):
-            return [1 if b else 0 for b in x]
-        if isinstance(x, (list, tuple)):
-            return [1 if bool(v) else 0 for v in x]
-        return [1 if bool(v) else 0 for v in list(x)]
-
-    arr = np.asarray(x)
-    if arr.dtype == np.bool_:
-        return arr
-    if arr.dtype.kind in ("i", "u", "b"):
-        return (arr != 0)
-    if arr.dtype.kind == "f":
-        return (arr > 0.5)
-    if arr.dtype.kind in ("U", "S", "O"):
-        flat = arr.reshape(-1)
-        out = np.empty(flat.shape[0], dtype=np.bool_)
-        for i, v in enumerate(flat.tolist()):
-            if isinstance(v, (bool, np.bool_)):
-                out[i] = bool(v)
-            elif isinstance(v, (int, float)):
-                out[i] = v > 0.5
-            else:
-                s = str(v).strip().lower()
-                if s in ("1", "true", "t", "yes", "y"):
-                    out[i] = True
-                else:
-                    out[i] = False
-        return out.reshape(arr.shape)
-    return (arr.astype(np.float32) > 0.5)
-
-
-def _load_trace_file(path: str) -> Sequence[int]:
-    ext = os.path.splitext(path)[1].lower()
-    if np is not None and ext == ".npy":
-        arr = np.load(path, allow_pickle=True)
-        arr = _as_bool_array(arr).reshape(-1)
-        return arr.astype(np.uint8).tolist()
-    if np is not None and ext == ".npz":
-        z = np.load(path, allow_pickle=True)
-        key = list(z.files)[0]
-        arr = _as_bool_array(z[key]).reshape(-1)
-        return arr.astype(np.uint8).tolist()
-    if ext in (".pkl", ".pickle"):
-        with open(path, "rb") as f:
-            obj = pickle.load(f)
-        if isinstance(obj, dict):
-            for k in ("availability", "avail", "trace", "data", "spot"):
-                if k in obj:
-                    obj = obj[k]
-                    break
-        if np is not None:
-            arr = _as_bool_array(obj).reshape(-1)
-            return arr.astype(np.uint8).tolist()
-        return [1 if bool(v) else 0 for v in obj]
-
-    # text / json
-    with open(path, "r", encoding="utf-8") as f:
-        # peek first non-ws char
-        pos = f.tell()
-        ch = f.read(1)
-        while ch and ch.isspace():
-            ch = f.read(1)
-        f.seek(pos)
-        if ch in ("[", "{"):
-            obj = json.load(f)
-            if isinstance(obj, dict):
-                for k in ("availability", "avail", "trace", "data", "spot"):
-                    if k in obj:
-                        obj = obj[k]
-                        break
-            if np is not None:
-                arr = _as_bool_array(obj).reshape(-1)
-                return arr.astype(np.uint8).tolist()
-            return [1 if bool(v) else 0 for v in obj]
-
-        vals: List[int] = []
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            c0 = line[0]
-            if not (c0.isdigit() or c0 in "+-."):
-                # likely header
-                continue
-            if "," in line:
-                toks = line.split(",")
-            else:
-                toks = line.split()
-            if not toks:
-                continue
-            s = toks[-1].strip()
-            sl = s.lower()
-            if sl in ("1", "true", "t", "yes", "y"):
-                vals.append(1)
-            elif sl in ("0", "false", "f", "no", "n"):
-                vals.append(0)
-            else:
-                try:
-                    v = float(s)
-                    vals.append(1 if v > 0.5 else 0)
-                except Exception:
-                    continue
-        return vals
-
-
-def _compute_next_true(arr_bool: Any) -> Any:
-    # arr_bool: bool array length T
-    T = int(len(arr_bool))
-    if np is not None:
-        out = np.empty(T + 1, dtype=np.int32)
-    else:
-        out = [0] * (T + 1)
-
-    nxt = T
-    for i in range(T - 1, -1, -1):
-        if bool(arr_bool[i]):
-            nxt = i
-        if np is not None:
-            out[i] = nxt
-        else:
-            out[i] = nxt
-    if np is not None:
-        out[T] = T
-    else:
-        out[T] = T
-    return out
-
-
-def _compute_next_false(arr_bool: Any) -> Any:
-    T = int(len(arr_bool))
-    if np is not None:
-        out = np.empty(T + 1, dtype=np.int32)
-    else:
-        out = [0] * (T + 1)
-
-    nxt = T
-    for i in range(T - 1, -1, -1):
-        if not bool(arr_bool[i]):
-            nxt = i
-        if np is not None:
-            out[i] = nxt
-        else:
-            out[i] = nxt
-    if np is not None:
-        out[T] = T
-    else:
-        out[T] = T
-    return out
+_CT_NONE = getattr(ClusterType, "NONE", getattr(ClusterType, "None", None))
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "spot_oracle_multi_v2"
+    NAME = "cant_be_late_mr_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
             config = json.load(f)
 
-        trace_files = config.get("trace_files", [])
         args = Namespace(
             deadline_hours=float(config["deadline"]),
             task_duration_hours=[float(config["duration"])],
             restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
-            trace_files=trace_files,
-            trace_paths=trace_files,
-            spot_trace_paths=trace_files,
         )
         super().__init__(args)
 
-        self._trace_files: List[str] = list(trace_files) if trace_files is not None else []
-        self._initialized_policy = False
+        self._inited = False
+        self._committed_on_demand = False
 
-        self._last_task_done_len = 0
-        self._work_done = 0.0
-        self._sticky_ondemand = False
-        self._last_elapsed = -1.0
+        self._task_done_len = 0
+        self._work_done_total = 0.0
 
-        self._num_regions = 0
-        self._gap = 0.0
-        self._inv_gap = 0.0
-        self._horizon_steps = 0
+        self._num_regions = 1
+        self._region_seen = []
+        self._region_spot_yes = []
 
-        self._spot_traces = None
-        self._any_spot = None
-        self._next_any_spot = None
-        self._next_unavail = None  # list of next_false arrays per region
-
-        self._stick_slack_threshold = 0.0
-        self._switch_back_slack_threshold = 0.0
-        self._min_run_steps_to_switch = 1
+        self._spot_query_mode = "unknown"  # unknown | direct_list | direct_idx | switch | none
 
         return self
 
-    def _reset_episode_state(self) -> None:
-        self._last_task_done_len = 0
-        self._work_done = 0.0
-        self._sticky_ondemand = False
-
-    def _update_work_done(self) -> None:
-        td = self.task_done_time
-        n = len(td)
-        i = self._last_task_done_len
-        if n > i:
-            acc = self._work_done
-            for j in range(i, n):
-                acc += float(td[j])
-            self._work_done = acc
-            self._last_task_done_len = n
-
-    def _ensure_initialized(self) -> None:
-        if self._initialized_policy:
+    def _init_once(self) -> None:
+        if self._inited:
             return
+        self._inited = True
 
-        self._num_regions = int(self.env.get_num_regions())
-        self._gap = float(self.env.gap_seconds)
-        if self._gap <= 0:
-            self._gap = 1.0
-        self._inv_gap = 1.0 / self._gap
+        try:
+            self._num_regions = int(self.env.get_num_regions())
+        except Exception:
+            self._num_regions = 1
 
-        self._horizon_steps = int(math.ceil(float(self.deadline) / self._gap)) + 3
-        if self._horizon_steps < 10:
-            self._horizon_steps = 10
+        self._region_seen = [0] * self._num_regions
+        self._region_spot_yes = [0] * self._num_regions
 
-        # Adaptive thresholds (seconds)
-        over = float(self.restart_overhead)
-        gap = self._gap
-        self._stick_slack_threshold = max(6.0 * over + 2.0 * gap, 2.0 * over)
-        self._switch_back_slack_threshold = max(8.0 * over + 2.0 * gap, 3.0 * over)
-        self._min_run_steps_to_switch = max(1, int(math.ceil(over / gap)) + 2)
+        self._task_done_len = 0
+        self._work_done_total = 0.0
+        self._committed_on_demand = False
+        self._spot_query_mode = "unknown"
 
-        # Load traces for all regions
-        traces: List[Sequence[int]] = []
-        tf = self._trace_files[: self._num_regions]
-        for r in range(self._num_regions):
-            if r < len(tf) and tf[r]:
+    def _update_work_done(self) -> float:
+        td = self.task_done_time
+        ln = len(td)
+        if ln < self._task_done_len:
+            self._task_done_len = 0
+            self._work_done_total = 0.0
+        if ln > self._task_done_len:
+            delta = td[self._task_done_len:ln]
+            self._work_done_total += float(sum(delta)) if delta else 0.0
+            self._task_done_len = ln
+        return self._work_done_total
+
+    def _get_has_spot_current(self, fallback: Optional[bool] = None) -> Optional[bool]:
+        env = self.env
+        for name in ("has_spot", "spot_available", "is_spot_available", "get_has_spot", "get_spot_available"):
+            attr = getattr(env, name, None)
+            if attr is None:
+                continue
+            try:
+                if callable(attr):
+                    return bool(attr())
+                if isinstance(attr, (bool, int)):
+                    return bool(attr)
+            except Exception:
+                pass
+        return bool(fallback) if fallback is not None else None
+
+    def _get_all_spot_availability(self) -> Optional[List[Optional[bool]]]:
+        env = self.env
+        candidates = (
+            "get_spot_availability_all",
+            "get_spot_availabilities",
+            "get_spot_availability",
+            "spot_availability_all",
+            "spot_availabilities",
+        )
+        for name in candidates:
+            attr = getattr(env, name, None)
+            if attr is None:
+                continue
+            try:
+                if callable(attr):
+                    res = attr()
+                else:
+                    res = attr
+                if res is None:
+                    continue
+                if isinstance(res, (list, tuple)):
+                    out = [None] * self._num_regions
+                    m = min(len(res), self._num_regions)
+                    for i in range(m):
+                        v = res[i]
+                        out[i] = None if v is None else bool(v)
+                    return out
+            except Exception:
+                pass
+        return None
+
+    def _get_has_spot_region_direct(self, idx: int) -> Optional[bool]:
+        env = self.env
+        for name in ("has_spot", "get_has_spot", "spot_available", "is_spot_available", "get_spot_available"):
+            attr = getattr(env, name, None)
+            if attr is None or not callable(attr):
+                continue
+            try:
+                return bool(attr(idx))
+            except TypeError:
+                continue
+            except Exception:
+                continue
+        return None
+
+    def _scan_regions_for_spot(self, fallback_current: Optional[bool]) -> Tuple[Optional[int], Optional[bool]]:
+        if self._num_regions <= 1:
+            hs = self._get_has_spot_current(fallback_current)
+            return (self.env.get_current_region(), hs) if hs else (None, hs)
+
+        env = self.env
+        orig = None
+        try:
+            orig = int(env.get_current_region())
+        except Exception:
+            orig = 0
+
+        # Try list-based query.
+        if self._spot_query_mode in ("unknown", "direct_list"):
+            all_av = self._get_all_spot_availability()
+            if all_av is not None and len(all_av) >= 1:
+                self._spot_query_mode = "direct_list"
+                best_idx = None
+                best_score = -1e18
+                for i, v in enumerate(all_av[: self._num_regions]):
+                    if v is None:
+                        continue
+                    self._region_seen[i] += 1
+                    if v:
+                        self._region_spot_yes[i] += 1
+                        score = (self._region_spot_yes[i] + 1.0) / (self._region_seen[i] + 2.0)
+                        if i == orig:
+                            score += 1e-6
+                        if score > best_score:
+                            best_score = score
+                            best_idx = i
+                if best_idx is not None:
+                    return best_idx, True
+                return None, False
+
+        # Try direct region-index query.
+        if self._spot_query_mode in ("unknown", "direct_idx"):
+            any_direct = False
+            best_idx = None
+            best_score = -1e18
+            for i in range(self._num_regions):
+                v = self._get_has_spot_region_direct(i)
+                if v is None:
+                    continue
+                any_direct = True
+                self._region_seen[i] += 1
+                if v:
+                    self._region_spot_yes[i] += 1
+                    score = (self._region_spot_yes[i] + 1.0) / (self._region_seen[i] + 2.0)
+                    if i == orig:
+                        score += 1e-6
+                    if score > best_score:
+                        best_score = score
+                        best_idx = i
+            if any_direct:
+                self._spot_query_mode = "direct_idx"
+                if best_idx is not None:
+                    return best_idx, True
+                return None, False
+
+        # Switch-based probing (may be the only way).
+        if self._spot_query_mode in ("unknown", "switch"):
+            best_idx = None
+            best_score = -1e18
+            any_known = False
+            for i in range(self._num_regions):
                 try:
-                    seq = _load_trace_file(tf[r])
+                    env.switch_region(i)
                 except Exception:
-                    seq = []
-            else:
-                seq = []
-            if not seq:
-                # Fallback: assume no spot if missing
-                seq = [0] * self._horizon_steps
-            traces.append(seq)
+                    pass
 
-        # Normalize lengths (tile or truncate)
-        norm_traces = []
-        for seq in traces:
-            n = len(seq)
-            if n <= 0:
-                norm_traces.append([0] * self._horizon_steps)
-                continue
-            if n < self._horizon_steps:
-                rep = (self._horizon_steps + n - 1) // n
-                tiled = (list(seq) * rep)[: self._horizon_steps]
-                norm_traces.append(tiled)
-            else:
-                norm_traces.append(list(seq[: self._horizon_steps]))
+                v = self._get_has_spot_current(fallback_current if i == orig else None)
+                if v is None:
+                    continue
+                any_known = True
+                self._region_seen[i] += 1
+                if v:
+                    self._region_spot_yes[i] += 1
+                    score = (self._region_spot_yes[i] + 1.0) / (self._region_seen[i] + 2.0)
+                    if i == orig:
+                        score += 1e-6
+                    if score > best_score:
+                        best_score = score
+                        best_idx = i
+            if any_known:
+                self._spot_query_mode = "switch"
+                if best_idx is not None:
+                    return best_idx, True
+                return None, False
 
-        if np is not None:
-            self._spot_traces = [np.asarray(t, dtype=np.uint8) != 0 for t in norm_traces]
-            any_spot = self._spot_traces[0].copy()
-            for r in range(1, self._num_regions):
-                any_spot |= self._spot_traces[r]
-            self._any_spot = any_spot
-        else:
-            self._spot_traces = [[1 if v else 0 for v in t] for t in norm_traces]
-            any_spot = [0] * self._horizon_steps
-            for i in range(self._horizon_steps):
-                v = 0
-                for r in range(self._num_regions):
-                    if self._spot_traces[r][i]:
-                        v = 1
-                        break
-                any_spot[i] = v
-            self._any_spot = any_spot
+        self._spot_query_mode = "none"
+        hs = self._get_has_spot_current(fallback_current)
+        return (orig, hs) if hs else (None, hs)
 
-        self._next_any_spot = _compute_next_true(self._any_spot)
-        self._next_unavail = [_compute_next_false(self._spot_traces[r]) for r in range(self._num_regions)]
-
-        self._initialized_policy = True
-
-    def _spot_available(self, region: int, step_idx: int) -> bool:
-        if step_idx < 0:
-            step_idx = 0
-        if step_idx >= self._horizon_steps:
-            step_idx = self._horizon_steps - 1
-        tr = self._spot_traces[region]
-        return bool(tr[step_idx])
-
-    def _select_best_spot_region(self, step_idx: int, prefer: int) -> Optional[int]:
-        best_r = -1
-        best_run = -1
-
-        for r in range(self._num_regions):
-            if not self._spot_available(r, step_idx):
-                continue
-            nxt0 = self._next_unavail[r][step_idx]
-            run = int(nxt0 - step_idx)
-            if run > best_run:
-                best_run = run
-                best_r = r
-            elif run == best_run and r == prefer:
-                best_r = r
-
-        if best_r < 0:
-            return None
-        return best_r
+    def _best_region_by_history(self) -> int:
+        if self._num_regions <= 1:
+            return 0
+        best_idx = 0
+        best_score = -1.0
+        for i in range(self._num_regions):
+            seen = self._region_seen[i]
+            yes = self._region_spot_yes[i]
+            score = (yes + 1.0) / (seen + 2.0)
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        return best_idx
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._ensure_initialized()
+        self._init_once()
 
-        elapsed = float(self.env.elapsed_seconds)
-        if self._last_elapsed >= 0.0 and elapsed + 1e-9 < self._last_elapsed:
-            self._reset_episode_state()
-        self._last_elapsed = elapsed
-
-        self._update_work_done()
-        remaining_work = float(self.task_duration) - float(self._work_done)
-        if remaining_work <= 1e-9:
+        work_done = self._update_work_done()
+        work_remaining = self.task_duration - work_done
+        if work_remaining <= 0:
             return _CT_NONE
 
-        time_remaining = float(self.deadline) - elapsed
-        if time_remaining <= 1e-9:
+        now = float(self.env.elapsed_seconds)
+        time_remaining = self.deadline - now
+        gap = float(getattr(self.env, "gap_seconds", 0.0) or 0.0)
+
+        restart_overhead = float(self.restart_overhead)
+        safety = max(2.0 * gap, 4.0 * restart_overhead)
+
+        required_if_start_od_now = work_remaining + restart_overhead
+
+        if self._committed_on_demand or (time_remaining <= required_if_start_od_now + safety):
+            self._committed_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Prefer SPOT if available in any region (scan only if not committed).
+        current_has_spot = self._get_has_spot_current(fallback=has_spot)
+
+        use_spot = False
+        chosen_region = None
+
+        if current_has_spot is True:
+            # If currently on-demand, switch to spot only if it's still worth it.
+            if last_cluster_type == ClusterType.ON_DEMAND:
+                if time_remaining > required_if_start_od_now + 2.0 * safety and work_remaining > 2.0 * gap:
+                    use_spot = True
+                else:
+                    use_spot = False
+            else:
+                use_spot = True
+        else:
+            # If spot isn't available locally, search other regions for spot.
+            best_idx, found = self._scan_regions_for_spot(fallback_current=has_spot)
+            if found and best_idx is not None:
+                chosen_region = best_idx
+                use_spot = True
+            else:
+                use_spot = False
+
+        if use_spot:
+            if chosen_region is not None:
+                try:
+                    if int(self.env.get_current_region()) != int(chosen_region):
+                        self.env.switch_region(int(chosen_region))
+                except Exception:
+                    pass
+            # Validate again if possible; fallback to conservative behavior if unknown.
+            post_has_spot = self._get_has_spot_current(fallback=has_spot)
+            if post_has_spot is True:
+                return ClusterType.SPOT
+            # If we cannot confirm, avoid risking an invalid SPOT action.
+            # Choose NONE or ON_DEMAND based on feasibility below.
+
+        # No confirmed spot: decide NONE vs ON_DEMAND.
+        # If we skip one more step, ensure we can still finish on-demand later with safety.
+        safe_to_pause = (time_remaining - gap) > (work_remaining + restart_overhead + safety)
+        if safe_to_pause:
+            # While waiting, bias toward historically good region.
+            if self._num_regions > 1:
+                best_wait = self._best_region_by_history()
+                try:
+                    if int(self.env.get_current_region()) != int(best_wait):
+                        self.env.switch_region(int(best_wait))
+                except Exception:
+                    pass
             return _CT_NONE
 
-        rem_over = float(getattr(self, "remaining_restart_overhead", 0.0) or 0.0)
-        slack_eff = time_remaining - remaining_work - rem_over
-
-        # If restart overhead is still pending, avoid causing new restarts.
-        if rem_over > 1e-9:
-            if last_cluster_type == _CT_SPOT:
-                if has_spot:
-                    return _CT_SPOT
-                return _CT_ONDEMAND
-            if last_cluster_type == _CT_ONDEMAND:
-                return _CT_ONDEMAND
-            return _CT_NONE
-
-        # If extremely tight, commit to on-demand.
-        # Also commit when required utilization is close to 1 (can't afford extra restarts/waits).
-        denom = max(1e-9, time_remaining)
-        required_rate = remaining_work / denom
-        if self._sticky_ondemand or slack_eff <= self._stick_slack_threshold or required_rate >= 0.985:
-            self._sticky_ondemand = True
-            return _CT_ONDEMAND
-
-        step_idx = int(elapsed * self._inv_gap + 1e-9)
-        if step_idx < 0:
-            step_idx = 0
-        if step_idx >= self._horizon_steps:
-            step_idx = self._horizon_steps - 1
-
-        any_spot_now = bool(self._any_spot[step_idx])
-
-        if any_spot_now:
-            current_region = int(self.env.get_current_region())
-
-            # If we're already on spot and it's available here, keep it to avoid restarts.
-            if last_cluster_type == _CT_SPOT and has_spot:
-                return _CT_SPOT
-
-            # If currently on on-demand and slack is low, don't switch back (restart overhead risk).
-            if last_cluster_type == _CT_ONDEMAND and slack_eff <= self._switch_back_slack_threshold:
-                return _CT_ONDEMAND
-
-            best_region = self._select_best_spot_region(step_idx, prefer=current_region)
-            if best_region is not None and best_region != current_region:
-                self.env.switch_region(best_region)
-
-            # Only switch to spot if it is expected to last long enough to amortize restart overhead
-            if best_region is not None:
-                run_steps = int(self._next_unavail[best_region][step_idx] - step_idx)
-                if last_cluster_type == _CT_ONDEMAND and run_steps < self._min_run_steps_to_switch:
-                    return _CT_ONDEMAND
-            return _CT_SPOT
-
-        # No spot anywhere now
-        next_spot = int(self._next_any_spot[step_idx])
-        if next_spot >= self._horizon_steps:
-            self._sticky_ondemand = True
-            return _CT_ONDEMAND
-
-        wait_steps = next_spot - step_idx
-        wait_time = float(wait_steps) * self._gap
-
-        # If we can wait until next spot without jeopardizing the deadline, pause.
-        if slack_eff >= wait_time + float(self.restart_overhead):
-            return _CT_NONE
-
-        # Otherwise, run on-demand; become sticky if getting tight.
-        if slack_eff <= 2.0 * self._stick_slack_threshold:
-            self._sticky_ondemand = True
-        return _CT_ONDEMAND
+        self._committed_on_demand = True
+        return ClusterType.ON_DEMAND

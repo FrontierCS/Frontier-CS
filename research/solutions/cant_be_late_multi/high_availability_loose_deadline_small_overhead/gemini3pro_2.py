@@ -8,11 +8,17 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "cant_be_late_solution"
+    NAME = "robust_cost_optimizer"
 
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -29,57 +35,58 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-        Prioritizes meeting the deadline, then minimizing cost by seeking Spot instances across regions.
         """
-        # Calculate progress and remaining work
-        current_progress = sum(self.task_done_time)
-        remaining_work = self.task_duration - current_progress
-        
-        # Effective remaining work includes pending overhead.
-        # If we are restarting or switching, we pay overhead.
-        effective_work = remaining_work + self.remaining_restart_overhead
-        
-        # Calculate time remaining until deadline
-        time_left = self.deadline - self.env.elapsed_seconds
-        
-        # Calculate Slack: Time we can afford to waste before we MUST execute perfectly
-        slack = time_left - effective_work
-        
-        # Define Safety Buffer
-        # If slack falls below this threshold, we switch to Panic Mode (On-Demand).
-        # We account for:
-        # 1. The current time step gap (if we waste this step searching, we lose 'gap' seconds)
-        # 2. Several restart overheads (in case of failures/preemptions)
-        # Using 1.5 * gap ensures that if the gap is large (e.g., 1 hour) and we are close to the edge,
-        # we don't risk waiting.
-        safety_buffer = (1.5 * self.env.gap_seconds) + (6.0 * self.restart_overhead)
-        
-        # --- Decision Logic ---
+        # 1. Calculate current progress and time budget
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
 
-        # 1. Critical Phase: Deadline is threatening
-        if slack < safety_buffer:
-            # We cannot afford to search for Spot or risk preemption.
-            # Use On-Demand to guarantee progress.
-            # We stay in the current region to avoid unnecessary switching overheads.
+        # If task is effectively complete, pause (the env will likely terminate)
+        if work_remaining <= 1e-6:
+            return ClusterType.NONE
+
+        time_elapsed = self.env.elapsed_seconds
+        time_until_deadline = self.deadline - time_elapsed
+
+        # 2. Calculate Slack
+        # Slack is the time buffer we have before we MUST run On-Demand to finish.
+        # We calculate the time required to finish if we switched to On-Demand right now.
+        
+        # If we are already On-Demand, we just finish pending overhead + remaining work.
+        # If we are NOT On-Demand, we incur a full restart overhead to switch.
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            overhead_to_finish = self.remaining_restart_overhead
+        else:
+            overhead_to_finish = self.restart_overhead
+
+        time_needed_for_od = work_remaining + overhead_to_finish
+        slack = time_until_deadline - time_needed_for_od
+
+        # 3. Define Safety Buffer
+        # We need a buffer to account for step quantization (gap_seconds) and safety.
+        # 3 hours (or 3 steps) is a safe margin to absorb overheads and search costs
+        # while keeping the high penalty at bay.
+        gap = self.env.gap_seconds
+        safe_buffer = max(3.0 * gap, 3.0 * 3600.0)
+
+        # 4. Decision Logic
+        
+        # Panic Mode: If slack is tight, prioritize completion regardless of cost.
+        if slack < safe_buffer:
             return ClusterType.ON_DEMAND
 
-        # 2. Economy Phase: We have time, optimize for cost
+        # Cost Optimization Mode:
+        # If Spot is available in current region, use it.
         if has_spot:
-            # Spot is available in the current region. Use it.
             return ClusterType.SPOT
-        else:
-            # Spot is unavailable in current region.
-            # Since we have healthy slack, we search for Spot in other regions.
-            
-            # Switch to the next region (Round Robin search)
-            num_regions = self.env.get_num_regions()
-            current_region = self.env.get_current_region()
-            next_region = (current_region + 1) % num_regions
-            
-            self.env.switch_region(next_region)
-            
-            # We switched regions. We cannot use Spot immediately in this step 
-            # (as `has_spot` reflects the old region).
-            # We return NONE to pause and check the new region's availability in the next step.
-            # This costs time (gap + overhead) but 0 money.
-            return ClusterType.NONE
+        
+        # Search Mode:
+        # If Spot is unavailable here, and we have slack, explore other regions.
+        # We switch region and return NONE to 'pause' and observe the new region's status in the next step.
+        # This wastes time (eating into slack) but saves money if we find a Spot region.
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        
+        next_region = (current_region + 1) % num_regions
+        self.env.switch_region(next_region)
+        
+        return ClusterType.NONE

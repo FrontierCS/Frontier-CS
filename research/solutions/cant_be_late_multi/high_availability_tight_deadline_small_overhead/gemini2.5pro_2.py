@@ -1,19 +1,37 @@
 import json
-import os
 from argparse import Namespace
+from collections import deque
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
+    """
+    A multi-region scheduling strategy that aims to minimize cost while guaranteeing
+    task completion before the deadline.
 
-    NAME = "ClairvoyantScheduler"
+    The strategy operates in two main modes:
+    1.  **Normal Mode**: Prioritizes using cheap Spot instances. If Spot is
+        unavailable in the current region, it uses historical availability data
+        to decide whether to switch to a more promising region or fall back to
+        a more expensive On-Demand instance.
+    2.  **Panic Mode**: If the time remaining is critically low, the strategy
+        switches to using On-Demand instances exclusively to ensure the task
+        finishes on time, as this is the highest priority.
+
+    Region switching is treated as a "probe": if the current region has a poor
+    Spot availability track record and another region looks better, the strategy
+    switches and waits one time step (ClusterType.NONE) to observe the new
+    region's state. This is only done if there is sufficient time slack to
+    absorb the cost of the probe (one time step + restart overhead).
+    """
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from spec_path config and pre-compute spot data.
+        Initialize the solution from spec_path config.
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -26,103 +44,120 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.work_done_seconds = 0.0
-        self.last_task_done_time_len = 0
+        # Custom initialization for strategy state
+        self._initialized = False
+        self._num_regions = 0
+        self._spot_history = {}
+        self._consecutive_no_spot = {}
         
-        self.has_perfect_info = False
-        self.spot_streaks = []
+        # --- Strategy Hyperparameters ---
+        # Look at last 12 hours/steps for availability estimates
+        self._history_window_size = 12
+        # Consider switching after this many consecutive hours of no spot
+        self._switch_consecutive_threshold = 2
+        # Target region must have at least this estimated availability to be worth switching
+        self._switch_availability_threshold = 0.80
+        # Prior belief about spot availability for unexplored regions
+        self._unexplored_region_prior = 0.95
 
-        try:
-            spec_dir = os.path.dirname(os.path.abspath(spec_path))
-            trace_files = config.get("trace_files", [])
-            if not trace_files:
-                return self
-                
-            spot_traces = []
-            for trace_file in trace_files:
-                full_path = os.path.join(spec_dir, trace_file)
-                if not os.path.exists(full_path):
-                    self.has_perfect_info = False
-                    self.spot_streaks = []
-                    return self
-                with open(full_path, 'r') as f:
-                    trace_data = json.load(f)
-                    spot_traces.append([bool(x) for x in trace_data])
-
-            if not spot_traces:
-                return self
-
-            num_timesteps = len(spot_traces[0])
-            for trace in spot_traces:
-                if len(trace) != num_timesteps:
-                    self.has_perfect_info = False
-                    self.spot_streaks = []
-                    return self
-            
-            for trace in spot_traces:
-                streaks = [0] * num_timesteps
-                current_streak = 0
-                for i in range(num_timesteps - 1, -1, -1):
-                    if trace[i]:
-                        current_streak += 1
-                    else:
-                        current_streak = 0
-                    streaks[i] = current_streak
-                self.spot_streaks.append(streaks)
-            
-            self.has_perfect_info = True
-
-        except (IOError, json.JSONDecodeError, KeyError, IndexError):
-            self.has_perfect_info = False
-            self.spot_streaks = []
-            
         return self
 
-    def _update_work_done(self):
-        """Efficiently update the total work done."""
-        if len(self.task_done_time) > self.last_task_done_time_len:
-            self.work_done_seconds += sum(self.task_done_time[self.last_task_done_time_len:])
-            self.last_task_done_time_len = len(self.task_done_time)
+    def _initialize_state(self):
+        """Lazy initialization on the first call to _step."""
+        if not self._initialized:
+            self._num_regions = self.env.get_num_regions()
+            self._spot_history = {
+                i: deque(maxlen=self._history_window_size) for i in range(self._num_regions)
+            }
+            self._consecutive_no_spot = {i: 0 for i in range(self._num_regions)}
+            self._initialized = True
+
+    def _update_history(self, current_region: int, has_spot: bool):
+        """Update historical data for the current region."""
+        self._spot_history[current_region].append(1 if has_spot else 0)
+
+        if not has_spot:
+            self._consecutive_no_spot[current_region] += 1
+        else:
+            self._consecutive_no_spot[current_region] = 0
+
+    def _get_region_availabilities(self) -> dict[int, float]:
+        """Calculate estimated spot availability for all regions based on history."""
+        availabilities = {}
+        for r in range(self._num_regions):
+            hist = self._spot_history[r]
+            if not hist:
+                # Use an optimistic prior for unexplored regions
+                availabilities[r] = self._unexplored_region_prior
+            else:
+                availabilities[r] = sum(hist) / len(hist)
+        return availabilities
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide next action based on current state and pre-computed spot data.
+        Decide the next action based on the current state of the environment.
         """
-        self._update_work_done()
-        work_remaining = self.task_duration - self.work_done_seconds
+        self._initialize_state()
 
-        if work_remaining <= 0:
+        current_region = self.env.get_current_region()
+        self._update_history(current_region, has_spot)
+
+        work_done = sum(self.task_done_time)
+        if work_done >= self.task_duration:
             return ClusterType.NONE
 
-        if (self.env.elapsed_seconds + work_remaining + self.restart_overhead >= self.deadline):
+        work_remaining = self.task_duration - work_done
+        time_to_deadline = self.deadline - self.env.elapsed_seconds
+
+        # --- Panic Mode Check ---
+        # Enter panic mode if time left is less than work left plus a buffer
+        # for one potential failure (e.g., a preemption). A single failure costs
+        # one time step of progress and incurs a restart overhead.
+        panic_buffer = self.env.gap_seconds + self.restart_overhead
+        if time_to_deadline <= work_remaining + panic_buffer:
             return ClusterType.ON_DEMAND
 
+        # --- Normal Operation ---
         if has_spot:
             return ClusterType.SPOT
 
-        if self.has_perfect_info:
-            current_timestep = int(self.env.elapsed_seconds / self.env.gap_seconds)
+        # --- No Spot: Decide between On-Demand or Switching Region ---
+        availabilities = self._get_region_availabilities()
+        
+        best_other_region = -1
+        max_availability = -1.0
+        # Find the most promising region to switch to
+        for r in range(self._num_regions):
+            if r == current_region:
+                continue
+            if availabilities[r] > max_availability:
+                max_availability = availabilities[r]
+                best_other_region = r
+
+        # Condition to attempt a switch:
+        # 1. Current region has been without spot for a while.
+        # 2. There is a significantly more promising region.
+        should_probe = (
+            self._consecutive_no_spot[current_region] >= self._switch_consecutive_threshold and
+            best_other_region != -1 and
+            max_availability >= self._switch_availability_threshold
+        )
+
+        if should_probe:
+            # A "probe" move (switch + NONE) costs time. Check if we can afford it.
+            # The time cost is one time step (for NONE) plus the restart overhead.
+            probe_time_cost = self.env.gap_seconds + self.restart_overhead
             
-            best_region_idx = -1
-            max_streak = 0
+            # If making this move would put us into panic mode, it's too risky.
+            if (time_to_deadline - probe_time_cost) <= (work_remaining + panic_buffer):
+                should_probe = False
 
-            num_regions = self.env.get_num_regions()
-            if num_regions == len(self.spot_streaks):
-                for r_idx in range(num_regions):
-                    if current_timestep < len(self.spot_streaks[r_idx]):
-                        streak = self.spot_streaks[r_idx][current_timestep]
-                        if streak > max_streak:
-                            max_streak = streak
-                            best_region_idx = r_idx
-                
-                if best_region_idx != -1 and max_streak * self.env.gap_seconds > self.restart_overhead:
-                    if self.env.get_current_region() != best_region_idx:
-                        self.env.switch_region(best_region_idx)
-                    return ClusterType.SPOT
-
-        slack = self.deadline - (self.env.elapsed_seconds + work_remaining + self.restart_overhead)
-
-        if slack > self.env.gap_seconds:
+        if should_probe:
+            # Execute the probe: switch to the best candidate region and wait.
+            self.env.switch_region(best_other_region)
+            # Reset the counter for the region we are leaving.
+            self._consecutive_no_spot[current_region] = 0
             return ClusterType.NONE
         else:
+            # It's not worth switching or it's too risky. Fall back to On-Demand.
             return ClusterType.ON_DEMAND

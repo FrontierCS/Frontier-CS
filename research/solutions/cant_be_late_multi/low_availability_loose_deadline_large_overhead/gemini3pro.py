@@ -8,7 +8,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "robust_search_strategy"  # REQUIRED: unique identifier
+    NAME = "Reactive_Region_Hopper"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -29,42 +29,47 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
+        Strategy:
+        1. Panic Check: If deadline is approaching, force On-Demand.
+        2. Spot Check: If current region has Spot, use it.
+        3. Hunt: If current region has no Spot, switch to next region and wait.
         """
-        # Calculate remaining work and time
+        # Retrieve current state
+        current_time = self.env.elapsed_seconds
         work_done = sum(self.task_done_time)
-        work_remaining = self.task_duration - work_done
-        time_remaining = self.deadline - self.env.elapsed_seconds
+        work_left = self.task_duration - work_done
+        time_left = self.deadline - current_time
+
+        # Calculate time required if we switch to On-Demand immediately.
+        # If we are not currently on On-Demand, we assume we must pay the full restart overhead.
+        overhead_cost = 0.0
+        if last_cluster_type != ClusterType.ON_DEMAND:
+            overhead_cost = self.restart_overhead
         
-        # Calculate slack: the amount of time we can afford to waste/wait
-        slack = time_remaining - work_remaining
-        
-        # Define safety buffer to guarantee completion using On-Demand.
-        # We need to preserve enough slack to cover:
-        # 1. The current timestep (potentially lost if we search/wait)
-        # 2. The restart overhead required to start an On-Demand instance
-        # 3. A safety margin for robustness
-        safety_buffer = (1.5 * self.env.gap_seconds) + (3.0 * self.restart_overhead)
-        
-        # 1. Panic Mode: If slack is running low, force On-Demand.
-        # This guarantees completion before the deadline.
-        if slack < safety_buffer:
+        # Add a safety buffer (1.5 time steps) to prevent missing the deadline due to step quantization
+        # or minor timing fluctuations.
+        buffer = self.env.gap_seconds * 1.5
+        min_required_time = work_left + overhead_cost + buffer
+
+        # Panic Logic: If remaining time is critically low, switch to On-Demand.
+        if time_left < min_required_time:
             return ClusterType.ON_DEMAND
-            
-        # 2. Prefer Spot if available in the current region.
+
+        # Spot Logic: If Spot is available in the current region, use it.
         # This is the most cost-effective option.
         if has_spot:
             return ClusterType.SPOT
-            
-        # 3. Search Mode: Spot is unavailable, but we have plenty of slack.
-        # Switch to the next region to check for Spot availability.
-        current_region = self.env.get_current_region()
+
+        # Hunt Logic: Spot is unavailable in the current region.
+        # Instead of waiting (which might take a long time), switch to the next region.
+        # We cycle through regions in a round-robin fashion.
         num_regions = self.env.get_num_regions()
+        current_region = self.env.get_current_region()
         next_region = (current_region + 1) % num_regions
         
         self.env.switch_region(next_region)
-        
-        # Return NONE to pause for this timestep.
-        # We cannot safely return SPOT immediately after switching because we don't 
-        # know if the new region has Spot capacity (has_spot is for the old region).
-        # Pausing costs 0 money (burns slack) and allows us to check status in the next step.
+
+        # Return NONE for this step. We cannot run Spot immediately in the new region
+        # because we don't know its availability until the next step.
+        # Returning NONE incurs no cost (other than time passage).
         return ClusterType.NONE

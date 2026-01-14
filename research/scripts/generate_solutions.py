@@ -806,6 +806,7 @@ Examples:
         variant_label = f"{task.variant_position + 1}/{task.total_variants}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
               f"({dim('model:')} {model_name(task.model)}, {dim('variant')} {variant_label})...")
         print(f"  {dim('Log:')} {dim(str(log_file))}")

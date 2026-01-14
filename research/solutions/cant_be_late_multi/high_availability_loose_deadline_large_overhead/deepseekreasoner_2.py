@@ -1,13 +1,37 @@
 import json
 from argparse import Namespace
-from typing import List, Dict, Tuple
-import numpy as np
+from typing import List, Tuple
+from enum import Enum
+import math
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
+class StrategyState(Enum):
+    SPOT_HUNTING = 1
+    SPOT_RUNNING = 2
+    ON_DEMAND = 3
+    FINISHING = 4
+
+
 class Solution(MultiRegionStrategy):
     NAME = "my_strategy"
+
+    def __init__(self, args):
+        super().__init__(args)
+        self.region_count = 0
+        self.spot_history = {}
+        self.current_region = 0
+        self.state = StrategyState.SPOT_HUNTING
+        self.consecutive_spot_failures = 0
+        self.last_work_region = -1
+        self.region_reliability = {}
+        self.time_in_region = {}
+        self.switch_counter = 0
+        self.spot_streak = 0
+        self.max_switch_before_giveup = 3
+        self.critical_time_threshold = 0.8
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -20,194 +44,131 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        
-        # Initialize strategy state
-        self.work_done = 0.0
-        self.time_elapsed = 0.0
-        self.last_action = ClusterType.NONE
-        self.current_region = 0
-        self.region_history = {}
-        self.spot_predictions = {}
-        self.region_costs = {}
-        self.step_count = 0
-        self.max_regions = 0
-        self.consecutive_failures = 0
-        self.safety_margin = 3600.0  # 1 hour safety margin
-        
         return self
 
-    def _update_state(self):
-        """Update internal state from environment."""
-        self.work_done = sum(self.task_done_time)
-        self.time_elapsed = self.env.elapsed_seconds
-        self.current_region = self.env.get_current_region()
+    def _update_region_stats(self, region_idx: int, had_spot: bool):
+        if region_idx not in self.spot_history:
+            self.spot_history[region_idx] = []
+            self.time_in_region[region_idx] = 0
+            self.region_reliability[region_idx] = 0.5
         
-        # Initialize region data structures
-        if self.max_regions == 0:
-            self.max_regions = self.env.get_num_regions()
-            for i in range(self.max_regions):
-                self.region_history[i] = {'spot_available': [], 'work_done': 0}
-                self.spot_predictions[i] = 1.0  # Start optimistic
-                self.region_costs[i] = 0.0
+        self.spot_history[region_idx].append(1 if had_spot else 0)
+        if len(self.spot_history[region_idx]) > 10:
+            self.spot_history[region_idx].pop(0)
+        
+        reliability = sum(self.spot_history[region_idx]) / len(self.spot_history[region_idx])
+        self.region_reliability[region_idx] = reliability
 
-    def _predict_spot_availability(self, region: int, steps_ahead: int = 1) -> float:
-        """Predict spot availability for a region."""
-        if region not in self.region_history:
-            return 1.0
-        
-        history = self.region_history[region]['spot_available']
-        if len(history) < 10:
-            return 0.7  # Default optimistic prediction
-            
-        # Simple moving average with decay for recent observations
-        recent_weight = 0.6
-        if len(history) > 20:
-            recent = history[-20:]
-        else:
-            recent = history
-            
-        recent_avg = sum(recent) / len(recent)
-        
-        # Apply exponential smoothing
-        self.spot_predictions[region] = (
-            recent_weight * recent_avg + 
-            (1 - recent_weight) * self.spot_predictions[region]
-        )
-        
-        return self.spot_predictions[region]
-
-    def _calculate_urgency(self) -> float:
-        """Calculate urgency level (0-1) based on remaining time."""
-        remaining_work = self.task_duration - self.work_done
-        remaining_time = self.deadline - self.time_elapsed - self.safety_margin
-        
-        if remaining_time <= 0:
-            return 1.0
-            
-        # Minimum time needed if we use only on-demand
-        min_time_needed = remaining_work + self.restart_overhead
-        
-        if min_time_needed <= 0:
-            return 0.0
-            
-        urgency = min_time_needed / remaining_time
-        return min(max(urgency, 0.0), 1.0)
-
-    def _find_best_region(self, has_spot: bool) -> Tuple[int, float]:
-        """Find the best region to switch to."""
+    def _get_best_spot_region(self) -> int:
         best_region = self.current_region
-        best_score = -float('inf')
+        best_score = -1
         
-        current_spot_pred = self._predict_spot_availability(self.current_region)
-        
-        for region in range(self.max_regions):
+        for region in range(self.env.get_num_regions()):
             if region == self.current_region:
-                # Staying in current region has no switching cost
-                spot_pred = current_spot_pred if has_spot else 0.0
-                score = spot_pred * 0.9701  # Spot price
-                if score > best_score:
-                    best_score = score
-                    best_region = region
                 continue
                 
-            # Switching region prediction
-            spot_pred = self._predict_spot_availability(region)
+            reliability = self.region_reliability.get(region, 0.5)
+            time_in_region_val = self.time_in_region.get(region, 0)
             
-            # Calculate expected cost
-            if spot_pred > 0.8:  # High confidence in spot
-                expected_cost = spot_pred * 0.9701 + (1 - spot_pred) * 3.06
-            else:
-                expected_cost = 3.06  # Conservative
-                
-            # Penalize switching based on urgency
-            urgency = self._calculate_urgency()
-            switch_penalty = urgency * 0.5
-            
-            score = -expected_cost - switch_penalty
+            score = reliability * (1 + 0.1 * time_in_region_val)
             
             if score > best_score:
                 best_score = score
                 best_region = region
         
-        return best_region, best_score
+        return best_region
 
-    def _should_switch_to_ondemand(self, has_spot: bool) -> bool:
-        """Determine if we should switch to on-demand."""
-        urgency = self._calculate_urgency()
+    def _should_switch_to_on_demand(self) -> bool:
+        remaining_work = self.task_duration - sum(self.task_done_time)
+        remaining_time = self.deadline - self.env.elapsed_seconds
         
-        # If urgency is high, use on-demand
-        if urgency > 0.8:
+        if remaining_time <= 0:
             return True
             
-        # If we've had too many consecutive spot failures
-        if self.consecutive_failures > 3:
-            return True
-            
-        # If spot prediction is low
-        spot_pred = self._predict_spot_availability(self.current_region)
-        if spot_pred < 0.3 and urgency > 0.3:
-            return True
-            
-        # If we're close to deadline with significant work remaining
-        remaining_work = self.task_duration - self.work_done
-        remaining_time = self.deadline - self.time_elapsed
+        time_per_work_unit = remaining_time / remaining_work if remaining_work > 0 else float('inf')
         
-        if remaining_time < remaining_work * 1.5:
+        safe_threshold = self.restart_overhead * 3
+        
+        if remaining_time < safe_threshold:
+            return True
+            
+        if remaining_work > 0 and time_per_work_unit < self.restart_overhead * 2:
+            return True
+            
+        if self.consecutive_spot_failures >= self.max_switch_before_giveup:
             return True
             
         return False
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self.step_count += 1
-        self._update_state()
+        self.current_region = self.env.get_current_region()
+        self._update_region_stats(self.current_region, has_spot)
+        self.time_in_region[self.current_region] = self.time_in_region.get(self.current_region, 0) + 1
         
-        # Update region history
-        if self.current_region in self.region_history:
-            self.region_history[self.current_region]['spot_available'].append(1 if has_spot else 0)
-            # Keep history manageable
-            if len(self.region_history[self.current_region]['spot_available']) > 100:
-                self.region_history[self.current_region]['spot_available'].pop(0)
+        remaining_work = self.task_duration - sum(self.task_done_time)
+        remaining_time = self.deadline - self.env.elapsed_seconds
         
-        # Update consecutive failures counter
-        if last_cluster_type == ClusterType.SPOT and not has_spot:
-            self.consecutive_failures += 1
-        else:
-            self.consecutive_failures = max(0, self.consecutive_failures - 1)
-        
-        # If we're in restart overhead, do nothing
-        if self.remaining_restart_overhead > 0:
+        if remaining_work <= 0 or remaining_time <= 0:
             return ClusterType.NONE
-        
-        # If work is complete, do nothing
-        if self.work_done >= self.task_duration:
-            return ClusterType.NONE
-        
-        # Calculate remaining time and work
-        remaining_work = self.task_duration - self.work_done
-        remaining_time = self.deadline - self.time_elapsed
-        
-        # If we can't possibly finish, use on-demand as last resort
-        if remaining_time < remaining_work:
+            
+        if self._should_switch_to_on_demand():
+            self.state = StrategyState.ON_DEMAND
             return ClusterType.ON_DEMAND
         
-        # Find best region
-        best_region, region_score = self._find_best_region(has_spot)
+        time_fraction = self.env.elapsed_seconds / self.deadline
         
-        # Switch region if beneficial
-        if best_region != self.current_region:
-            self.env.switch_region(best_region)
-            self.current_region = best_region
-            # After switching, we need to reconsider based on new region
-            # For simplicity, we'll use conservative approach after switch
-            return ClusterType.ON_DEMAND if self._should_switch_to_ondemand(has_spot) else ClusterType.SPOT
+        if time_fraction > self.critical_time_threshold and remaining_work > 0:
+            self.state = StrategyState.FINISHING
+            if has_spot and self.spot_streak > 2:
+                self.spot_streak += 1
+                return ClusterType.SPOT
+            else:
+                return ClusterType.ON_DEMAND
         
-        # Decision logic
-        if self._should_switch_to_ondemand(has_spot):
+        if self.state == StrategyState.SPOT_HUNTING:
+            if has_spot:
+                self.state = StrategyState.SPOT_RUNNING
+                self.spot_streak = 1
+                self.consecutive_spot_failures = 0
+                return ClusterType.SPOT
+            else:
+                best_region = self._get_best_spot_region()
+                if best_region != self.current_region:
+                    self.env.switch_region(best_region)
+                    self.switch_counter += 1
+                    self.consecutive_spot_failures += 1
+                return ClusterType.NONE
+        
+        elif self.state == StrategyState.SPOT_RUNNING:
+            if has_spot:
+                self.spot_streak += 1
+                self.consecutive_spot_failures = 0
+                if self.spot_streak >= 5:
+                    self.last_work_region = self.current_region
+                return ClusterType.SPOT
+            else:
+                self.state = StrategyState.SPOT_HUNTING
+                self.consecutive_spot_failures += 1
+                
+                if self.consecutive_spot_failures <= 2 and self.last_work_region != -1:
+                    if self.last_work_region != self.current_region:
+                        self.env.switch_region(self.last_work_region)
+                        self.switch_counter += 1
+                
+                if self.consecutive_spot_failures > 1:
+                    best_region = self._get_best_spot_region()
+                    if best_region != self.current_region:
+                        self.env.switch_region(best_region)
+                        self.switch_counter += 1
+                
+                return ClusterType.NONE
+        
+        elif self.state == StrategyState.ON_DEMAND:
+            if remaining_time > self.restart_overhead * 4 and remaining_work > self.env.gap_seconds * 2:
+                if has_spot and self.consecutive_spot_failures < 2:
+                    self.state = StrategyState.SPOT_RUNNING
+                    self.spot_streak = 1
+                    return ClusterType.SPOT
             return ClusterType.ON_DEMAND
         
-        # Use spot if available
-        if has_spot:
-            return ClusterType.SPOT
-        
-        # If spot not available and we shouldn't use on-demand, pause
         return ClusterType.NONE

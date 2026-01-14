@@ -6,20 +6,11 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy focusing on deadline safety and spot savings."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "cbmrs_strategy"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -31,93 +22,109 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal accumulators
-        self._acc_initialized = False
-        self._segments_prev = 0
-        self._work_done = 0.0  # in seconds
-        self._force_on_demand = False  # once True, stay on on-demand forever
+        # Initialize cached scalar parameters (seconds)
+        td = getattr(self, "task_duration", None)
+        if isinstance(td, (list, tuple)):
+            self._task_total_duration = float(td[0])
+        else:
+            self._task_total_duration = float(td)
+
+        ro = getattr(self, "restart_overhead", None)
+        if isinstance(ro, (list, tuple)):
+            self._restart_overhead_scalar = float(ro[0])
+        else:
+            self._restart_overhead_scalar = float(ro)
+
+        dl = getattr(self, "deadline", None)
+        if isinstance(dl, (list, tuple)):
+            self._deadline_scalar = float(dl[0])
+        else:
+            self._deadline_scalar = float(dl)
+
+        # Progress tracking
+        td_list = getattr(self, "task_done_time", [])
+        self._last_td_len = len(td_list)
+        self._total_done = float(sum(td_list)) if td_list else 0.0
+
+        # Fallback state
+        self._fallback_committed = False
 
         return self
 
-    # --------------------------------------------------------------------- #
-    # Internal helpers
-    # --------------------------------------------------------------------- #
-
-    def _update_work_done(self) -> None:
-        """Incrementally track total work done from task_done_time list."""
-        if not self._acc_initialized:
-            segs = self.task_done_time
-            self._segments_prev = len(segs)
-            self._work_done = float(sum(segs)) if segs else 0.0
-            self._acc_initialized = True
-            return
-
-        segs = self.task_done_time
-        n = len(segs)
-        if n > self._segments_prev:
-            total_new = 0.0
-            for i in range(self._segments_prev, n):
-                total_new += segs[i]
-            self._work_done += total_new
-            self._segments_prev = n
-
-    # --------------------------------------------------------------------- #
-    # Core decision logic
-    # --------------------------------------------------------------------- #
+    def _update_progress(self) -> None:
+        td_list = self.task_done_time
+        n = len(td_list)
+        if n > self._last_td_len:
+            # Sum only newly added segments to keep O(1) amortized per step
+            self._total_done += float(sum(td_list[self._last_td_len:]))
+            self._last_td_len = n
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
+        # Lazy initialization safety (in case _step called before solve, though unlikely)
+        if not hasattr(self, "_total_done"):
+            td_list = getattr(self, "task_done_time", [])
+            self._last_td_len = len(td_list)
+            self._total_done = float(sum(td_list)) if td_list else 0.0
+            self._fallback_committed = False
+            # Cache scalar params
+            td = getattr(self, "task_duration", None)
+            if isinstance(td, (list, tuple)):
+                self._task_total_duration = float(td[0])
+            else:
+                self._task_total_duration = float(td)
+            ro = getattr(self, "restart_overhead", None)
+            if isinstance(ro, (list, tuple)):
+                self._restart_overhead_scalar = float(ro[0])
+            else:
+                self._restart_overhead_scalar = float(ro)
+            dl = getattr(self, "deadline", None)
+            if isinstance(dl, (list, tuple)):
+                self._deadline_scalar = float(dl[0])
+            else:
+                self._deadline_scalar = float(dl)
 
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
+        # Update accumulated progress
+        self._update_progress()
 
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
-        """
-        # Update internal progress estimate
-        self._update_work_done()
-
-        # If task is done (or slightly over due to rounding), stop computing
-        if self._work_done >= self.task_duration - 1e-6:
+        remaining_work = self._task_total_duration - self._total_done
+        if remaining_work <= 0.0:
+            # Task completed; no need to run further.
             return ClusterType.NONE
 
-        now = self.env.elapsed_seconds
-        remaining_work = self.task_duration - self._work_done
-        if remaining_work < 0.0:
-            remaining_work = 0.0
+        elapsed = self.env.elapsed_seconds
+        remaining_time = self._deadline_scalar - elapsed
 
-        # Once we commit to on-demand, never go back to spot (avoid extra overhead/risk)
-        if not self._force_on_demand:
-            gap = self.env.gap_seconds
-            # Conservative safety margin:
-            #   - allow at most one more "risky" step (which may waste up to gap+overhead time),
-            #   - then switch to on-demand and pay up to another restart_overhead before
-            #     finishing remaining_work without further interruptions.
-            #
-            # Upper bound on completion time if we risk one more step:
-            #   T_finish <= now + gap + 2*restart_overhead + remaining_work
-            #
-            # We must ensure this is <= deadline to take that risk.
-            conservative_finish_time = (
-                now + gap + 2.0 * self.restart_overhead + remaining_work
-            )
-            if conservative_finish_time > self.deadline:
-                self._force_on_demand = True
-
-        if self._force_on_demand:
-            # Deterministic, interruption-free path to meet the deadline.
+        # If we've already committed to on-demand, keep using it.
+        if self._fallback_committed:
             return ClusterType.ON_DEMAND
 
-        # Spot-preferred phase: use Spot when available, otherwise idle cheaply.
+        restart_overhead = self._restart_overhead_scalar
+
+        # Time required if we start on-demand immediately (worst case).
+        fallback_time_needed = remaining_work + restart_overhead
+
+        # If even starting on-demand now can't finish by deadline, still choose on-demand.
+        if remaining_time <= fallback_time_needed:
+            self._fallback_committed = True
+            return ClusterType.ON_DEMAND
+
+        gap = self.env.gap_seconds
+        step_dur = gap if remaining_time > gap else remaining_time
+
+        # Worst case: we waste this entire step (no useful work).
+        remaining_time_after_idle = remaining_time - step_dur
+
+        # If no time left after this step or can't finish with on-demand then, commit now.
+        if remaining_time_after_idle <= 0.0:
+            self._fallback_committed = True
+            return ClusterType.ON_DEMAND
+
+        if remaining_time_after_idle < (remaining_work + restart_overhead):
+            self._fallback_committed = True
+            return ClusterType.ON_DEMAND
+
+        # Safe to "gamble" this step: prefer Spot when available, otherwise wait.
         if has_spot:
             return ClusterType.SPOT
-
-        return ClusterType.NONE
+        else:
+            return ClusterType.NONE

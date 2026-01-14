@@ -6,9 +6,9 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy focusing on Spot with safe On-Demand fallback."""
+    """Multi-region scheduling strategy with cautious on-demand fallback."""
 
-    NAME = "my_strategy"
+    NAME = "cant_be_late_heuristic"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -22,87 +22,79 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state for efficient progress tracking
-        self._acc_work_seconds = 0.0
-        self._last_task_segments_len = 0
+        # Initialize internal state
+        self._committed_to_on_demand = False
+        self._progress_done = 0.0
+        self._last_task_len = 0
 
-        # Flag indicating we've switched to guaranteed-completion mode on On-Demand
-        self._committed_to_ondemand = False
-
-        # Cache scalar versions of core parameters (defensive against list/tuple forms)
-        td = getattr(self, "task_duration", 0.0)
-        if isinstance(td, (list, tuple)):
-            self._task_duration_seconds = float(sum(td))
-        else:
-            self._task_duration_seconds = float(td)
-
-        dl = getattr(self, "deadline", 0.0)
-        if isinstance(dl, (list, tuple)):
-            self._deadline_seconds = float(sum(dl))
-        else:
-            self._deadline_seconds = float(dl)
-
-        ro = getattr(self, "restart_overhead", 0.0)
-        if isinstance(ro, (list, tuple)):
-            self._restart_overhead_seconds = float(sum(ro))
-        else:
-            self._restart_overhead_seconds = float(ro)
-
-        # Will be set on first _step when env is available
-        self._gap_seconds = None
+        # Cache scalar parameters (handle possible array/list types defensively)
+        self._task_duration_total = self._to_scalar(getattr(self, "task_duration", 0.0))
+        self._restart_overhead = self._to_scalar(getattr(self, "restart_overhead", 0.0))
+        self._deadline_seconds = self._to_scalar(getattr(self, "deadline", 0.0))
 
         return self
 
-    def _update_progress_cache(self) -> None:
-        """Incrementally track total work done without re-summing the full list."""
-        current_len = len(self.task_done_time)
-        if current_len > self._last_task_segments_len:
-            new_segments = self.task_done_time[self._last_task_segments_len : current_len]
-            # Usually one element; incremental sum keeps this O(1) amortized
-            self._acc_work_seconds += sum(new_segments)
-            self._last_task_segments_len = current_len
+    @staticmethod
+    def _to_scalar(value):
+        """Convert value (possibly list/array/scalar) to float scalar."""
+        try:
+            return float(value)
+        except TypeError:
+            # Assume indexable container with at least one element
+            return float(value[0])
+
+    def _update_progress_cache(self):
+        """Incrementally track total completed work to avoid O(n) summations."""
+        segments = self.task_done_time
+        current_len = len(segments)
+
+        if current_len < self._last_task_len:
+            # Environment reset; recompute from scratch
+            total = 0.0
+            for v in segments:
+                total += v
+            self._progress_done = total
+            self._last_task_len = current_len
+            return
+
+        if current_len > self._last_task_len:
+            total_add = 0.0
+            for i in range(self._last_task_len, current_len):
+                total_add += segments[i]
+            self._progress_done += total_add
+            self._last_task_len = current_len
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Initialize gap_seconds once env becomes available
-        if self._gap_seconds is None:
-            self._gap_seconds = float(self.env.gap_seconds)
-
         # Update cached progress
         self._update_progress_cache()
 
-        remaining_work = self._task_duration_seconds - self._acc_work_seconds
+        remaining_work = self._task_duration_total - self._progress_done
         if remaining_work <= 0.0:
-            # Task already complete; no need to run further
+            # Task completed: no need to run further
             return ClusterType.NONE
 
-        # If already in fail-safe On-Demand mode, keep using it until completion
-        if self._committed_to_ondemand:
+        elapsed = self.env.elapsed_seconds
+        if elapsed >= self._deadline_seconds:
+            # Already at or beyond deadline; just use on-demand to minimize further delay
             return ClusterType.ON_DEMAND
 
-        time_now = float(self.env.elapsed_seconds)
-        slack = self._deadline_seconds - time_now
+        gap = getattr(self.env, "gap_seconds", 0.0) or 0.0
 
-        # If already at/past deadline, best effort: switch to On-Demand
-        if slack <= 0.0:
-            self._committed_to_ondemand = True
+        # Decide if we must commit to on-demand to safely meet deadline
+        if not self._committed_to_on_demand:
+            # Conservative latest-commit rule:
+            # If waiting one more step without progress would push the
+            # earliest possible on-demand completion past the deadline,
+            # commit to on-demand now.
+            if elapsed + remaining_work + self._restart_overhead + gap >= self._deadline_seconds:
+                self._committed_to_on_demand = True
+
+        if self._committed_to_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Time required to complete if we start/continue on On-Demand **now**,
-        # conservatively assuming a fresh restart overhead from this moment.
-        required_time_if_ondemand_now = self._restart_overhead_seconds + remaining_work
-
-        # Determine if it's safe to spend one more step without committing to On-Demand,
-        # assuming worst-case zero progress during that step.
-        safe_to_wait_one_step = required_time_if_ondemand_now <= (slack - self._gap_seconds)
-
-        # If it's not safe to wait, immediately switch to On-Demand and stay there.
-        if not safe_to_wait_one_step:
-            self._committed_to_ondemand = True
-            return ClusterType.ON_DEMAND
-
-        # Safe region: Prefer Spot for low cost when available.
+        # Pre-commit phase: use Spot when available, otherwise wait.
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot unavailable but still enough slack; wait without incurring cost.
+        # Spot unavailable and we still have slack: wait to avoid on-demand cost.
         return ClusterType.NONE

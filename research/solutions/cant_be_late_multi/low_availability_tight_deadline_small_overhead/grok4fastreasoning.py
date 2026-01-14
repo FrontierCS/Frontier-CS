@@ -7,7 +7,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "streak_strategy"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,69 +21,66 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.avail: List[List[bool]] = []
-        for tf in config["trace_files"]:
-            with open(tf, 'r') as f:
-                trace = json.load(f)
-            self.avail.append([bool(x) for x in trace])
+        # Load availability traces
+        trace_files = config.get("trace_files", [])
+        self.availability: List[List[bool]] = []
+        for path in trace_files:
+            with open(path, 'r') as f:
+                content = f.read()
+            try:
+                trace = json.loads(content)
+            except json.JSONDecodeError:
+                trace = [line.strip() for line in content.splitlines() if line.strip()]
+                trace = [bool(int(x)) for x in trace]
+            else:
+                trace = [bool(x) for x in trace]
+            self.availability.append(trace)
 
-        self.num_regions = len(self.avail)
-        if self.num_regions > 0:
-            self.total_steps = len(self.avail[0])
-            self.streaks: List[List[int]] = []
-            for r in range(self.num_regions):
-                trace = self.avail[r]
-                streak = [0] * self.total_steps
-                if self.total_steps > 0 and trace[-1]:
-                    streak[-1] = 1
-                for t in range(self.total_steps - 2, -1, -1):
-                    if trace[t]:
-                        streak[t] = 1 + streak[t + 1]
-                    else:
-                        streak[t] = 0
-                self.streaks.append(streak)
-        else:
-            self.total_steps = 0
-            self.streaks = []
+        # Initialize progress tracking
+        self._progress = 0.0
+        self._prev_num_segments = 0
+        self._initialized = False
 
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        current_region = self.env.get_current_region()
-        gap = self.env.gap_seconds
-        elapsed = self.env.elapsed_seconds
-        current_step = int(elapsed // gap)
+        if not self._initialized:
+            self._progress = sum(self.task_done_time)
+            self._prev_num_segments = len(self.task_done_time)
+            self._initialized = True
 
-        total_done = sum(self.task_done_time)
-        remaining_work = self.task_duration - total_done
-        if remaining_work <= 0:
+        current_num = len(self.task_done_time)
+        if current_num > self._prev_num_segments:
+            new_segments = current_num - self._prev_num_segments
+            self._progress += sum(self.task_done_time[-new_segments:])
+            self._prev_num_segments = current_num
+
+        if self._progress >= self.task_duration:
             return ClusterType.NONE
 
-        if self.total_steps == 0 or current_step >= self.total_steps:
-            if has_spot:
-                return ClusterType.SPOT
+        current_r = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        gap = self.env.gap_seconds
+        current_t = int(self.env.elapsed_seconds // gap)
+
+        # Check if current has spot
+        use_spot = False
+        target_r = current_r
+        if len(self.availability) > 0 and current_t < len(self.availability[0]):
+            if self.availability[current_r][current_t]:
+                use_spot = True
             else:
-                return ClusterType.ON_DEMAND
+                # Find smallest r with spot
+                for r in range(num_regions):
+                    if self.availability[r][current_t]:
+                        target_r = r
+                        use_spot = True
+                        break
 
-        best_r = -1
-        best_streak = -1
-        for r in range(self.num_regions):
-            if self.avail[r][current_step]:
-                s = self.streaks[r][current_step]
-                update = False
-                if best_r == -1:
-                    update = True
-                elif s > best_streak:
-                    update = True
-                elif s == best_streak and r == current_region:
-                    update = True
-                if update:
-                    best_r = r
-                    best_streak = s
-
-        if best_r != -1:
-            if best_r != current_region:
-                self.env.switch_region(best_r)
+        if use_spot:
+            if target_r != current_r:
+                self.env.switch_region(target_r)
             return ClusterType.SPOT
         else:
+            # No spot available anywhere, use on-demand
             return ClusterType.ON_DEMAND

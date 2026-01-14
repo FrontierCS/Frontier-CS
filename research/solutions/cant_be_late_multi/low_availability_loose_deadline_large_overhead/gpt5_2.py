@@ -6,7 +6,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cbmrs_jit_v1"
+    NAME = "cant_be_late_multi_region_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -19,58 +19,87 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        # Internal state initialization
-        self._accum_done = 0.0
-        self._last_len = 0
-        self._od_locked = False
-        self._margin_sec = None  # initialized on first step
+
+        # Internal state
+        self._num_regions = self.env.get_num_regions()
+        self._commit_to_od = False
+        self._commit_fudge_seconds = max(2.0 * self.env.gap_seconds + self.restart_overhead, self.env.gap_seconds)
+        self._done_sum_seconds = 0.0
+        self._done_list_idx = 0
+
+        # Region rotation and simple learned availability score (EWMA)
+        self._region_scores = [0.5] * self._num_regions
+        self._score_alpha = 0.15  # EWMA update rate
+        self._rr_order = list(range(self._num_regions))
+        self._last_region_checked = self.env.get_current_region()
+
         return self
 
-    def _update_done(self):
-        new_len = len(self.task_done_time)
-        if new_len > self._last_len:
-            # Incrementally accumulate new segments
-            for i in range(self._last_len, new_len):
-                self._accum_done += self.task_done_time[i]
-            self._last_len = new_len
+    def _update_progress_cache(self):
+        # Incremental sum of task_done_time to avoid O(n) per step
+        if self._done_list_idx < len(self.task_done_time):
+            for seg in self.task_done_time[self._done_list_idx:]:
+                self._done_sum_seconds += float(seg)
+            self._done_list_idx = len(self.task_done_time)
 
-    def _should_lock_od(self, time_left: float, work_left: float) -> bool:
-        # Latest time to start OD and still finish: time_left <= work_left + overhead + margin
-        margin = self._margin_sec if self._margin_sec is not None else 0.0
-        return time_left <= (work_left + self.restart_overhead + margin)
+    def _should_commit_to_on_demand(self, last_cluster_type: ClusterType, remaining_work: float) -> bool:
+        if self._commit_to_od:
+            return True
+        time_left = self.deadline - self.env.elapsed_seconds
+        if time_left <= 0:
+            return True
+        od_overhead = 0.0 if last_cluster_type == ClusterType.ON_DEMAND else self.restart_overhead
+        return time_left <= (remaining_work + od_overhead + self._commit_fudge_seconds)
+
+    def _update_region_score(self, region_idx: int, has_spot: bool):
+        # EWMA score update for the region we are currently in
+        alpha = self._score_alpha
+        prev = self._region_scores[region_idx]
+        obs = 1.0 if has_spot else 0.0
+        self._region_scores[region_idx] = (1 - alpha) * prev + alpha * obs
+
+    def _choose_best_region(self, exclude_idx: int) -> int:
+        # Choose region with highest score (ties -> lowest index), excluding current
+        best_idx = exclude_idx
+        best_score = -1.0
+        for i, s in enumerate(self._region_scores):
+            if i == exclude_idx:
+                continue
+            if s > best_score:
+                best_score = s
+                best_idx = i
+        # If all excluded or equivalent, do simple round-robin to explore
+        if best_idx == exclude_idx:
+            best_idx = (exclude_idx + 1) % self._num_regions
+        return best_idx
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Initialize margin adaptively at first call
-        if self._margin_sec is None:
-            # Safety buffer to avoid missing deadline due to discretization/overheads
-            # Use 20% of step or at least 60s; capped not to exceed restart_overhead excessively
-            base_margin = max(60.0, 0.2 * float(self.env.gap_seconds))
-            # Don't exceed restart_overhead too much to avoid unnecessary early OD
-            self._margin_sec = min(base_margin, self.restart_overhead)
+        # Update progress
+        self._update_progress_cache()
+        remaining_work = max(0.0, self.task_duration - self._done_sum_seconds)
 
-        # Update accumulated done work efficiently
-        self._update_done()
-
-        work_left = max(0.0, self.task_duration - self._accum_done)
-        if work_left <= 0.0:
+        # If task done, do nothing
+        if remaining_work <= 1e-6:
             return ClusterType.NONE
 
-        # If we've already locked to OD fallback, stay on OD to avoid extra overhead/risk
-        if self._od_locked or last_cluster_type == ClusterType.ON_DEMAND:
-            self._od_locked = True
+        current_region = self.env.get_current_region()
+
+        # Update observed score for current region
+        self._update_region_score(current_region, has_spot)
+
+        # Decide whether to commit to On-Demand to guarantee deadline
+        if self._should_commit_to_on_demand(last_cluster_type, remaining_work):
+            self._commit_to_od = True
             return ClusterType.ON_DEMAND
 
-        # Compute remaining wall-clock time
-        time_left = self.deadline - self.env.elapsed_seconds
-
-        # If it's time to lock OD to guarantee finishing, do it
-        if self._should_lock_od(time_left, work_left):
-            self._od_locked = True
-            return ClusterType.ON_DEMAND
-
-        # Opportunistically use SPOT when available
+        # Not committed to OD yet; prefer SPOT if available
         if has_spot:
             return ClusterType.SPOT
 
-        # Otherwise wait (NONE) to save cost; rely on OD fallback when necessary
+        # Spot not available here; attempt to switch to a more promising region and wait
+        # Switching now influences next step; returning NONE incurs no cost
+        if self._num_regions > 1:
+            next_region = self._choose_best_region(current_region)
+            if next_region != current_region:
+                self.env.switch_region(next_region)
         return ClusterType.NONE

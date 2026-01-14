@@ -254,15 +254,25 @@ check_superset() {
 # Commit and push results to remote
 push_results() {
     local results_repo="$1"
+    local track="$2"
 
     if [[ -z "$results_repo" ]] || [[ ! -d "$results_repo/.git" ]]; then
         return
     fi
 
     cd "$results_repo"
-    git add .
+
+    # Only add track-relevant files
+    if [[ "$track" == "algorithmic" ]]; then
+        git add algorithmic/
+    elif [[ "$track" == "research" ]]; then
+        git add batch/
+    else
+        git add .
+    fi
+
     if ! git diff --staged --quiet; then
-        git commit -m "chore: update evaluation results $(date +%Y-%m-%d)"
+        git commit -m "chore: update $track evaluation results $(date +%Y-%m-%d)"
         git push
         echo "Pushed results to remote"
     else
@@ -328,13 +338,29 @@ if [[ -z "$RESULTS_REPO" ]] && $AUTO_CLONE; then
 
     # Check if results repo exists and has uncommitted changes
     if [[ -d "$RESULTS_REPO/.git" ]]; then
-        if ! git -C "$RESULTS_REPO" diff --quiet 2>/dev/null || \
-           git -C "$RESULTS_REPO" status --porcelain 2>/dev/null | grep -q .; then
+        # Filter changes by track if specified
+        # algorithmic -> algorithmic/, research -> batch/
+        if [[ "$TRACK" == "algorithmic" ]]; then
+            TRACK_FILTER="algorithmic/"
+        elif [[ "$TRACK" == "research" ]]; then
+            TRACK_FILTER="batch/"
+        else
+            TRACK_FILTER=""  # No filter for --check-overlap or unspecified track
+        fi
+
+        # Check for track-relevant uncommitted changes
+        if [[ -n "$TRACK_FILTER" ]]; then
+            HAS_CHANGES=$(git -C "$RESULTS_REPO" status --porcelain 2>/dev/null | grep "^.. $TRACK_FILTER" || true)
+        else
+            HAS_CHANGES=$(git -C "$RESULTS_REPO" status --porcelain 2>/dev/null || true)
+        fi
+
+        if [[ -n "$HAS_CHANGES" ]]; then
             echo ""
             echo "⚠️  Results repo has uncommitted changes!"
             echo "    Path: $RESULTS_REPO"
             echo ""
-            git -C "$RESULTS_REPO" status --short | head -20
+            echo "$HAS_CHANGES" | head -20
             echo ""
 
             # Non-interactive: abort
@@ -456,10 +482,23 @@ fi
 cd "$PUBLIC_DIR"
 $CMD
 
-# Push results if requested
+# Push results if there are changes
 echo ""
-if confirm_push; then
-    push_results "$RESULTS_REPO"
+if [[ -d "$RESULTS_REPO/.git" ]]; then
+    # Check for track-relevant changes
+    if [[ "$TRACK" == "algorithmic" ]]; then
+        CHANGES=$(git -C "$RESULTS_REPO" status --porcelain algorithmic/ 2>/dev/null | head -1)
+    else
+        CHANGES=$(git -C "$RESULTS_REPO" status --porcelain batch/ 2>/dev/null | head -1)
+    fi
+
+    if [[ -n "$CHANGES" ]]; then
+        if confirm_push; then
+            push_results "$RESULTS_REPO" "$TRACK"
+        fi
+    else
+        echo "No changes to push"
+    fi
 fi
 
 # Cleanup SkyPilot clusters

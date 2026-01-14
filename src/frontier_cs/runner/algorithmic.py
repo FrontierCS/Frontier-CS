@@ -203,7 +203,8 @@ class AlgorithmicRunner(Runner):
             )
 
         # Poll for result
-        result = self._poll_result(sid, timeout)
+        effective_timeout = timeout or self.DEFAULT_TIMEOUT
+        result = self._poll_result(sid, effective_timeout)
         duration = time.time() - start_time
 
         if result is None:
@@ -287,13 +288,13 @@ class AlgorithmicRunner(Runner):
     def _poll_result(
         self,
         sid: str,
-        timeout: Optional[int] = None,
+        timeout: int,
     ) -> Optional[dict]:
         """Poll for evaluation result."""
         start = time.time()
 
         while True:
-            if timeout and (time.time() - start) > timeout:
+            if (time.time() - start) > timeout:
                 return None
 
             try:

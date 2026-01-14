@@ -1,6 +1,6 @@
 import json
 from argparse import Namespace
-import sys
+import math
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -8,16 +8,13 @@ from sky_spot.utils import ClusterType
 
 class Solution(MultiRegionStrategy):
     """
-    A multi-region scheduling strategy that uses future spot availability traces
-    to make decisions, balanced against deadline pressure.
+    Your multi-region scheduling strategy.
     """
-
-    NAME = "dynamic_lookahead_v2"
+    NAME = "foresight_scheduler"
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from spec_path config and pre-compute
-        spot availability lookaheads.
+        Initialize the solution from spec_path config and pre-process traces.
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -30,99 +27,110 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Load spot availability traces from files
-        self.spot_availability_traces = []
-        for trace_file in config["trace_files"]:
-            with open(trace_file) as f:
-                trace = [line.strip() == '1' for line in f]
-                self.spot_availability_traces.append(trace)
+        self.num_regions = self.env.get_num_regions()
+        
+        self.spot_availability = []
+        min_len = float('inf')
+        if "trace_files" in config and config["trace_files"]:
+            for trace_file in config["trace_files"]:
+                with open(trace_file) as f:
+                    trace = [line.strip() == '1' for line in f]
+                    self.spot_availability.append(trace)
+                    if len(trace) > 0:
+                        min_len = min(min_len, len(trace))
+        
+        if min_len == float('inf'):
+             min_len = 0
 
-        self.num_regions = len(self.spot_availability_traces)
-        if self.env.gap_seconds > 0:
-            self.overhead_in_steps = self.restart_overhead / self.env.gap_seconds
-            self.total_steps = int(self.deadline / self.env.gap_seconds) + 1
-        else:
-            self.overhead_in_steps = float('inf')
-            self.total_steps = 1
+        self.num_steps = min_len
+        # Ensure spot_availability list is truncated to the shortest trace length
+        temp_spot_availability = []
+        for i in range(len(self.spot_availability)):
+            temp_spot_availability.append(self.spot_availability[i][:self.num_steps])
+        self.spot_availability = temp_spot_availability
         
-        # Pre-compute consecutive spot availability for all future time steps.
-        # self.k_values_cache[r][t] stores the number of consecutive spot-available
-        # steps in region 'r' starting from time step 't'.
-        self.k_values_cache = [[0] * (self.total_steps + 1) for _ in range(self.num_regions)]
-        
-        for r in range(self.num_regions):
-            trace = self.spot_availability_traces[r]
-            trace_len = len(trace)
-            if trace_len < self.total_steps:
-                trace.extend([False] * (self.total_steps - trace_len))
+        # The number of regions is determined by the number of traces provided
+        self.num_regions = len(self.spot_availability)
 
-            # Iterate backwards to calculate run lengths efficiently
-            for t in range(self.total_steps - 1, -1, -1):
-                if trace[t]:
-                    self.k_values_cache[r][t] = self.k_values_cache[r][t + 1] + 1
-        
+        # Pre-calculate spot run lengths (consecutive availability)
+        self.spot_run_length = [[0] * self.num_steps for _ in range(self.num_regions)]
+        if self.num_steps > 0:
+            for r in range(self.num_regions):
+                if self.spot_availability[r][self.num_steps - 1]:
+                    self.spot_run_length[r][self.num_steps - 1] = 1
+                for t in range(self.num_steps - 2, -1, -1):
+                    if self.spot_availability[r][t]:
+                        self.spot_run_length[r][t] = 1 + self.spot_run_length[r][t + 1]
+
+        # Pre-calculate next best spot opportunity for each time step
+        self.next_spot_info = [(self.num_steps, -1)] * (self.num_steps + 1)
+        if self.num_steps > 0:
+            for t in range(self.num_steps - 1, -1, -1):
+                best_region_at_t = -1
+                max_run_len_at_t = -1
+                for r in range(self.num_regions):
+                    if self.spot_availability[r][t] and self.spot_run_length[r][t] > max_run_len_at_t:
+                        max_run_len_at_t = self.spot_run_length[r][t]
+                        best_region_at_t = r
+                
+                if best_region_at_t != -1:
+                    self.next_spot_info[t] = (t, best_region_at_t)
+                else:
+                    self.next_spot_info[t] = self.next_spot_info[t+1]
+
+        self.time_buffer = 1e-6
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide next action based on current state and pre-computed lookaheads.
+        Decide next action based on pre-computed trace data and current state.
         """
-        current_step = int(self.env.elapsed_seconds / self.env.gap_seconds)
-        work_remaining = self.task_duration - sum(self.task_done_time)
-
-        if work_remaining <= 0:
+        current_time = self.env.elapsed_seconds
+        work_done = sum(self.task_done_time)
+        remaining_work = self.task_duration - work_done
+        
+        if remaining_work <= self.time_buffer:
             return ClusterType.NONE
 
-        if current_step >= self.total_steps:
-             return ClusterType.ON_DEMAND if work_remaining > 0 else ClusterType.NONE
-
-        time_until_deadline = self.deadline - self.env.elapsed_seconds
+        time_to_deadline = self.deadline - current_time
+        slack = time_to_deadline - remaining_work
         
-        current_slack = time_until_deadline - (work_remaining + self.remaining_restart_overhead)
-
-        # PANIC MODE: If slack is less than one restart overhead plus a small buffer,
-        # we are in danger. Use the most reliable option to make progress.
-        panic_threshold = self.restart_overhead * 1.1
-        if current_slack <= panic_threshold:
+        current_step_idx = math.floor(current_time / self.env.gap_seconds)
+        if current_step_idx >= self.num_steps:
+            return ClusterType.ON_DEMAND
+            
+        if slack <= self.restart_overhead + self.time_buffer:
             return ClusterType.ON_DEMAND
 
-        # NORMAL MODE
-        current_region = self.env.get_current_region()
-        k_current = self.k_values_cache[current_region][current_step]
-
-        # Find the best alternative region to switch to.
-        best_switch_region = -1
-        max_k_switch = -1
+        best_r_now = -1
+        max_run_now = -1
         for r in range(self.num_regions):
-            if r == current_region:
-                continue
-            k_r = self.k_values_cache[r][current_step]
-            if k_r > max_k_switch:
-                max_k_switch = k_r
-                best_switch_region = r
+            if self.spot_availability[r][current_step_idx]:
+                if self.spot_run_length[r][current_step_idx] > max_run_now:
+                    max_run_now = self.spot_run_length[r][current_step_idx]
+                    best_r_now = r
 
-        # A "risky" move (one that incurs restart_overhead) should only be taken
-        # if we have enough slack to absorb the overhead plus a safety buffer.
-        risky_move_slack_threshold = self.restart_overhead + panic_threshold
-
-        # Decision 1: Should we switch to another region?
-        if current_slack > risky_move_slack_threshold:
-            if max_k_switch > k_current + self.overhead_in_steps:
-                self.env.switch_region(best_switch_region)
+        if best_r_now != -1:
+            current_region = self.env.get_current_region()
+            needs_restart = (best_r_now != current_region) or (last_cluster_type != ClusterType.SPOT)
+            
+            if not needs_restart or slack > self.restart_overhead + self.time_buffer:
+                if best_r_now != current_region:
+                    self.env.switch_region(best_r_now)
                 return ClusterType.SPOT
-
-        # Decision 2: Stay in the current region. Which instance type?
-        if has_spot:
-            if last_cluster_type == ClusterType.ON_DEMAND:
-                # Switching from reliable ON_DEMAND to risky SPOT incurs an overhead.
-                # Only do it if slack is high and the spot window is long enough.
-                if (current_slack > risky_move_slack_threshold and 
-                        k_current > self.overhead_in_steps):
-                    return ClusterType.SPOT
-                else:
-                    return ClusterType.ON_DEMAND
             else:
-                return ClusterType.SPOT
+                return ClusterType.ON_DEMAND
+        
+        next_spot_step, next_spot_region = self.next_spot_info[current_step_idx]
+
+        if next_spot_region == -1:
+            return ClusterType.ON_DEMAND
+
+        wait_steps = next_spot_step - current_step_idx
+        wait_time = wait_steps * self.env.gap_seconds
+        
+        if slack > wait_time + self.restart_overhead + self.time_buffer:
+            return ClusterType.NONE
         else:
-            # No spot, and we decided not to switch. Use ON_DEMAND to make progress.
             return ClusterType.ON_DEMAND

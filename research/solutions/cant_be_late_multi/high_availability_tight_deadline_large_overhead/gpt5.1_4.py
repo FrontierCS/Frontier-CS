@@ -31,75 +31,97 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Initialize internal state
-        self.lock_to_od = False
-        self._progress_sum = 0.0
-        self._last_td_len = 0
-
-        # Extract scalar versions of key parameters (in seconds)
-        self._task_duration_scalar = self._extract_scalar_attr("task_duration")
-        self._deadline_scalar = self._extract_scalar_attr("deadline")
-        self._restart_overhead_scalar = self._extract_scalar_attr("restart_overhead")
-
-        base_slack = max(0.0, self._deadline_scalar - self._task_duration_scalar)
-        self._initial_slack = base_slack
-
-        if base_slack <= 0.0:
-            commit_slack = 0.0
+        # Initialize internal state (in seconds)
+        td = getattr(self, "task_duration", 0.0)
+        if isinstance(td, (list, tuple)):
+            self._task_duration = float(td[0])
         else:
-            # Base commit slack: 25% of initial slack, capped at 3 hours
-            commit_slack = 0.25 * base_slack
-            max_commit = 3.0 * 3600.0
-            if commit_slack > max_commit:
-                commit_slack = max_commit
-            # Ensure room for multiple restart overheads
-            min_commit = 4.0 * self._restart_overhead_scalar
-            if commit_slack < min_commit:
-                commit_slack = min_commit
-            # Don't exceed actual initial slack
-            if commit_slack > base_slack:
-                commit_slack = base_slack
+            self._task_duration = float(td)
 
-        self.commit_slack = commit_slack
+        ro = getattr(self, "restart_overhead", 0.0)
+        if isinstance(ro, (list, tuple)):
+            self._restart_overhead = float(ro[0])
+        else:
+            self._restart_overhead = float(ro)
+
+        self._deadline = float(self.deadline)
+        self._gap = float(self.env.gap_seconds)
+
+        self._last_task_done_len = len(getattr(self, "task_done_time", []))
+        if self._last_task_done_len > 0:
+            self._progress = float(sum(self.task_done_time))
+        else:
+            self._progress = 0.0
+
+        self._committed_od = False
+        self._internal_inited = True
 
         return self
 
-    def _extract_scalar_attr(self, name: str) -> float:
-        """Helper to robustly extract scalar seconds value from strategy attributes."""
-        val = getattr(self, name, 0.0)
-        if isinstance(val, (list, tuple)):
-            if val:
-                val = val[0]
-            else:
-                val = 0.0
-        try:
-            return float(val)
-        except Exception:
-            # Fallbacks if something unexpected happens
-            if name == "task_duration" and hasattr(self, "task_duration_hours"):
-                hrs = getattr(self, "task_duration_hours", [0.0])
-                if isinstance(hrs, (list, tuple)) and hrs:
-                    return float(hrs[0]) * 3600.0
-                return float(hrs) * 3600.0
-            if name == "deadline" and hasattr(self, "deadline_hours"):
-                return float(getattr(self, "deadline_hours", 0.0)) * 3600.0
-            if name == "restart_overhead" and hasattr(self, "restart_overhead_hours"):
-                hrs = getattr(self, "restart_overhead_hours", [0.0])
-                if isinstance(hrs, (list, tuple)) and hrs:
-                    return float(hrs[0]) * 3600.0
-                return float(hrs) * 3600.0
-            return 0.0
+    def _update_progress(self) -> None:
+        """Incrementally update cached progress from task_done_time list."""
+        tdt = getattr(self, "task_done_time", None)
+        if tdt is None:
+            return
+        current_len = len(tdt)
+        last_len = getattr(self, "_last_task_done_len", 0)
+        if current_len > last_len:
+            # Sum only new segments since last step.
+            new_segments = tdt[last_len:current_len]
+            self._progress += float(sum(new_segments))
+            self._last_task_done_len = current_len
 
-    def _update_progress_sum(self) -> None:
-        """Incrementally track total completed work time."""
-        td = self.task_done_time
-        current_len = len(td)
-        if current_len > self._last_td_len:
-            s = 0.0
-            for v in td[self._last_td_len:]:
-                s += v
-            self._progress_sum += s
-            self._last_td_len = current_len
+    def _safe_to_wait_one_step(self, remaining: float, now: float) -> bool:
+        """
+        Check if we can afford to potentially make zero progress during the
+        upcoming step and still be able to finish on time by switching to
+        on-demand afterwards.
+        """
+        # Time left after taking one more step.
+        time_after_step = self._deadline - (now + self._gap)
+        if time_after_step <= 0.0:
+            return False
+
+        # Max possible work we can do on on-demand, starting after this step,
+        # accounting for a single restart overhead.
+        capacity_after_step = time_after_step - self._restart_overhead
+        if capacity_after_step < 0.0:
+            capacity_after_step = 0.0
+
+        # Safe if remaining work fits completely in this capacity.
+        return remaining <= capacity_after_step + 1e-9
+
+    def _lazy_init_if_needed(self):
+        """Best-effort lazy initialization if solve() was not called."""
+        if getattr(self, "_internal_inited", False):
+            return
+
+        td = getattr(self, "task_duration", 0.0)
+        if isinstance(td, (list, tuple)):
+            self._task_duration = float(td[0])
+        else:
+            self._task_duration = float(td or 0.0)
+
+        ro = getattr(self, "restart_overhead", 0.0)
+        if isinstance(ro, (list, tuple)):
+            self._restart_overhead = float(ro[0])
+        else:
+            self._restart_overhead = float(ro or 0.0)
+
+        self._deadline = float(getattr(self, "deadline", 0.0))
+
+        env = getattr(self, "env", None)
+        if env is not None and hasattr(env, "gap_seconds"):
+            self._gap = float(env.gap_seconds)
+        else:
+            self._gap = 1.0
+
+        tdt = getattr(self, "task_done_time", [])
+        self._last_task_done_len = len(tdt)
+        self._progress = float(sum(tdt)) if self._last_task_done_len > 0 else 0.0
+
+        self._committed_od = False
+        self._internal_inited = True
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
@@ -107,50 +129,38 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Defensive initialization (in case solve wasn't called for some reason)
-        if not hasattr(self, "_progress_sum"):
-            self._progress_sum = 0.0
-            self._last_td_len = 0
-        if not hasattr(self, "_task_duration_scalar"):
-            self._task_duration_scalar = self._extract_scalar_attr("task_duration")
-        if not hasattr(self, "_deadline_scalar"):
-            self._deadline_scalar = self._extract_scalar_attr("deadline")
-        if not hasattr(self, "_restart_overhead_scalar"):
-            self._restart_overhead_scalar = self._extract_scalar_attr("restart_overhead")
-        if not hasattr(self, "lock_to_od"):
-            self.lock_to_od = False
-        if not hasattr(self, "commit_slack"):
-            # Conservative default if not set in solve
-            self.commit_slack = 4.0 * self._restart_overhead_scalar
+        # Ensure state is initialized.
+        self._lazy_init_if_needed()
 
-        # Update progress tracking
-        self._update_progress_sum()
+        # Update accumulated progress.
+        self._update_progress()
 
-        work_remaining = self._task_duration_scalar - self._progress_sum
-        if work_remaining <= 0.0:
-            # Task already complete; no need to run more
+        remaining = self._task_duration - self._progress
+        if remaining <= 1e-9:
+            # Task completed; no need to run more.
             return ClusterType.NONE
 
-        elapsed = self.env.elapsed_seconds
-        time_remaining = self._deadline_scalar - elapsed
+        now = self.env.elapsed_seconds
+        time_left = self._deadline - now
 
-        # Slack ignoring future overhead
-        slack = time_remaining - work_remaining
-
-        # Account for currently pending restart overhead as "extra work"
-        remaining_overhead = getattr(self, "remaining_restart_overhead", 0.0)
-        effective_slack = slack - remaining_overhead
-
-        # If we're running out of slack, permanently switch to on-demand
-        if (not self.lock_to_od) and (effective_slack <= self.commit_slack or effective_slack <= 0.0):
-            self.lock_to_od = True
-
-        if self.lock_to_od:
+        # If already committed to on-demand, keep using it to avoid any
+        # further restart overheads or uncertainty.
+        if self._committed_od:
             return ClusterType.ON_DEMAND
 
-        # Opportunistic spot usage while we still have comfortable slack
+        if time_left <= 0.0:
+            # Out of time; try on-demand anyway (can't fix deadline miss).
+            self._committed_od = True
+            return ClusterType.ON_DEMAND
+
+        # Check if it's safe to risk one more step with potential zero progress.
+        if not self._safe_to_wait_one_step(remaining, now):
+            # Must commit to on-demand now to guarantee completion.
+            self._committed_od = True
+            return ClusterType.ON_DEMAND
+
+        # Still safe to wait; favor cheap spot, otherwise pause.
         if has_spot:
             return ClusterType.SPOT
 
-        # Fallback to on-demand when spot is unavailable
-        return ClusterType.ON_DEMAND
+        return ClusterType.NONE

@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+import math
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -8,17 +9,11 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"
+    NAME = "Cant-Be-Late_v1.1"
 
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -31,44 +26,21 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.availability = self.env.traces
+        self.spot_availability = []
+        for trace_file in config["trace_files"]:
+            with open(trace_file) as f:
+                self.spot_availability.append(
+                    tuple(line.strip() == '1' for line in f)
+                )
 
-        if not self.availability or not self.availability[0]:
-            self.max_trace_len = 0
-            self.region_scores = []
-            self.sorted_regions = []
-        else:
-            self.max_trace_len = len(self.availability[0])
-            self.region_scores = [
-                sum(trace) / len(trace) if trace else 0
-                for trace in self.availability
-            ]
-            self.sorted_regions = sorted(
-                range(self.env.get_num_regions()),
-                key=lambda r: self.region_scores[r],
-                reverse=True
-            )
-
-        self.wait_threshold = 3600.0
+        self.patience_steps = 1
+        self.lookahead_window = 12
 
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
-
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
         work_done = sum(self.task_done_time)
         work_remaining = self.task_duration - work_done
@@ -76,35 +48,62 @@ class Solution(MultiRegionStrategy):
         if work_remaining <= 0:
             return ClusterType.NONE
 
-        time_elapsed = self.env.elapsed_seconds
-        time_remaining = self.deadline - time_elapsed
-
-        on_demand_time_needed = work_remaining + self.restart_overhead
-
-        if time_remaining <= on_demand_time_needed:
+        if self.env.gap_seconds > 0:
+            steps_needed = math.ceil(work_remaining / self.env.gap_seconds)
+        else:
+            steps_needed = float('inf') if work_remaining > 0 else 0
+        
+        time_needed_for_od = (steps_needed * self.env.gap_seconds) + self.restart_overhead
+        
+        if self.env.elapsed_seconds + time_needed_for_od >= self.deadline:
             return ClusterType.ON_DEMAND
 
         if has_spot:
             return ClusterType.SPOT
 
-        if self.max_trace_len > 0:
-            current_region = self.env.get_current_region()
+        current_time_idx = int(self.env.elapsed_seconds / self.env.gap_seconds)
+        num_regions = self.env.get_num_regions()
+        current_region_idx = self.env.get_current_region()
 
-            current_timestep = min(
-                int(time_elapsed / self.env.gap_seconds),
-                self.max_trace_len - 1
-            )
+        best_region_to_switch = -1
+        max_future_spot = 0
+        
+        for r_idx in range(num_regions):
+            if r_idx == current_region_idx:
+                continue
 
-            for region_idx in self.sorted_regions:
-                if region_idx == current_region:
-                    continue
+            trace = self.spot_availability[r_idx]
+            if current_time_idx < len(trace) and trace[current_time_idx]:
+                future_spot_steps = 0
+                for t_offset in range(self.lookahead_window):
+                    check_idx = current_time_idx + t_offset
+                    if check_idx < len(trace) and trace[check_idx]:
+                        future_spot_steps += 1
+                    else:
+                        break
+                
+                if future_spot_steps > max_future_spot:
+                    max_future_spot = future_spot_steps
+                    best_region_to_switch = r_idx
 
-                if self.availability[region_idx][current_timestep]:
-                    self.env.switch_region(region_idx)
-                    return ClusterType.SPOT
+        if best_region_to_switch != -1:
+            self.env.switch_region(best_region_to_switch)
+            return ClusterType.SPOT
 
-        slack = time_remaining - on_demand_time_needed
-        if slack > self.wait_threshold:
-            return ClusterType.NONE
-        else:
-            return ClusterType.ON_DEMAND
+        min_wait_steps = float('inf')
+        for r_idx in range(num_regions):
+            trace = self.spot_availability[r_idx]
+            for t_offset in range(1, self.lookahead_window + 1):
+                check_idx = current_time_idx + t_offset
+                if check_idx < len(trace) and trace[check_idx]:
+                    min_wait_steps = min(min_wait_steps, t_offset)
+                    break
+        
+        if min_wait_steps <= self.patience_steps:
+            slack_seconds = self.deadline - (self.env.elapsed_seconds + time_needed_for_od)
+            wait_time_seconds = min_wait_steps * self.env.gap_seconds
+            
+            if wait_time_seconds < slack_seconds:
+                return ClusterType.NONE
+
+        return ClusterType.ON_DEMAND

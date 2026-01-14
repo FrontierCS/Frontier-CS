@@ -193,7 +193,15 @@ def evaluate(solution_path: Path, spec_path: Path) -> dict:
         
         # Evaluate performance
         evaluation_result = evaluate_kernel_performance(qknorm_func)
-        
+
+        # Check if evaluation had an internal error
+        if "error" in evaluation_result and "geometric_mean_speedup" not in evaluation_result:
+            return {
+                "status": "error",
+                "artifact_path": str(artifact_path),
+                **evaluation_result,
+            }
+
         return {
             "status": "success",
             "artifact_path": str(artifact_path),
@@ -248,7 +256,7 @@ def main():
         # Format: "score score_unbounded" (space-separated)
         print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
-        print(f"Evaluation failed: {result['error']}")
+        print(f"Evaluation failed: {result.get('error', 'Unknown error')}")
         # Print error score as last line
         print("0")
         sys.exit(1)

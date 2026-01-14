@@ -6,12 +6,21 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy using slack-aware Spot preference."""
-    NAME = "cb_late_multi_v1"
+    """Deadline-safe, cost-aware multi-region scheduling strategy."""
+
+    NAME = "deadline_safe_threshold"
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize strategy from spec file."""
-        with open(spec_path) as f:
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)  # unused here
+        """
+        with open(spec_path, "r") as f:
             config = json.load(f)
 
         args = Namespace(
@@ -22,89 +31,69 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Ensure compatibility with possible ClusterType member naming.
-        if not hasattr(ClusterType, "NONE") and hasattr(ClusterType, "None"):
-            setattr(ClusterType, "NONE", getattr(ClusterType, "None"))
-
-        # Internal state: track cumulative work done efficiently.
-        self._progress_done = 0.0
-        self._last_task_done_segments = 0
-
-        # Panic threshold margin (seconds) before deadline to switch to OD.
-        gap = getattr(self.env, "gap_seconds", 1.0)
-        overhead = getattr(self, "restart_overhead", 0.0)
-        deadline = getattr(self, "deadline", 0.0)
-
-        # Base margin: at least a few steps or one overhead duration.
-        base_margin = max(overhead, 4.0 * gap)
-        if deadline > 0.0:
-            # Do not be overly conservative; cap at 20% of deadline.
-            max_margin = 0.2 * deadline
-            self._od_panic_margin = min(base_margin, max_margin)
-        else:
-            self._od_panic_margin = base_margin
-
-        # Once panic mode is entered, we always use on-demand.
-        self._panic_mode = False
-
+        # Custom state initialization
+        self._initialized = False
         return self
-
-    def _update_progress(self) -> None:
-        """Incrementally update total progress from task_done_time."""
-        td = self.task_done_time
-        idx = self._last_task_done_segments
-        if idx < len(td):
-            total = 0.0
-            for i in range(idx, len(td)):
-                total += td[i]
-            self._progress_done += total
-            self._last_task_done_segments = len(td)
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
 
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE.
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Update internal progress accounting.
-        self._update_progress()
+        # Lazy initialization (env not available in __init__)
+        if not getattr(self, "_initialized", False):
+            self._initialized = True
+            self._last_task_done_idx = 0
+            self._done_work = 0.0
+            self._committed = False
 
-        # Remaining useful work (seconds).
-        remaining_work = self.task_duration - self._progress_done
-        if remaining_work <= 0.0:
-            # Task already completed.
+        # Update accumulated work using any new completed segments.
+        segs = self.task_done_time
+        last_idx = self._last_task_done_idx
+        if last_idx < len(segs):
+            new_work = 0.0
+            for s in segs[last_idx:]:
+                new_work += s
+            self._done_work += new_work
+            self._last_task_done_idx = len(segs)
+
+        # If task already completed, do not run any more clusters.
+        if self._done_work >= self.task_duration:
             return ClusterType.NONE
 
-        # Time remaining until deadline (seconds).
+        remaining_work = self.task_duration - self._done_work
         time_left = self.deadline - self.env.elapsed_seconds
-        if time_left <= 0.0:
-            # Past deadline; use OD to minimize further delay.
+
+        # If we're past the deadline (shouldn't usually happen), still try best effort.
+        if time_left <= 0:
             return ClusterType.ON_DEMAND
 
-        # In panic mode, always use on-demand to guarantee completion.
-        if self._panic_mode:
-            return ClusterType.ON_DEMAND
+        dt = self.env.gap_seconds
+        r = self.restart_overhead
 
-        # Compute minimal time needed to finish if we switch to OD now
-        # and then stay on OD until completion.
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            # If already on OD, only remaining_restart_overhead still to be served.
-            overhead_to_od = getattr(self, "remaining_restart_overhead", 0.0)
-        else:
-            # Switching from any other type to OD incurs full restart overhead.
-            overhead_to_od = self.restart_overhead
+        # Small safety buffer to guard against discretization / rounding.
+        safety_buffer = dt
 
-        time_needed_od = remaining_work + overhead_to_od
-        slack_for_od = time_left - time_needed_od
+        if not self._committed:
+            # Slack between available time and worst-case required time
+            # to finish on pure on-demand from *after* this step, assuming
+            # this step could yield zero useful work.
+            # We require that even after "wasting" one full step, we can still
+            # finish with on-demand only.
+            slack = time_left - (remaining_work + r + safety_buffer)
 
-        # If slack is small, enter panic mode and commit to on-demand.
-        if slack_for_od <= self._od_panic_margin:
-            self._panic_mode = True
-            return ClusterType.ON_DEMAND
+            # If after one potentially wasted step we still have enough time,
+            # it's safe to keep relying on spot / waiting.
+            if slack >= dt:
+                if has_spot:
+                    return ClusterType.SPOT
+                # No spot and plenty of slack: wait; no cost, preserves safety.
+                return ClusterType.NONE
 
-        # Spot-preferred phase: use Spot when available, otherwise wait.
-        if has_spot:
-            return ClusterType.SPOT
+            # Not enough slack to risk another potentially wasted step:
+            # from now on, commit to on-demand only.
+            self._committed = True
 
-        # Spot unavailable and plenty of slack left: pause to save cost.
-        return ClusterType.NONE
+        # Committed phase: always use on-demand to guarantee completion.
+        return ClusterType.ON_DEMAND

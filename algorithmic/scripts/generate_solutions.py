@@ -455,6 +455,7 @@ def main():
     def execute_task(task: GenerationTask) -> Tuple[str, str, Optional[str], str, Optional[int]]:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
 
         print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
               f"({dim('problem:')} {task.problem_id}, {dim('model:')} {model_name(task.model)})")

@@ -446,6 +446,7 @@ class SkyPilotRunner(ResearchRunner):
                     # (some scripts expect this structure to exist)
                     mkdir -p /work/execution_env/solution_env
                     cp /work/solution/solution.py /work/execution_env/solution_env/
+                    echo "[framework] Evaluating: {pair_id or problem_id}"
 
                     cd /work/research/{problem_id}
 

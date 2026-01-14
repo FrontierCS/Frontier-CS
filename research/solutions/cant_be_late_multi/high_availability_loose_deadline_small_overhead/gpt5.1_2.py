@@ -6,76 +6,77 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy with slack-aware Spot/On-Demand choice."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "slack_safe_spot_strategy"
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize the solution from spec_path config."""
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
-        duration_hours = float(config["duration"])
-        deadline_hours = float(config["deadline"])
-        overhead_hours = float(config["overhead"])
-
         args = Namespace(
-            deadline_hours=deadline_hours,
-            task_duration_hours=[duration_hours],
-            restart_overhead_hours=[overhead_hours],
+            deadline_hours=float(config["deadline"]),
+            task_duration_hours=[float(config["duration"])],
+            restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
 
-        # Store our own copies in seconds to avoid relying on internal names.
-        self._task_duration_seconds = duration_hours * 3600.0
-        self._deadline_seconds = deadline_hours * 3600.0
-        self._restart_overhead_seconds = overhead_hours * 3600.0
+        # Internal state for efficient tracking
+        self._runtime_initialized = False
+        self._force_on_demand = False
+        self._work_done_total = 0.0
+        self._task_done_index = 0
 
-        # This will be initialized on first _step call when env is ready.
-        self._initialized_step = False
+        # Placeholders; real values set in _init_runtime()
+        self._gap = None
+        self._safety_buffer = None
+        self._idle_slack_threshold = None
 
         return self
 
-    def _initialize_step_state(self):
-        """Lazy initialization when env is available."""
-        self._initialized_step = True
+    def _init_runtime(self) -> None:
+        """Lazy initialization of runtime-dependent parameters."""
+        # gap_seconds is defined by the environment
+        self._gap = float(self.env.gap_seconds)
 
-        # Gap between environment steps (seconds).
-        gap = float(getattr(self.env, "gap_seconds", 3600.0))
-        self._gap_seconds = gap
+        # Conservative safety buffer to account for restart overhead and discretization
+        # Ensures we start on-demand early enough to finish before deadline.
+        self._safety_buffer = float(self.restart_overhead + 2.0 * self._gap)
 
-        # Safety margin of slack time (seconds).
-        # Heuristic: at least 10% of task duration, and at least ~2*gap + 2*overhead.
-        task_dur = self._task_duration_seconds
-        restart_o = self._restart_overhead_seconds
-        self.safety_margin = max(
-            0.1 * task_dur,
-            2.0 * gap + 2.0 * restart_o,
-            4.0 * restart_o,
+        # Threshold of "extra slack" under which we stop idling when Spot is unavailable
+        # and start using On-Demand. Chosen as 25% of task duration or a few steps,
+        # whichever is larger.
+        idle_slack_fraction = 0.25  # 25% of task duration
+        min_idle_slack = 4.0 * self._gap
+        self._idle_slack_threshold = max(
+            idle_slack_fraction * float(self.task_duration),
+            min_idle_slack,
         )
 
-        # Track cumulative work done without O(n^2) summations.
-        segs = self.task_done_time
-        self._last_done_len = len(segs)
-        total_done = 0.0
-        for x in segs:
-            total_done += x
-        self._total_done = total_done
+        self._runtime_initialized = True
 
-        # Once we flip to ON_DEMAND, we stick to it until completion.
-        self.force_on_demand = False
-
-    def _update_progress(self):
-        """Incrementally update total work done from task_done_time list."""
-        segs = self.task_done_time
-        n = len(segs)
-        if n > self._last_done_len:
-            total_done = self._total_done
-            for i in range(self._last_done_len, n):
-                total_done += segs[i]
-            self._total_done = total_done
-            self._last_done_len = n
+    def _update_work_done(self) -> float:
+        """Incrementally update total work done to avoid O(n) sum each step."""
+        idx = self._task_done_index
+        tdt = self.task_done_time
+        if len(tdt) > idx:
+            total = self._work_done_total
+            # Process only new segments since last call
+            for i in range(idx, len(tdt)):
+                total += tdt[i]
+            self._work_done_total = total
+            self._task_done_index = len(tdt)
+        return self._work_done_total
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
@@ -83,37 +84,46 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        if not self._initialized_step:
-            self._initialize_step_state()
+        # Lazy initialization of runtime params that depend on env
+        if not self._runtime_initialized:
+            self._init_runtime()
 
-        # Update cumulative progress.
-        self._update_progress()
-
-        # If already finished, do nothing.
-        if self._total_done >= self._task_duration_seconds - 1e-6:
+        # Update work done efficiently
+        work_done = self._update_work_done()
+        remaining = self.task_duration - work_done
+        if remaining <= 0.0:
+            # Task already completed; no need to run any cluster.
+            self._force_on_demand = False
             return ClusterType.NONE
 
-        remaining_work = self._task_duration_seconds - self._total_done
-        remaining_time = self._deadline_seconds - self.env.elapsed_seconds
+        # Time metrics
+        now = self.env.elapsed_seconds
+        time_left = self.deadline - now
 
-        # Compute time slack: how much extra time we have beyond minimal on-demand run.
-        slack = remaining_time - remaining_work
-
-        # If slack is small, or we are dangerously close to deadline, switch to on-demand.
-        if not self.force_on_demand:
-            if (
-                slack <= self.safety_margin
-                or remaining_time <= remaining_work + self._restart_overhead_seconds
-            ):
-                self.force_on_demand = True
-
-        if self.force_on_demand:
-            # Always run on on-demand to guarantee completion.
+        # If somehow past deadline with remaining work, just use On-Demand.
+        if time_left <= 0.0:
             return ClusterType.ON_DEMAND
 
-        # In the "relaxed" phase: prefer Spot when available, otherwise idle to save cost.
+        # Ensure we don't go past deadline: commit to On-Demand when there is
+        # only just enough time left to finish using pure On-Demand.
+        if not self._force_on_demand:
+            if time_left <= remaining + self._safety_buffer:
+                self._force_on_demand = True
+
+        # Once we commit to On-Demand, never go back to Spot.
+        if self._force_on_demand:
+            return ClusterType.ON_DEMAND
+
+        # Before commit phase: prefer Spot when available.
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot unavailable and we are still in relaxed phase; idle to save money.
+        # No Spot available here; decide between idling and On-Demand
+        slack = time_left - remaining  # extra time beyond required work
+
+        # If slack is small, we can't afford to idle; use On-Demand.
+        if slack <= self._idle_slack_threshold:
+            return ClusterType.ON_DEMAND
+
+        # Plenty of slack: wait (NONE) for cheaper Spot capacity to return.
         return ClusterType.NONE

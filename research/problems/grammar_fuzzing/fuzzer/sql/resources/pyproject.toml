@@ -1,0 +1,8 @@
+[project]
+name = "grammar-fuzzing-sql-fuzzer"
+version = "0.1.0"
+description = "Grammar-based fuzzer implementation problem for SQL parser"
+requires-python = ">=3.11"
+dependencies = [
+    "coverage>=7.0.0",
+]

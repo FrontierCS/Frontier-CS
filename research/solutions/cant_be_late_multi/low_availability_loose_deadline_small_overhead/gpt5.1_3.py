@@ -6,12 +6,30 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy focusing on spot usage with hard deadline guarantee."""
+    """Multi-region scheduling strategy with hard-deadline guarantee."""
 
-    NAME = "cbm_multi_region_spot_od"
+    NAME = "cant_be_late_safe_slack_v1"
+
+    def __init__(self):
+        # Defer MultiRegionStrategy initialization to solve().
+        # Avoid requiring constructor arguments for the evaluator.
+        self.env = None
+        self.task_duration = 0.0
+        self.deadline = 0.0
+        self.restart_overhead = 0.0
+        self.task_done_time = []
+        self.remaining_restart_overhead = 0.0
+
+        # Internal state
+        self._work_done = 0.0
+        self._last_task_done_len = 0
+        self._commit_on_demand = False
+        self._slack_threshold = 0.0
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize the solution from spec_path config."""
+        """
+        Initialize the solution from spec_path config.
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -23,62 +41,74 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Helper to safely get scalar from possible list/tuple.
-        def _scalar(v):
-            if isinstance(v, (list, tuple)):
-                return float(v[0])
-            return float(v)
+        # Initialize internal scheduling state.
+        self._work_done = 0.0
+        self._last_task_done_len = 0
+        self._commit_on_demand = False
 
-        # Cache key parameters in seconds.
-        self._task_total_seconds = _scalar(self.task_duration)
-        self._restart_seconds = _scalar(self.restart_overhead)
-        self._deadline_seconds = _scalar(self.deadline)
-        self._gap_seconds = float(getattr(self.env, "gap_seconds", 0.0))
-
-        # Slack threshold for switching permanently to on-demand.
-        # Chosen conservatively to absorb at most one bad step (idle or fully preempted).
-        base_threshold = self._gap_seconds + 4.0 * self._restart_seconds
-        # Ensure at least restart overhead margin.
-        self._slack_threshold = max(base_threshold, self._restart_seconds)
-
-        # Once this flag is set, we will always use on-demand.
-        self._in_on_demand_mode = False
+        # Slack threshold for switching to on-demand (in seconds).
+        # At least one full time step plus one restart overhead for safety.
+        gap = getattr(self.env, "gap_seconds", 0.0)
+        overhead = float(self.restart_overhead)
+        self._slack_threshold = gap + overhead
 
         return self
 
-    def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """Decide next action based on current state."""
-        # Current progress and remaining work.
-        progress_done = float(sum(self.task_done_time))
-        remaining_work = self._task_total_seconds - progress_done
+    def _update_work_done(self) -> None:
+        """Incrementally accumulate completed work from task_done_time."""
+        segments = self.task_done_time
+        length = len(segments)
+        if length > self._last_task_done_len:
+            added = 0.0
+            for i in range(self._last_task_done_len, length):
+                added += segments[i]
+            self._work_done += added
+            self._last_task_done_len = length
 
-        # If already finished, don't run more.
-        if remaining_work <= 0.0:
+    def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
+        """
+        Decide next action based on current state.
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        # Update accumulated work from environment.
+        self._update_work_done()
+
+        # If task is effectively finished, do not use any cluster.
+        if self._work_done >= float(self.task_duration) - 1e-6:
             return ClusterType.NONE
 
-        # Remaining time until deadline.
-        elapsed = float(self.env.elapsed_seconds)
-        remaining_time = self._deadline_seconds - elapsed
-
-        # If somehow past deadline, still try to run on-demand to minimize lateness.
-        if remaining_time <= 0.0:
+        # Once we decide to switch to on-demand, stick with it until completion.
+        if self._commit_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Slack = extra time beyond what is needed at full-speed on-demand.
-        slack = remaining_time - remaining_work
+        now = float(self.env.elapsed_seconds)
+        remaining_work = float(self.task_duration) - self._work_done
+        if remaining_work < 0.0:
+            remaining_work = 0.0
 
-        # Decide if we must switch to on-demand permanently.
-        if not self._in_on_demand_mode:
-            if slack <= self._slack_threshold:
-                self._in_on_demand_mode = True
+        overhead = float(self.restart_overhead)
+        deadline = float(self.deadline)
 
-        if self._in_on_demand_mode:
-            # From now on, always on-demand to guarantee completion.
+        # Upper-bound estimate of finish time if we commit to on-demand now.
+        finish_time_if_commit = now + overhead + remaining_work
+
+        # If even committing now nearly reaches or exceeds the deadline,
+        # immediately commit to on-demand (no further risk-taking).
+        if finish_time_if_commit >= deadline - 1e-6:
+            self._commit_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Spot-preferred mode: use spot when available, otherwise wait (NONE).
+        # Compute conservative slack under on-demand-from-now plan.
+        slack = deadline - finish_time_if_commit
+
+        # If slack is below threshold, start on-demand now to guarantee completion.
+        if slack < self._slack_threshold:
+            self._commit_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Opportunistic phase: use Spot when available; otherwise, wait (NONE).
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot unavailable and we still have ample slack: wait to avoid on-demand cost.
         return ClusterType.NONE

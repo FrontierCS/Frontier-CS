@@ -8,7 +8,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "switching_strategy"
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -30,7 +30,6 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        self.no_spot_count = 0
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
@@ -50,32 +49,27 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        done_work = sum(self.task_done_time)
-        remaining_work = self.task_duration - done_work
-        remaining_time = self.deadline - self.env.elapsed_seconds
+        total_work = sum(self.task_done_time)
+        remaining_work = self.task_duration - total_work
+        remaining_time = self.deadline - self.elapsed_seconds
 
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        urgent = remaining_work > remaining_time - self.remaining_restart_overhead
+        tight = remaining_time < remaining_work * 1.5
 
-        if has_spot:
-            self.no_spot_count = 0
-            return ClusterType.SPOT
-
-        self.no_spot_count += 1
-
-        do_switch = False
-        if (self.no_spot_count >= 3 and
-            not urgent and
-            self.env.get_num_regions() > 1 and
-            remaining_time > remaining_work + self.restart_overhead + self.remaining_restart_overhead):
-            do_switch = True
-
-        if do_switch:
-            current = self.env.get_current_region()
-            new_region = (current + 1) % self.env.get_num_regions()
-            self.env.switch_region(new_region)
-            self.no_spot_count = 0
-
-        return ClusterType.ON_DEMAND
+        if tight:
+            if has_spot:
+                return ClusterType.SPOT
+            else:
+                return ClusterType.ON_DEMAND
+        else:
+            if has_spot:
+                return ClusterType.SPOT
+            else:
+                num = self.env.get_num_regions()
+                if num > 1:
+                    current = self.env.get_current_region()
+                    next_r = (current + 1) % num
+                    self.env.switch_region(next_r)
+                return ClusterType.ON_DEMAND

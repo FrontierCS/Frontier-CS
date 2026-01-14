@@ -1,25 +1,38 @@
 import json
 from argparse import Namespace
 import math
+from typing import Optional
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
+    """
+    A multi-region scheduling strategy that balances cost and completion time.
+
+    The strategy operates based on the following principles:
+    1.  **Safety First (Panic Mode):** If the remaining time to the deadline is
+        critically short, it switches to On-Demand instances to guarantee
+        completion, overriding all other logic.
+    2.  **Use Spot Aggressively:** When not in panic mode, it defaults to using
+        cheaper Spot instances whenever they are available.
+    3.  **Intelligent Waiting:** If Spot is unavailable, it calculates the available
+        slack time. If there is sufficient slack, it waits (chooses NONE) for
+        Spot to potentially become available again, saving costs. Otherwise, it
+        uses On-Demand to avoid falling behind schedule.
+    4.  **Adaptive Region Switching:** It monitors Spot availability in the current
+        region. If Spot is unavailable for a prolonged period, it uses a
+        UCB1 (Upper Confidence Bound) algorithm to select a more promising
+        region to switch to. This balances exploring new regions with
+        exploiting known good ones.
+    """
 
     NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -32,114 +45,113 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Load spot availability traces from files
-        self.spot_availability = []
-        for trace_file in config["trace_files"]:
-            with open(trace_file) as f:
-                trace = [line.strip() == '1' for line in f]
-                self.spot_availability.append(trace)
+        # Custom initialization
+        num_regions = self.env.get_num_regions()
+        self.step_counter = 0
+        self.visits = [0] * num_regions
+        self.spot_successes = [0] * num_regions
+        self.consecutive_spot_failures = [0] * num_regions
 
-        if not self.spot_availability:
-            self.num_regions = 0
-            self.num_steps = 0
-            return self
+        # --- Tunable Parameters ---
+        # Buffer time for panic mode to switch to OD before it's too late.
+        self.safety_buffer_seconds = 1.0 * 3600.0
 
-        self.num_regions = len(self.spot_availability)
-        self.num_steps = len(self.spot_availability[0])
+        # Time threshold for spot unavailability before considering a region switch.
+        self.consecutive_failure_threshold_seconds = 1.0 * 3600.0
 
-        # Precompute the next available spot timestep for efficient lookups
-        self.next_spot_step = [[-1] * self.num_steps for _ in range(self.num_regions)]
-        for r in range(self.num_regions):
-            next_s = -1
-            # Iterate backwards to fill in the next available step
-            for t in range(self.num_steps - 1, -1, -1):
-                if self.spot_availability[r][t]:
-                    next_s = t
-                self.next_spot_step[r][t] = next_s
+        # Slack threshold for waiting vs. using OD when spot is down.
+        self.wait_slack_threshold_steps = 5.0
 
-        # A buffer for panic mode, as a multiple of restart_overhead.
-        self.PANIC_BUFFER_FACTOR = 3.0
+        # Exploration constant for the UCB1 algorithm.
+        self.ucb_exploration_constant = 2**0.5
 
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
-
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        if self.num_regions == 0:
-            return ClusterType.ON_DEMAND
-        
-        current_step = int(self.env.elapsed_seconds // self.env.gap_seconds)
-        if current_step >= self.num_steps:
-            return ClusterType.ON_DEMAND
+        self.step_counter += 1
+        current_region = self.env.get_current_region()
 
-        progress = sum(self.task_done_time)
-        remaining_work = self.task_duration - progress
-
-        if remaining_work <= 1e-9:
+        # --- 1. Calculate current state metrics ---
+        remaining_work = self.task_duration - sum(self.task_done_time)
+        if remaining_work <= 0:
             return ClusterType.NONE
 
         time_to_deadline = self.deadline - self.env.elapsed_seconds
-        
-        # Panic mode: if time is tight, switch to reliable On-Demand
-        panic_threshold = remaining_work + self.restart_overhead * self.PANIC_BUFFER_FACTOR
+
+        # --- 2. Update statistics for the current region ---
+        self.visits[current_region] += 1
+        if has_spot:
+            self.spot_successes[current_region] += 1
+            self.consecutive_spot_failures[current_region] = 0
+        else:
+            self.consecutive_spot_failures[current_region] += 1
+
+        # --- 3. Decision Logic: Panic Mode ---
+        # If time is running out, switch to On-Demand to guarantee completion.
+        panic_threshold = (remaining_work +
+                           self.restart_overhead +
+                           self.safety_buffer_seconds)
         if time_to_deadline <= panic_threshold:
             return ClusterType.ON_DEMAND
 
-        current_region = self.env.get_current_region()
+        # --- 4. Decision Logic: Region Switching ---
+        # If the current region has had no spot for too long, consider switching.
+        current_downtime = self.consecutive_spot_failures[current_region] * self.env.gap_seconds
+        if current_downtime >= self.consecutive_failure_threshold_seconds:
+            best_region_idx = self._find_best_region(current_region)
 
-        # Normal mode: prefer Spot. First, check for any available Spot *now*.
-        target_region = -1
+            if best_region_idx is not None:
+                self.env.switch_region(best_region_idx)
+                # After switching, we can't know spot availability, so use On-Demand
+                # to guarantee progress and absorb the restart overhead cost.
+                return ClusterType.ON_DEMAND
+
+        # --- 5. Decision Logic: Cluster Selection in Current Region ---
         if has_spot:
-            target_region = current_region
-        else:
-            for r in range(self.num_regions):
-                if self.spot_availability[r][current_step]:
-                    target_region = r
-                    break
-        
-        # If a Spot instance is available, switch to it.
-        if target_region != -1:
-            if target_region != current_region:
-                self.env.switch_region(target_region)
+            # If spot is available and we are not in panic mode, always use it.
             return ClusterType.SPOT
-
-        # No Spot available now. Decide whether to wait or use On-Demand.
-        # Find the soonest future Spot availability.
-        min_next_spot_step = -1
-        for r in range(self.num_regions):
-            next_s = self.next_spot_step[r][current_step]
-            if next_s != -1:
-                if min_next_spot_step == -1 or next_s < min_next_spot_step:
-                    min_next_spot_step = next_s
-        
-        # If no Spot will ever be available again, must use On-Demand.
-        if min_next_spot_step == -1:
-            return ClusterType.ON_DEMAND
-
-        # Calculate if we can afford to wait for the next Spot window.
-        wait_steps = min_next_spot_step - current_step
-        time_to_wait = wait_steps * self.env.gap_seconds
-        
-        # Time projection if we wait: wait time + one restart + remaining work
-        total_time_if_wait = time_to_wait + self.restart_overhead + remaining_work
-        
-        if total_time_if_wait < time_to_deadline:
-            # It's safe and cheaper to wait.
-            return ClusterType.NONE
         else:
-            # Cannot afford to wait, must use On-Demand to make progress.
-            return ClusterType.ON_DEMAND
+            # Spot is not available. Decide whether to wait or use On-Demand.
+            slack = time_to_deadline - remaining_work - self.remaining_restart_overhead
+            wait_slack_threshold = self.wait_slack_threshold_steps * self.env.gap_seconds
+
+            if slack > wait_slack_threshold:
+                # If we have enough slack, wait for spot to recover.
+                return ClusterType.NONE
+            else:
+                # Not enough slack, must make progress with On-Demand.
+                return ClusterType.ON_DEMAND
+
+    def _find_best_region(self, current_region: int) -> Optional[int]:
+        """
+        Finds the best region to switch to using the UCB1 algorithm.
+        """
+        num_regions = self.env.get_num_regions()
+        if num_regions <= 1:
+            return None
+
+        best_region_idx = -1
+        best_region_score = -1.0
+
+        for i in range(num_regions):
+            if i == current_region:
+                continue
+
+            if self.visits[i] == 0:
+                # Strongly encourage exploring unvisited regions.
+                score = float('inf')
+            else:
+                # UCB1 formula: exploitation + exploration
+                avg_availability = self.spot_successes[i] / self.visits[i]
+                exploration_bonus = self.ucb_exploration_constant * \
+                    (math.log(self.step_counter) / self.visits[i])**0.5
+                score = avg_availability + exploration_bonus
+            
+            if score > best_region_score:
+                best_region_score = score
+                best_region_idx = i
+
+        return best_region_idx if best_region_idx != -1 else None

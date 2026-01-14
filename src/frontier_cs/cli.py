@@ -517,19 +517,23 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Create batch evaluator
     problems_dir = getattr(args, "problems_dir", None)
-    batch = BatchEvaluator(
+    # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)
+    batch_kwargs = dict(
         results_dir=args.results_dir,
         problems_dir=problems_dir,
         backend=backend,
         track=track,
         workers=workers,
         clusters=clusters,
-        timeout=args.timeout,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
         idle_timeout=idle_timeout,
         judge_url=judge_url,
     )
+    if args.timeout is not None:
+        batch_kwargs["timeout"] = args.timeout
+
+    batch = BatchEvaluator(**batch_kwargs)
 
     # Handle status command
     if args.status:
@@ -563,19 +567,41 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Handle report command
     if args.report:
-        print("\nAggregated Results by Model")
+        # Detect and filter orphaned results (results for problems that no longer exist)
+        valid_problems = batch._get_valid_problems()
+        orphaned = batch._get_orphaned_pairs()
+        if orphaned:
+            orphaned_problems = sorted(set(pid.split(":")[1] for pid in orphaned))
+            print(f"\n⚠️  Warning: Found {len(orphaned)} orphaned result(s) for problems that no longer exist:")
+            for p in orphaned_problems:
+                print(f"    - {p}")
+            print("  These will be excluded from the report.\n")
+
+        print("Aggregated Results by Model")
         print("=" * 60)
-        by_model = batch.state.aggregate_by_model()
+        by_model = batch.state.aggregate_by_model(valid_problems if valid_problems else None)
         for model, stats in sorted(by_model.items()):
             avg = f"{stats['avg_score']:.4f}" if stats['avg_score'] is not None else "N/A"
             print(f"  {model}: {stats['successful']}/{stats['total']} successful, avg={avg}")
 
         print("\nAggregated Results by Problem")
         print("=" * 60)
-        by_problem = batch.state.aggregate_by_problem()
+        by_problem = batch.state.aggregate_by_problem(valid_problems if valid_problems else None)
         for problem, stats in sorted(by_problem.items()):
             avg = f"{stats['avg_score']:.4f}" if stats['avg_score'] is not None else "N/A"
             print(f"  {problem}: {stats['successful']}/{stats['total']} successful, avg={avg}")
+
+        # Also export CSV files
+        results_dir = Path(args.results_dir)
+        batch.state.export_aggregated_csv(
+            results_dir / "by_model.csv", by="model",
+            valid_problems=valid_problems if valid_problems else None
+        )
+        batch.state.export_aggregated_csv(
+            results_dir / "by_problem.csv", by="problem",
+            valid_problems=valid_problems if valid_problems else None
+        )
+        print(f"\nCSV files exported to {results_dir}")
         return 0
 
     # Handle export-failed command

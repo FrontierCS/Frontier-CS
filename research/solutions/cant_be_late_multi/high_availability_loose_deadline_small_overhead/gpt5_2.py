@@ -1,11 +1,12 @@
 import json
 from argparse import Namespace
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "jit_guard_od_lock_v1"
+    NAME = "cbl_multi_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -20,61 +21,59 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Internal state
-        self._od_locked = False
-        self._last_reset_marker = -1.0
+        self._done_seconds = 0.0
+        self._done_list_len = 0
+        self._committed_od = False
         return self
 
-    def _maybe_reset_internal_state(self):
-        # Reset lock at the start of each new scenario/run
-        cur = getattr(self.env, "elapsed_seconds", 0.0)
-        if cur < self._last_reset_marker or cur == 0.0:
-            self._od_locked = False
-        self._last_reset_marker = cur
+    def _update_done_seconds(self):
+        # Incremental update to avoid summing the full list every step
+        if self.task_done_time is None:
+            return
+        cur_len = len(self.task_done_time)
+        if cur_len > self._done_list_len:
+            # Add only the new entries
+            for i in range(self._done_list_len, cur_len):
+                self._done_seconds += self.task_done_time[i]
+            self._done_list_len = cur_len
 
-    def _get_remaining_compute(self) -> float:
-        done = sum(self.task_done_time) if hasattr(self, "task_done_time") else 0.0
-        remaining = self.task_duration - done
-        if remaining < 0.0:
-            remaining = 0.0
-        return remaining
+    def _should_commit_on_demand(self, last_cluster_type: ClusterType) -> bool:
+        # Compute whether we must switch to On-Demand to meet the deadline
+        self._update_done_seconds()
+
+        remaining_work = max(self.task_duration - self._done_seconds, 0.0)
+        time_left = self.deadline - self.env.elapsed_seconds
+
+        # If already committed, stay with OD
+        if self._committed_od:
+            return True
+
+        # Overhead to switch to OD; zero if we are already on OD
+        overhead_if_switch = 0.0 if last_cluster_type == ClusterType.ON_DEMAND else self.restart_overhead
+
+        # Safety margin to account for discretization and overhead uncertainties
+        gap = float(self.env.gap_seconds)
+        margin = gap + 2.0 * self.restart_overhead + 30.0  # seconds
+
+        required_time = overhead_if_switch + remaining_work
+        return required_time >= (time_left - margin)
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._maybe_reset_internal_state()
+        # Ensure progress tracking is up-to-date
+        self._update_done_seconds()
 
-        # Basic stats
-        t_elapsed = self.env.elapsed_seconds
-        slack = self.deadline - t_elapsed
-        gap = self.env.gap_seconds
-        R = self._get_remaining_compute()
-
-        if R <= 0.0:
-            return ClusterType.NONE
-
-        # If we are already locked to OD, keep using OD to ensure deadline feasibility.
-        if self._od_locked:
+        # If we must commit to On-Demand to meet the deadline, do so
+        if self._should_commit_on_demand(last_cluster_type):
+            self._committed_od = True
             return ClusterType.ON_DEMAND
 
-        # Compute time needed if we start OD now
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            od_overhead_now = max(0.0, self.remaining_restart_overhead)
-        else:
-            od_overhead_now = self.restart_overhead
-
-        # If we cannot guarantee completion unless we start OD now, lock and go OD.
-        if slack <= od_overhead_now + R:
-            self._od_locked = True
-            return ClusterType.ON_DEMAND
-
-        # Prefer SPOT when available
+        # Prefer Spot when available
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot not available: decide wait vs OD
-        # If we can afford to wait one full step and still complete by switching to OD next step, then wait.
-        extra_slack_if_commit_next_step = slack - gap - (self.restart_overhead + R)
-        if extra_slack_if_commit_next_step > 0.0:
-            return ClusterType.NONE
-
-        # Otherwise, we must commit to OD now
-        self._od_locked = True
-        return ClusterType.ON_DEMAND
+        # Otherwise, wait to save cost and try another region opportunistically
+        num_regions = self.env.get_num_regions()
+        if num_regions > 1:
+            next_region = (self.env.get_current_region() + 1) % num_regions
+            self.env.switch_region(next_region)
+        return ClusterType.NONE

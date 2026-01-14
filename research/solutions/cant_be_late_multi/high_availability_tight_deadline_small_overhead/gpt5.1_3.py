@@ -6,23 +6,15 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy that prioritizes Spot while guaranteeing deadline."""
+    """Multi-region scheduling strategy with safe on-demand fallback."""
 
-    NAME = "cant_be_late_v1"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
+        # Initialize base strategy (environment, etc.)
         args = Namespace(
             deadline_hours=float(config["deadline"]),
             task_duration_hours=[float(config["duration"])],
@@ -31,68 +23,108 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state for efficient tracking of work done
-        self._work_done = 0.0
-        self._segments_seen = 0
-        self._commit_to_on_demand = False
-
+        # Internal state initialization
+        self._init_internal_state(config)
         return self
 
-    def _update_work_done(self) -> None:
-        """Incrementally update total work done from task_done_time segments."""
-        segments = self.task_done_time
+    def _init_internal_state(self, config) -> None:
+        # Normalize times to seconds using both config and (if present) base attributes.
+        self._deadline = self._normalize_time(getattr(self, "deadline", None), config["deadline"])
+        self._task_duration = self._normalize_time(
+            getattr(self, "task_duration", None), config["duration"]
+        )
+        self._restart_overhead = self._normalize_time(
+            getattr(self, "restart_overhead", None), config["overhead"]
+        )
+
+        # Progress tracking (avoid O(n^2) summations)
+        self._progress_done = 0.0
+        self._last_task_done_len = len(getattr(self, "task_done_time", []))
+
+        # Control flags
+        self._committed_od = False
+        self._finished = False
+
+    @staticmethod
+    def _normalize_time(env_value, conf_hours) -> float:
+        """Return time in seconds, reconciling config (hours) with env value if present."""
+        conf_hours_f = float(conf_hours)
+        conf_secs = conf_hours_f * 3600.0
+
+        if env_value is None:
+            return conf_secs
+
+        try:
+            v = float(env_value)
+        except (TypeError, ValueError):
+            return conf_secs
+
+        if conf_secs > 0:
+            # If env already uses seconds
+            if abs(v - conf_secs) <= 1e-3 * conf_secs:
+                return v
+            # If env uses hours
+            if abs(v * 3600.0 - conf_secs) <= 1e-3 * conf_secs:
+                return v * 3600.0
+
+        return conf_secs
+
+    def _update_progress(self) -> None:
+        """Incrementally update total work progress from task_done_time list."""
+        segments = getattr(self, "task_done_time", None)
+        if not segments:
+            return
         n = len(segments)
-        if n > self._segments_seen:
-            # Sum only the new segments to keep amortized O(1) per step.
-            self._work_done += sum(segments[self._segments_seen:n])
-            self._segments_seen = n
+        if n <= self._last_task_done_len:
+            return
+        added = 0.0
+        # Typically this loop runs once per step (one new segment).
+        for i in range(self._last_task_done_len, n):
+            added += segments[i]
+        self._progress_done += added
+        self._last_task_done_len = n
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
+        # Update observed progress.
+        self._update_progress()
 
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
-        """
-        # Update cached progress
-        self._update_work_done()
+        # Check if task is already complete.
+        if (not self._finished) and (self._progress_done >= self._task_duration - 1e-6):
+            self._finished = True
 
-        remaining_work = max(self.task_duration - self._work_done, 0.0)
-        if remaining_work <= 0.0:
-            # Task already completed; avoid incurring any further cost.
+        if self._finished:
             return ClusterType.NONE
 
-        current_time = self.env.elapsed_seconds
-        margin = self.deadline - current_time
-
-        # If we've already passed the deadline (should be rare), further work is pointless for scoring.
-        if margin <= 0.0:
+        # Time and work remaining (in seconds).
+        elapsed = getattr(self.env, "elapsed_seconds", 0.0)
+        time_left = self._deadline - elapsed
+        if time_left <= 0.0:
+            # Deadline already passed; no action can fix this, so avoid extra cost.
             return ClusterType.NONE
 
-        # "Slack" is the time left beyond what is needed (ignoring future restart overheads).
-        slack = margin - remaining_work
+        remaining_work = self._task_duration - self._progress_done
+        if remaining_work < 0.0:
+            remaining_work = 0.0
 
-        # Determine a safety buffer that accounts for discretization (gap) and some extra cushion.
-        gap = getattr(self.env, "gap_seconds", 1.0)
-        base_buffer = 600.0  # 10 minutes base safety margin
-        dynamic_buffer = max(base_buffer, 2.0 * gap)
-
-        # To safely complete on On-Demand with discrete steps, we need at least:
-        # restart_overhead + gap of extra slack at commit time.
-        threshold_slack = self.restart_overhead + dynamic_buffer
-
-        # If we've already committed to On-Demand, keep using it to avoid extra restarts.
-        if self._commit_to_on_demand:
+        # If we've already committed to on-demand, stay there to avoid further restarts.
+        if self._committed_od:
             return ClusterType.ON_DEMAND
 
-        # Check whether it's time to commit to On-Demand to guarantee completion.
-        if slack <= threshold_slack:
-            self._commit_to_on_demand = True
+        gap = getattr(self.env, "gap_seconds", 0.0)
+        overhead = self._restart_overhead
+
+        # Safe commit condition:
+        # If we kept using only spot/idle for one more step with zero progress,
+        # we must still have enough time afterwards to finish entirely on on-demand.
+        # That implies: time_left - gap >= remaining_work + overhead  (worst case)
+        # <=> time_left >= remaining_work + overhead + gap
+        # If this no longer holds, we must commit now.
+        if time_left <= remaining_work + overhead + gap + 1e-6:
+            self._committed_od = True
             return ClusterType.ON_DEMAND
 
-        # Before committing to On-Demand, always prefer Spot if available.
+        # Speculative phase: prefer Spot when available, otherwise idle (no cluster).
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot unavailable and we still have enough slack:
-        # wait (NONE) to preserve budget, relying on future Spot or the eventual On-Demand fallback.
         return ClusterType.NONE

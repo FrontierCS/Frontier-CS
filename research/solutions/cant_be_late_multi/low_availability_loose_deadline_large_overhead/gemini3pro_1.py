@@ -49,44 +49,36 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Gather current state parameters
-        elapsed = self.env.elapsed_seconds
-        gap = self.env.gap_seconds
+        # Calculate remaining work and time
         done_time = sum(self.task_done_time)
+        work_remaining = self.task_duration - done_time
+        time_remaining = self.deadline - self.env.elapsed_seconds
         
-        # Static parameters
-        total_duration = self.task_duration
-        deadline = self.deadline
-        overhead = self.restart_overhead
+        # Determine safety buffer
+        # We need a buffer to safely switch to On-Demand if Spot availability is consistently bad.
+        # Use max of 2 hours or 2 timesteps to be robust against large gaps.
+        gap = self.env.gap_seconds
+        safety_buffer = max(2.0 * 3600, 2.0 * gap)
         
-        remaining_work = total_duration - done_time
-        remaining_time = deadline - elapsed
+        # Calculate critical time threshold
+        # Time required = Work Remaining + Restart Overhead (in case of switch) + Safety Buffer
+        critical_threshold = work_remaining + self.restart_overhead + safety_buffer
         
-        # Calculate Slack: Time buffer available beyond mandatory work and restart overhead.
-        # We subtract overhead to account for the potential cost of switching/starting OD.
-        slack = remaining_time - remaining_work - overhead
-        
-        # Safety Threshold: When to force On-Demand.
-        # We need enough slack to absorb the time cost of probing (waiting 'gap' seconds) 
-        # or a failed Spot step. If slack drops below ~1.5x the step size, we are in danger 
-        # of missing the deadline if the next Spot attempt fails or if we probe.
-        panic_threshold = gap * 1.5
-        
-        # Panic Mode: Force On-Demand if slack is too low to guarantee completion otherwise
-        if slack < panic_threshold:
+        # Check if we are in "Panic Mode"
+        # If time is running out, force On-Demand execution to ensure deadline is met.
+        if time_remaining < critical_threshold:
             return ClusterType.ON_DEMAND
-        
-        # Spot Availability Mode: If Spot is available and we have slack, use it
+            
+        # If not critical, prefer Spot instances to minimize cost
         if has_spot:
             return ClusterType.SPOT
-            
-        # Hunt Mode: No Spot in current region, but we have slack.
-        # Switch to the next region and wait (NONE) to probe availability in the next step.
-        # Returning NONE ensures we don't crash by requesting SPOT on an unavailable region,
-        # and minimizes cost while we search for a region with Spot availability.
-        current_region = self.env.get_current_region()
-        num_regions = self.env.get_num_regions()
-        next_region = (current_region + 1) % num_regions
-        
-        self.env.switch_region(next_region)
-        return ClusterType.NONE
+        else:
+            # Spot is unavailable in the current region.
+            # Strategy: Switch to the next region and wait (ClusterType.NONE) for this step.
+            # Returning NONE incurs no cost (besides time) and allows the restart overhead 
+            # to be processed. In the next step, we will check has_spot for the new region.
+            curr_region = self.env.get_current_region()
+            num_regions = self.env.get_num_regions()
+            next_region = (curr_region + 1) % num_regions
+            self.env.switch_region(next_region)
+            return ClusterType.NONE

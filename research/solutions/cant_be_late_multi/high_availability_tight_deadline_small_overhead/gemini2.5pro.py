@@ -1,5 +1,5 @@
 import json
-import os
+import collections
 from argparse import Namespace
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
@@ -9,17 +9,11 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "heuristic_scheduler"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -32,90 +26,100 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.spot_availability = []
-        spec_dir = os.path.dirname(os.path.abspath(spec_path))
+        # Custom initialization for the strategy
+        self.num_regions = self.env.get_num_regions()
         
-        for trace_file in config["trace_files"]:
-            full_trace_path = os.path.join(spec_dir, trace_file)
-            availability_data = []
-            try:
-                with open(full_trace_path, 'r') as f:
-                    for line in f:
-                        val = line.strip().lower()
-                        availability_data.append(val in ('true', '1'))
-            except FileNotFoundError:
-                # Handle cases where trace file might not exist in some environments
-                pass
-            self.spot_availability.append(availability_data)
-
-        self.num_regions = len(self.spot_availability)
-        self.max_timesteps = 0
-        if self.num_regions > 0 and self.spot_availability[0]:
-            self.max_timesteps = len(self.spot_availability[0])
+        # --- Hyperparameters for the strategy ---
         
-        # Hyperparameters for the strategy
-        self.lookahead_window = 5
-        self.wait_steps_threshold = 5
-
+        # Use a sliding window to estimate recent spot availability.
+        self.history_window_size = 8
+        
+        # Required improvement in spot rate to justify a switch.
+        self.rate_improvement_threshold = 0.1
+        
+        # Critical safety buffer. Below this, only use on-demand.
+        self.critical_buffer_seconds = self.restart_overhead
+        
+        # Buffer threshold for deciding to wait (NONE) vs using on-demand.
+        self.wait_threshold_buffer_seconds = 4 * self.env.gap_seconds
+        
+        # Minimum buffer required to consider switching regions.
+        self.switch_min_buffer_seconds = self.restart_overhead + self.env.gap_seconds
+        
+        # --- State tracking for each region ---
+        self.region_stats = []
+        for _ in range(self.num_regions):
+            self.region_stats.append({
+                'visits': 0,
+                'history': collections.deque(maxlen=self.history_window_size),
+                'spot_rate': 1.0,  # Optimistic initialization to encourage exploration
+            })
+            
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
         """
-        work_done = sum(self.task_done_time)
-        work_remaining = self.task_duration - work_done
-        if work_remaining <= 1e-9:
+        # 1. UPDATE STATE AND STATISTICS
+        current_region = self.env.get_current_region()
+        stats = self.region_stats[current_region]
+        
+        stats['visits'] += 1
+        stats['history'].append(1 if has_spot else 0)
+        stats['spot_rate'] = sum(stats['history']) / len(stats['history'])
+
+        # 2. CALCULATE URGENCY
+        remaining_work = self.task_duration - sum(self.task_done_time)
+
+        if remaining_work <= 0:
             return ClusterType.NONE
 
-        time_now = self.env.elapsed_seconds
-        time_to_deadline = self.deadline - time_now
-        
-        time_needed_on_demand = work_remaining + self.remaining_restart_overhead
-        
-        if time_now + time_needed_on_demand >= self.deadline:
+        time_left = self.deadline - self.env.elapsed_seconds
+        time_needed_on_demand = remaining_work + self.remaining_restart_overhead
+        safety_buffer = time_left - time_needed_on_demand
+
+        # 3. DECISION LOGIC
+
+        # A. CRITICAL (RED ZONE): Not enough time, must use On-Demand.
+        if safety_buffer <= self.critical_buffer_seconds:
             return ClusterType.ON_DEMAND
 
-        slack = time_to_deadline - time_needed_on_demand
-
-        safety_margin = self.env.gap_seconds + self.restart_overhead
-        if slack <= safety_margin:
-            return ClusterType.ON_DEMAND
-
-        current_region = self.env.get_current_region()
-
+        # B. SPOT AVAILABLE: Always take it if we are not in the critical zone.
         if has_spot:
             return ClusterType.SPOT
-        
-        t_idx = int(round(time_now / self.env.gap_seconds))
 
-        if t_idx >= self.max_timesteps or not self.spot_availability:
-            return ClusterType.ON_DEMAND
-
-        best_alt_region = -1
-        best_future_availability = -1
+        # C. SPOT NOT AVAILABLE: Decide between On-Demand, Wait (None), or Switch.
         
-        for r in range(self.num_regions):
-            if r == current_region:
-                continue
+        # C.1. Evaluate switching to another region.
+        target_region = -1
+        should_switch = False
+        
+        unvisited_regions = [r for r, s in enumerate(self.region_stats) if s['visits'] == 0]
+        if unvisited_regions:
+            target_region = unvisited_regions[0]
+            should_switch = True
+        else:
+            best_rate = -1.0
+            best_region_idx = -1
+            for r, s in enumerate(self.region_stats):
+                if r == current_region:
+                    continue
+                if s['spot_rate'] > best_rate:
+                    best_rate = s['spot_rate']
+                    best_region_idx = r
             
-            try:
-                if self.spot_availability[r][t_idx]:
-                    future_end = min(t_idx + 1 + self.lookahead_window, self.max_timesteps)
-                    future_avail = sum(self.spot_availability[r][t_idx+1:future_end])
+            if best_region_idx != -1 and \
+               best_rate > stats['spot_rate'] + self.rate_improvement_threshold:
+                target_region = best_region_idx
+                should_switch = True
 
-                    if future_avail > best_future_availability:
-                        best_future_availability = future_avail
-                        best_alt_region = r
-            except IndexError:
-                continue
-        
-        if best_alt_region != -1:
-            self.env.switch_region(best_alt_region)
-            return ClusterType.SPOT
-
-        comfortable_slack_margin = safety_margin + self.wait_steps_threshold * self.env.gap_seconds
-        if slack > comfortable_slack_margin:
+        # C.2. Make the final action decision.
+        if should_switch and safety_buffer > self.switch_min_buffer_seconds:
+            self.env.switch_region(target_region)
             return ClusterType.NONE
         else:
-            return ClusterType.ON_DEMAND
+            if safety_buffer > self.wait_threshold_buffer_seconds:
+                return ClusterType.NONE
+            else:
+                return ClusterType.ON_DEMAND
