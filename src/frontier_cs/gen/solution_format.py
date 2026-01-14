@@ -6,10 +6,20 @@ Examples:
     solutions/flash_attn/gpt5.py           -> problem=flash_attn, model=gpt5
     solutions/llm_sql/large/claude4.5sonnet_1.py -> problem=llm_sql/large, model=claude4.5sonnet, variant=1
     algorithmic/solutions/1/gpt5.cpp       -> problem=1, model=gpt5
+    solutions/flash_attn/gpt5.FAILED       -> problem=flash_attn, model=gpt5, generation failed
 """
 
 from pathlib import Path
 from typing import Optional, Tuple
+
+
+# Extension for failed generation marker files
+FAILED_EXTENSION = "FAILED"
+
+
+def is_failed_solution(path: Path) -> bool:
+    """Check if a solution path is a generation failure marker (.FAILED file)."""
+    return path.suffix == f".{FAILED_EXTENSION}"
 
 
 def parse_solution_filename(filename: str) -> Optional[Tuple[str, int, str]]:
