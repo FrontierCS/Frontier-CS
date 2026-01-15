@@ -271,12 +271,13 @@ class BatchEvaluator:
         if self._bucket_storage:
             self.sync_from_bucket()
 
-        # Initialize state (only save if first run)
+        # Initialize state
         if not self.state.started_at:
             self.state.started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
             self.state.backend = self.backend
-            self.state.total_pairs = len(pairs)
-            self._save_state()
+        # Always update total_pairs to reflect current pairs count
+        self.state.total_pairs = len(pairs)
+        self._save_state()
 
         # Compute hashes for cache invalidation
         logger.info("Computing hashes for solution/problem pairs...")
@@ -535,10 +536,13 @@ class BatchEvaluator:
 
         valid_problems: Set[str] = set()
 
+        # Directories to exclude (not problems)
+        exclude_dirs = {'resources', 'common', '__pycache__'}
+
         def scan_recursive(path: Path, prefix: str = "") -> None:
             """Recursively scan for problem directories (those with evaluator.py or similar)."""
             for item in path.iterdir():
-                if not item.is_dir() or item.name.startswith("."):
+                if not item.is_dir() or item.name.startswith(".") or item.name in exclude_dirs:
                     continue
 
                 problem_name = f"{prefix}{item.name}" if prefix else item.name
@@ -547,7 +551,7 @@ class BatchEvaluator:
                 # A problem directory must have evaluator.py (the actual evaluation script)
                 # config.yaml alone is not sufficient - it may be shared config
                 if self.track == "algorithmic":
-                    is_problem = (item / "problem.yaml").exists()
+                    is_problem = (item / "config.yaml").exists()
                 else:
                     # Research problems must have evaluator.py to be a real problem
                     is_problem = (item / "evaluator.py").exists() or (item / "evaluate.py").exists()
