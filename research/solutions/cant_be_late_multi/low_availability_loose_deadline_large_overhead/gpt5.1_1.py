@@ -6,9 +6,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy focusing on deadline safety and cost minimization."""
-
-    NAME = "my_strategy"
+    NAME = "cant_be_late_multiregion_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,65 +19,99 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-
-        # Internal state for efficient accounting and decisions
-        self._cached_done_time = 0.0
-        self._last_task_done_len = 0
-        self._commit_to_on_demand = False
-
-        # Cache ClusterType members in a robust way
-        self._spot_type = getattr(ClusterType, "SPOT")
-        self._on_demand_type = getattr(ClusterType, "ON_DEMAND")
-        none_attr = "NONE" if hasattr(ClusterType, "NONE") else "None"
-        self._none_type = getattr(ClusterType, none_attr)
-
+        self._init_custom_state()
         return self
 
-    def _update_cached_progress(self) -> float:
-        """Incrementally track total completed work time."""
-        segments = self.task_done_time
-        current_len = len(segments)
-        if current_len != self._last_task_done_len:
-            total_new = 0.0
-            # Sum only the newly added segments
-            for i in range(self._last_task_done_len, current_len):
-                total_new += segments[i]
-            self._cached_done_time += total_new
-            self._last_task_done_len = current_len
-        return self._cached_done_time
+    def _init_custom_state(self) -> None:
+        self._initialized_state = False
+        self._work_done = 0.0
+        self._last_task_index = 0
+        self._safety_margin = None
+        self._on_demand_committed = False
+
+        task_duration = getattr(self, "task_duration", 0.0)
+        if isinstance(task_duration, (list, tuple)):
+            self._task_duration_total = float(task_duration[0]) if task_duration else 0.0
+        else:
+            self._task_duration_total = float(task_duration)
+
+        restart_overhead = getattr(self, "restart_overhead", 0.0)
+        if isinstance(restart_overhead, (list, tuple)):
+            self._restart_overhead_total = float(restart_overhead[0]) if restart_overhead else 0.0
+        else:
+            self._restart_overhead_total = float(restart_overhead)
+
+    def _update_safety_margin_if_needed(self) -> None:
+        if self._safety_margin is not None:
+            return
+        gap = getattr(self.env, "gap_seconds", 0.0)
+        ro = self._restart_overhead_total
+        margin = 4.0 * (ro + gap)
+        max_margin = 0.1 * self._task_duration_total if self._task_duration_total > 0.0 else margin
+        if margin > max_margin:
+            margin = max_margin
+        min_margin = 2.0 * gap
+        if margin < min_margin:
+            margin = min_margin
+        self._safety_margin = margin
+
+    def _update_work_done_cache(self) -> None:
+        if not self._initialized_state:
+            total = 0.0
+            for v in self.task_done_time:
+                total += v
+            self._work_done = total
+            self._last_task_index = len(self.task_done_time)
+            self._initialized_state = True
+        else:
+            n = len(self.task_done_time)
+            if n > self._last_task_index:
+                added = 0.0
+                for i in range(self._last_task_index, n):
+                    added += self.task_done_time[i]
+                self._work_done += added
+                self._last_task_index = n
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Update total work done efficiently
-        work_done = self._update_cached_progress()
-        remaining_work = self.task_duration - work_done
+        if not hasattr(self, "_initialized_state"):
+            self._init_custom_state()
+
+        self._update_safety_margin_if_needed()
+        self._update_work_done_cache()
+
+        remaining_work = self._task_duration_total - self._work_done
         if remaining_work <= 0.0:
-            # Task is effectively complete; no need to run more
-            return self._none_type
+            return ClusterType.NONE
 
-        t = self.env.elapsed_seconds
-        gap = self.env.gap_seconds
-        restart = self.restart_overhead
-        deadline = self.deadline
+        if self._on_demand_committed:
+            return ClusterType.ON_DEMAND
 
-        # Worst-case completion time if we spend one more step making no progress
-        # (either using SPOT that fails or idling) and then switch to ON_DEMAND.
-        worst_future_completion_if_wait = t + gap + restart + remaining_work
+        current_time = getattr(self.env, "elapsed_seconds", 0.0)
+        deadline = getattr(self, "deadline", None)
+        if deadline is None:
+            if has_spot:
+                return ClusterType.SPOT
+            return ClusterType.ON_DEMAND
 
-        # Decide if we must now irrevocably switch to ON_DEMAND to make the deadline.
-        if not self._commit_to_on_demand:
-            if worst_future_completion_if_wait > deadline:
-                # Last moment to safely commit to on-demand-only plan
-                self._commit_to_on_demand = True
+        time_left = deadline - current_time
 
-        if self._commit_to_on_demand:
-            # From this point on, always use On-Demand until completion.
-            return self._on_demand_type
+        if time_left <= 0.0:
+            self._on_demand_committed = True
+            return ClusterType.ON_DEMAND
 
-        # Still in the flexible phase where we can exploit Spot or idle.
+        if last_cluster_type is ClusterType.ON_DEMAND:
+            self._on_demand_committed = True
+            return ClusterType.ON_DEMAND
+
+        overhead_if_switch = self._restart_overhead_total
+        time_needed_on_demand = overhead_if_switch + max(0.0, remaining_work)
+        slack = time_left - time_needed_on_demand
+
+        if slack <= self._safety_margin:
+            self._on_demand_committed = True
+            return ClusterType.ON_DEMAND
+
         if has_spot:
-            # Prefer Spot when available while we still have enough slack.
-            return self._spot_type
+            return ClusterType.SPOT
 
-        # No Spot available. If we're still before the commit threshold,
-        # it is cheaper to wait than to use expensive On-Demand.
-        return self._none_type
+        return ClusterType.NONE

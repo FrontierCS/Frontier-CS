@@ -1,130 +1,19 @@
 import json
-import os
+import math
 from argparse import Namespace
-from array import array
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import List, Optional
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
-def _as_bool(v: Any) -> int:
-    if isinstance(v, bool):
-        return 1 if v else 0
-    if v is None:
-        return 0
-    if isinstance(v, (int, float)):
-        return 1 if v > 0 else 0
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if not s:
-            return 0
-        if s in ("1", "true", "t", "yes", "y", "up", "available", "avail", "on"):
-            return 1
-        if s in ("0", "false", "f", "no", "n", "down", "unavailable", "off"):
-            return 0
-        try:
-            return 1 if float(s) > 0 else 0
-        except Exception:
-            return 0
-    return 0
-
-
-def _extract_trace_from_json(obj: Any) -> Optional[Sequence[Any]]:
-    if isinstance(obj, list):
-        return obj
-    if isinstance(obj, dict):
-        preferred_keys = (
-            "trace",
-            "traces",
-            "availability",
-            "avail",
-            "spot",
-            "has_spot",
-            "data",
-            "series",
-            "values",
-        )
-        for k in preferred_keys:
-            if k in obj and isinstance(obj[k], list):
-                return obj[k]
-        for v in obj.values():
-            if isinstance(v, list):
-                return v
-        # If dict of timestamp->value
-        if obj and all(isinstance(k, (str, int, float)) for k in obj.keys()):
-            try:
-                items = sorted(obj.items(), key=lambda kv: float(kv[0]))
-                return [v for _, v in items]
-            except Exception:
-                pass
-    return None
-
-
-def _load_trace_file(path: str) -> bytearray:
-    # Attempt numpy for .npy/.npz if present
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".npy", ".npz"):
-        try:
-            import numpy as np  # type: ignore
-
-            arr = np.load(path, allow_pickle=True)
-            if isinstance(arr, np.lib.npyio.NpzFile):  # type: ignore
-                keys = list(arr.files)
-                if not keys:
-                    return bytearray()
-                data = arr[keys[0]]
-            else:
-                data = arr
-            flat = data.ravel().tolist()
-            return bytearray(_as_bool(x) for x in flat)
-        except Exception:
-            pass
-
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except Exception:
-        return bytearray()
-
-    # JSON
-    raw_strip = raw.lstrip()
-    if raw_strip.startswith(b"[") or raw_strip.startswith(b"{"):
-        try:
-            obj = json.loads(raw_strip.decode("utf-8"))
-            seq = _extract_trace_from_json(obj)
-            if seq is None:
-                return bytearray()
-            return bytearray(_as_bool(x) for x in seq)
-        except Exception:
-            pass
-
-    # Text / CSV
-    try:
-        text = raw.decode("utf-8", errors="ignore")
-    except Exception:
-        return bytearray()
-
-    out = bytearray()
-    for line in text.splitlines():
-        if not line:
-            continue
-        # Remove comments
-        if "#" in line:
-            line = line.split("#", 1)[0]
-        if not line.strip():
-            continue
-        line = line.replace(",", " ").replace("\t", " ")
-        toks = line.split()
-        if not toks:
-            continue
-        # If multiple cols, assume last is availability
-        out.append(_as_bool(toks[-1]))
-    return out
+_CT_SPOT = getattr(ClusterType, "SPOT")
+_CT_OD = getattr(ClusterType, "ON_DEMAND", getattr(ClusterType, "ONDEMAND"))
+_CT_NONE = getattr(ClusterType, "NONE", getattr(ClusterType, "None", None))
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "my_strategy_v2"
+    NAME = "cant_be_late_multi_region_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -136,208 +25,199 @@ class Solution(MultiRegionStrategy):
             restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
         )
-
-        # Load traces for offline multi-region planning (optional; will be validated online).
-        self._trace_files: List[str] = []
-        self._traces: List[bytearray] = []
-        self._runlen: List[array] = []
-        self._any_next: Optional[array] = None
-        self._trace_len: int = 0
-        self._trace_trustworthy: bool = True
-
-        spec_dir = os.path.dirname(os.path.abspath(spec_path))
-        trace_files = config.get("trace_files", []) or []
-        if isinstance(trace_files, list):
-            for p in trace_files:
-                if not isinstance(p, str):
-                    continue
-                full = p if os.path.isabs(p) else os.path.join(spec_dir, p)
-                self._trace_files.append(full)
-                self._traces.append(_load_trace_file(full))
-
-            lens = [len(t) for t in self._traces if t is not None]
-            self._trace_len = min(lens) if lens else 0
-
-            if self._trace_len > 0 and self._traces:
-                # Truncate all to min length for safe indexing.
-                self._traces = [t[: self._trace_len] for t in self._traces]
-                L = self._trace_len
-
-                # Precompute run lengths of consecutive availability starting at t for each region.
-                self._runlen = []
-                for t in self._traces:
-                    rl = array("I", [0]) * (L + 1)
-                    # Reverse scan
-                    cnt = 0
-                    for i in range(L - 1, -1, -1):
-                        if t[i]:
-                            cnt += 1
-                        else:
-                            cnt = 0
-                        rl[i] = cnt
-                    rl[L] = 0
-                    self._runlen.append(rl)
-
-                # Precompute next time index where ANY region has spot.
-                any_spot = bytearray(L)
-                for i in range(L):
-                    v = 0
-                    for r in range(len(self._traces)):
-                        v |= self._traces[r][i]
-                        if v:
-                            break
-                    any_spot[i] = 1 if v else 0
-
-                nxt = array("I", [0]) * (L + 1)
-                INF = L + 1
-                nxt[L] = INF
-                for i in range(L - 1, -1, -1):
-                    nxt[i] = i if any_spot[i] else nxt[i + 1]
-                self._any_next = nxt
-            else:
-                self._trace_trustworthy = False
-        else:
-            self._trace_trustworthy = False
-
-        # Runtime caches
-        self._done_sum = 0.0
-        self._done_len = 0
-        self._committed_on_demand = False
-        self._initialized_step = False
-
         super().__init__(args)
+        self._reset_internal_state()
         return self
 
-    def _update_done_sum(self) -> float:
+    def _reset_internal_state(self) -> None:
+        self._inited: bool = False
+        self._num_regions: int = 1
+        self._region_score: List[float] = []
+        self._region_visits: List[int] = []
+        self._total_visits: int = 0
+
+        self._done_cached: float = 0.0
+        self._task_done_len: int = 0
+
+        self._ema_alpha: float = 0.06
+        self._ucb_beta: float = 0.35
+
+    def _ensure_init(self) -> None:
+        if self._inited:
+            return
+        env = self.env
+        try:
+            self._num_regions = int(env.get_num_regions())
+        except Exception:
+            self._num_regions = 1
+
+        n = max(1, self._num_regions)
+        self._region_score = [0.5] * n
+        self._region_visits = [0] * n
+        self._total_visits = 0
+
+        self._done_cached = 0.0
+        self._task_done_len = 0
+
+        self._inited = True
+
+    def _update_done_cache(self) -> None:
         tdt = self.task_done_time
         if tdt is None:
-            self._done_sum = 0.0
-            self._done_len = 0
-            return 0.0
+            return
         n = len(tdt)
-        if n < self._done_len:
-            # Reset (e.g., new task)
-            self._done_sum = float(sum(tdt))
-            self._done_len = n
-            return self._done_sum
-        if n > self._done_len:
-            self._done_sum += float(sum(tdt[self._done_len : n]))
-            self._done_len = n
-        return self._done_sum
+        if n <= self._task_done_len:
+            return
+        new_sum = 0.0
+        for i in range(self._task_done_len, n):
+            new_sum += float(tdt[i])
+        self._done_cached += new_sum
+        self._task_done_len = n
 
-    def _trace_has_spot(self, region: int, idx: int) -> bool:
-        if not self._trace_trustworthy:
-            return False
-        if idx < 0:
-            return False
-        if region < 0 or region >= len(self._traces):
-            return False
-        t = self._traces[region]
-        if idx >= len(t):
-            return False
-        return bool(t[idx])
+    def _update_region_stats(self, region: int, has_spot: bool) -> None:
+        if region < 0 or region >= self._num_regions:
+            return
+        v = self._region_visits[region] + 1
+        self._region_visits[region] = v
+        self._total_visits += 1
+        x = 1.0 if has_spot else 0.0
+        s = self._region_score[region]
+        a = self._ema_alpha
+        self._region_score[region] = s + a * (x - s)
 
-    def _pick_best_spot_region(self, idx: int, current_region: int, num_regions: int) -> int:
-        best_region = -1
-        best_score = -1
-        for r in range(num_regions):
-            if not self._trace_has_spot(r, idx):
-                continue
-            score = 1
-            if r < len(self._runlen) and idx < len(self._runlen[r]):
-                score = int(self._runlen[r][idx])
-            # Prefer staying to avoid overhead
+    def _pick_next_region(self, current_region: int) -> int:
+        n = self._num_regions
+        if n <= 1:
+            return current_region
+
+        # Prefer any unvisited region (excluding current).
+        for r in range(n):
+            if r != current_region and self._region_visits[r] == 0:
+                return r
+
+        # UCB on EMA scores.
+        log_term = math.log(self._total_visits + 1.0)
+        best_r = current_region
+        best_ucb = -1e30
+        beta = self._ucb_beta
+        for r in range(n):
             if r == current_region:
-                score = score * 4 + 1
-            else:
-                score = score * 4
-            if score > best_score:
-                best_score = score
-                best_region = r
-        return best_region
+                continue
+            v = self._region_visits[r]
+            ucb = self._region_score[r] + beta * math.sqrt(log_term / (v + 1.0))
+            if ucb > best_ucb:
+                best_ucb = ucb
+                best_r = r
+        return best_r
 
-    def _next_any_spot_wait_steps(self, idx: int) -> int:
-        if not self._trace_trustworthy or self._any_next is None:
-            return 10**9
-        if idx < 0:
-            return 10**9
-        L = self._trace_len
-        if idx >= L:
-            return 10**9
-        nxt = int(self._any_next[idx])
-        if nxt >= L:
-            return 10**9
-        return nxt - idx
+    def _steps_remaining(self, remaining_time: float, gap: float) -> int:
+        if gap <= 0.0:
+            return 0
+        # Remaining full steps including the upcoming one.
+        # Use a tiny epsilon to reduce float boundary issues.
+        eps = 1e-9 * max(1.0, abs(remaining_time))
+        return int((remaining_time + eps) // gap)
+
+    def _overhead_if_choose(self, chosen: ClusterType, last: ClusterType) -> float:
+        if chosen == _CT_NONE:
+            return 0.0
+        if chosen == last:
+            return float(getattr(self, "remaining_restart_overhead", 0.0) or 0.0)
+        return float(self.restart_overhead)
+
+    def _work_this_step(self, overhead: float, gap: float) -> float:
+        w = gap - overhead
+        return w if w > 0.0 else 0.0
+
+    def _feasible_if_choose(
+        self,
+        chosen: ClusterType,
+        last: ClusterType,
+        steps_remaining: int,
+        remaining_work: float,
+        gap: float,
+    ) -> bool:
+        if remaining_work <= 0.0:
+            return True
+        if steps_remaining <= 0:
+            return False
+
+        if chosen == _CT_NONE:
+            work_now = 0.0
+            rem_after = remaining_work
+            steps_left = steps_remaining - 1
+            if rem_after <= 0.0:
+                return True
+            if steps_left <= 0:
+                return False
+            overhead_next = float(self.restart_overhead)
+            max_future_work = steps_left * gap - overhead_next
+            return max_future_work + 1e-9 >= rem_after
+
+        overhead_now = self._overhead_if_choose(chosen, last)
+        work_now = self._work_this_step(overhead_now, gap)
+        rem_after = remaining_work - work_now
+        if rem_after <= 0.0:
+            return True
+
+        steps_left = steps_remaining - 1
+        if steps_left <= 0:
+            return False
+
+        if chosen == _CT_OD:
+            overhead_next = overhead_now - gap
+            if overhead_next < 0.0:
+                overhead_next = 0.0
+        else:
+            # Worst-case: spot disappears next step -> on-demand restart.
+            overhead_next = float(self.restart_overhead)
+
+        max_future_work = steps_left * gap - overhead_next
+        return max_future_work + 1e-9 >= rem_after
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Initialize / validate trace alignment on first few calls.
-        gap = float(getattr(self.env, "gap_seconds", 1.0))
-        elapsed = float(getattr(self.env, "elapsed_seconds", 0.0))
-        idx = int(elapsed // gap) if gap > 0 else 0
+        self._ensure_init()
 
-        current_region = int(self.env.get_current_region())
-        num_regions = int(self.env.get_num_regions())
+        env = self.env
+        current_region = 0
+        try:
+            current_region = int(env.get_current_region())
+        except Exception:
+            current_region = 0
 
-        if not self._initialized_step:
-            self._initialized_step = True
-            # Basic sanity: if trace count mismatches, disable.
-            if self._trace_trustworthy and len(self._traces) != num_regions:
-                self._trace_trustworthy = False
+        self._update_done_cache()
+        self._update_region_stats(current_region, bool(has_spot))
 
-        # Validate current region's trace against observed has_spot (only if we won't switch before using it).
-        if self._trace_trustworthy and 0 <= current_region < len(self._traces) and 0 <= idx < self._trace_len:
-            if bool(self._traces[current_region][idx]) != bool(has_spot):
-                self._trace_trustworthy = False
+        remaining_work = float(self.task_duration) - float(self._done_cached)
+        if remaining_work <= 0.0:
+            return _CT_NONE
 
-        done = self._update_done_sum()
-        remaining_work = float(self.task_duration) - done
-        if remaining_work <= 0:
-            return ClusterType.NONE
+        gap = float(env.gap_seconds)
+        remaining_time = float(self.deadline) - float(env.elapsed_seconds)
+        steps_remaining = self._steps_remaining(remaining_time, gap)
+        if steps_remaining <= 0:
+            return _CT_NONE
 
-        deadline = float(self.deadline)
-        remaining_time = deadline - elapsed
+        # If spot is available, prefer SPOT if it keeps a worst-case completion guarantee.
+        if has_spot:
+            if self._feasible_if_choose(_CT_SPOT, last_cluster_type, steps_remaining, remaining_work, gap):
+                return _CT_SPOT
+            return _CT_OD
 
-        # If we're already late, run on-demand.
-        slack = remaining_time - remaining_work
-        if slack <= 0:
-            self._committed_on_demand = True
-            return ClusterType.ON_DEMAND
+        # Spot not available:
+        # Keep ON_DEMAND running once started to avoid repeated restart overhead from idling.
+        if last_cluster_type == _CT_OD:
+            return _CT_OD
 
-        # If very close to the deadline, commit to on-demand (avoid extra restarts/idle).
-        # Use a conservative buffer for restarts / scheduling granularity.
-        restart_overhead = float(self.restart_overhead)
-        buffer = restart_overhead + 2.0 * gap
-        if slack <= buffer:
-            self._committed_on_demand = True
+        # Prefer idling if we can still finish by deadline with on-demand from next step onward.
+        if self._feasible_if_choose(_CT_NONE, last_cluster_type, steps_remaining, remaining_work, gap):
+            if self._num_regions > 1:
+                next_region = self._pick_next_region(current_region)
+                if next_region != current_region:
+                    try:
+                        env.switch_region(int(next_region))
+                    except Exception:
+                        pass
+            return _CT_NONE
 
-        if self._committed_on_demand:
-            return ClusterType.ON_DEMAND
-
-        # Prefer spot if available (potentially in another region).
-        if self._trace_trustworthy:
-            best_region = self._pick_best_spot_region(idx, current_region, num_regions)
-            if best_region != -1:
-                # If we're on on-demand, avoid switching if too tight (extra overhead).
-                if last_cluster_type == ClusterType.ON_DEMAND and slack <= (restart_overhead + gap):
-                    return ClusterType.ON_DEMAND
-                if best_region != current_region:
-                    self.env.switch_region(best_region)
-                return ClusterType.SPOT
-        else:
-            if has_spot:
-                return ClusterType.SPOT
-
-        # No spot available (or can't trust traces). Decide between waiting (NONE) vs on-demand.
-        if self._trace_trustworthy:
-            wait_steps = self._next_any_spot_wait_steps(idx)
-            if wait_steps < 10**8:
-                wait_time = wait_steps * gap
-                # If waiting is safe even if we later switch to on-demand, do it.
-                # Conservative: assume we might need one restart overhead when resuming.
-                if wait_time + remaining_work + restart_overhead <= remaining_time:
-                    return ClusterType.NONE
-
-        # If can't safely wait, use on-demand. If slack is shrinking, commit.
-        if slack <= (restart_overhead + 3.0 * gap):
-            self._committed_on_demand = True
-        return ClusterType.ON_DEMAND
+        return _CT_OD

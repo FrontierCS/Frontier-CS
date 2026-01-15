@@ -1,26 +1,14 @@
 import json
 from argparse import Namespace
-import math
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
-
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "AdaptiveMultiRegion"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -32,93 +20,90 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.num_regions = len(config["trace_files"])
-        
-        # Bayesian estimates for spot availability, using a Beta distribution prior.
-        # Corresponds to a prior belief of high availability, based on problem description.
-        # We model successes (alpha) and failures (beta).
-        # Prior is equivalent to observing ~4 successes and 1 failure.
-        self.prior_alpha = 4.0 
-        self.prior_beta = 1.0
+        num_regions = self.env.get_num_regions()
+        self.spot_counts = [0] * num_regions
+        self.total_counts = [0] * num_regions
 
-        # Track observations: successes (alpha) and attempts (alpha + beta)
-        self.spot_successes = [0] * self.num_regions
-        self.spot_attempts = [0] * self.num_regions
-        
+        self.consecutive_spot_misses = 0
+        self.last_region_idx = -1
+
+        self.SWITCH_MISS_THRESHOLD = 3
+        initial_slack = self.deadline - self.task_duration
+        self.SLACK_OD_THRESHOLD = initial_slack / 3.0
+        self.PROB_SWITCH_TOLERANCE = 0.05
+
+        self.work_done_cache = 0.0
+        self.task_done_len_cache = 0
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
-        """
-        # 1. Update historical statistics for the current region
         current_region = self.env.get_current_region()
-        self.spot_attempts[current_region] += 1
-        if has_spot:
-            self.spot_successes[current_region] += 1
 
-        # 2. Check for task completion
-        remaining_work = self.task_duration - sum(self.task_done_time)
-        if remaining_work <= 0:
+        if current_region != self.last_region_idx:
+            self.consecutive_spot_misses = 0
+            self.last_region_idx = current_region
+
+        self.total_counts[current_region] += 1
+        if has_spot:
+            self.spot_counts[current_region] += 1
+            self.consecutive_spot_misses = 0
+        else:
+            self.consecutive_spot_misses += 1
+
+        if len(self.task_done_time) > self.task_done_len_cache:
+            new_work = sum(self.task_done_time[self.task_done_len_cache:])
+            self.work_done_cache += new_work
+            self.task_done_len_cache = len(self.task_done_time)
+        work_done = self.work_done_cache
+        work_left = self.task_duration - work_done
+
+        if work_left <= 0:
             return ClusterType.NONE
 
-        # 3. Deadline criticality check (Safety Net)
         time_left = self.deadline - self.env.elapsed_seconds
-        
-        # Calculate time needed to finish if we must switch to On-Demand now
-        overhead_for_od = 0
-        if last_cluster_type != ClusterType.ON_DEMAND:
-            overhead_for_od = self.restart_overhead
-        
-        total_overhead_if_od = max(self.remaining_restart_overhead, overhead_for_od)
-        time_needed_for_od_finish = total_overhead_if_od + remaining_work
-        
-        # Use a safety buffer to avoid cutting it too close
-        safety_buffer = self.env.gap_seconds * 1.5
-        if time_left <= time_needed_for_od_finish + safety_buffer:
+
+        safety_margin = self.env.gap_seconds
+        if time_left <= work_left + safety_margin:
             return ClusterType.ON_DEMAND
 
-        # 4. Main decision logic
         if has_spot:
-            # If spot is available, it's the most cost-effective choice.
             return ClusterType.SPOT
-        else:
-            # Spot is not available. Decide between switching or using On-Demand.
-            
-            # Find the best alternative region to switch to based on posterior mean
-            scores = []
-            for i in range(self.num_regions):
-                if i == current_region:
-                    scores.append(-1.0)  # Don't consider the current region
-                else:
-                    # Bayesian posterior mean: (prior_successes + observed_successes) / (total_prior_obs + total_observed_obs)
-                    posterior_alpha = self.prior_alpha + self.spot_successes[i]
-                    posterior_beta = self.prior_beta + (self.spot_attempts[i] - self.spot_successes[i])
-                    score = posterior_alpha / (posterior_alpha + posterior_beta)
-                    scores.append(score)
-            
-            best_next_region = scores.index(max(scores))
-            best_score = scores[best_next_region]
 
-            # Decide whether to switch based on available "slack" time
-            slack = time_left - remaining_work
-            
-            # The more confident we are about the next region (higher score),
-            # the less slack we require to justify the risk of a switch.
-            base_slack_requirement = self.restart_overhead * 2.0
-            
-            # Adjust slack requirement based on confidence.
-            # A score of 1.0 (high confidence) uses the base requirement.
-            # A score of 0.0 (low confidence) doubles the requirement.
-            # A score near the prior mean (~0.8) results in a moderate requirement.
-            slack_requirement = base_slack_requirement * (1.0 + (1.0 - best_score))
-            
-            if slack > slack_requirement:
-                # We have enough slack to risk a switch.
-                self.env.switch_region(best_next_region)
-                # Use NONE to absorb the switch overhead without cost.
-                # The next time step will start in the new region.
-                return ClusterType.NONE
-            else:
-                # Not enough slack to risk it. Use On-Demand to guarantee progress.
+        if self.consecutive_spot_misses >= self.SWITCH_MISS_THRESHOLD:
+            unvisited = [
+                i for i, c in enumerate(self.total_counts)
+                if c == 0 and i != current_region
+            ]
+            if unvisited:
+                self.env.switch_region(unvisited[0])
                 return ClusterType.ON_DEMAND
+
+            best_region_to_switch = -1
+            # Handle division by zero if total_counts is 0 (though checked by `unvisited`)
+            if self.total_counts[current_region] > 0:
+                current_prob = self.spot_counts[current_region] / self.total_counts[current_region]
+            else:
+                current_prob = 0.0
+            
+            max_prob = current_prob
+            
+            for i in range(self.env.get_num_regions()):
+                if i == current_region:
+                    continue
+                
+                if self.total_counts[i] > 0:
+                    prob = self.spot_counts[i] / self.total_counts[i]
+                    if prob > max_prob + self.PROB_SWITCH_TOLERANCE:
+                        max_prob = prob
+                        best_region_to_switch = i
+            
+            if best_region_to_switch != -1:
+                self.env.switch_region(best_region_to_switch)
+                return ClusterType.ON_DEMAND
+
+        slack = time_left - work_left
+        if slack < self.SLACK_OD_THRESHOLD:
+            return ClusterType.ON_DEMAND
+        else:
+            return ClusterType.NONE

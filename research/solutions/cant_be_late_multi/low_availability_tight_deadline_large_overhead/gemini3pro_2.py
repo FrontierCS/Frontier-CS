@@ -13,6 +13,12 @@ class Solution(MultiRegionStrategy):
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -22,7 +28,6 @@ class Solution(MultiRegionStrategy):
             task_duration_hours=[float(config["duration"])],
             restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
-            trace_files=config.get("trace_files", [])
         )
         super().__init__(args)
         return self
@@ -30,52 +35,50 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
+
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Calculate remaining work
-        # task_done_time is a list of work duration completed in previous steps
-        work_done = sum(self.task_done_time)
-        work_remaining = self.task_duration - work_done
-
-        # If work is finished, stop (though env should handle this)
-        if work_remaining <= 0:
-            return ClusterType.NONE
-
-        # Calculate time remaining to deadline
-        time_elapsed = self.env.elapsed_seconds
-        time_remaining = self.deadline - time_elapsed
-
-        # Constants
-        gap = self.env.gap_seconds
+        # Calculate remaining work and time
+        done_work = sum(self.task_done_time)
+        remaining_work = self.task_duration - done_work
+        
+        elapsed_time = self.env.elapsed_seconds
+        remaining_time = self.deadline - elapsed_time
+        
         overhead = self.restart_overhead
-
-        # Safety Threshold Calculation
-        # We need to ensure we have enough time to finish using On-Demand (reliable).
-        # Minimum time needed = Remaining Work + Restart Overhead (if we start fresh).
-        # We add a buffer of 1.5 * gap_seconds to safeguard against boundary conditions
-        # and ensure we switch to OD before it's too late.
-        safety_threshold = work_remaining + overhead + (1.5 * gap)
-
-        # Panic Mode: If time is tight, force On-Demand to guarantee completion
-        if time_remaining < safety_threshold:
+        gap = self.env.gap_seconds
+        
+        # Calculate panic threshold
+        # If we are close to the deadline, we must use On-Demand to guarantee completion.
+        # We need enough time for remaining work + potential restart overhead.
+        # We add a buffer (2 * gap) to ensure we switch safely before the absolute last moment,
+        # accounting for the discrete time step granularity.
+        panic_threshold = remaining_work + overhead + (2.0 * gap)
+        
+        if remaining_time < panic_threshold:
             return ClusterType.ON_DEMAND
-
-        # Economy Mode: Prefer Spot
+            
+        # If not in panic mode, prioritize Spot instances
         if has_spot:
-            # Spot is available in the current region
             return ClusterType.SPOT
-        else:
-            # Spot is unavailable in the current region.
-            # Strategy: Switch to the next region and probe.
-            # We iterate regions in a round-robin fashion.
-            # We return NONE (pause) for this step because we cannot guarantee 
-            # Spot availability in the new region immediately without checking next step, 
-            # and returning SPOT on an unavailable region causes an error.
-            
-            num_regions = self.env.get_num_regions()
-            current_region_idx = self.env.get_current_region()
-            
-            # Switch to next region
-            next_region_idx = (current_region_idx + 1) % num_regions
-            self.env.switch_region(next_region_idx)
-            
-            return ClusterType.NONE
+        
+        # If Spot is unavailable in current region and we have slack:
+        # Switch to the next region to search for Spot capacity.
+        # We return NONE for this step as we transition/wait.
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        next_region = (current_region + 1) % num_regions
+        self.env.switch_region(next_region)
+        
+        return ClusterType.NONE

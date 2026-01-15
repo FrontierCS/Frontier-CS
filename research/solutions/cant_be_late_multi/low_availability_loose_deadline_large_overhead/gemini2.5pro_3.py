@@ -7,48 +7,19 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """
-    A deadline-aware, cost-minimizing strategy for multi-region scheduling.
+    """Your multi-region scheduling strategy."""
 
-    Core Logic:
-    1. Deadline Assurance ("Panic Mode"): The strategy continuously monitors the
-       time remaining versus the work remaining. If the slack time drops below a
-       critical safety margin, it unconditionally uses On-Demand instances to
-       guarantee progress and avoid the severe penalty for missing the deadline.
-       This safety margin is calibrated to the time cost of a single spot preemption.
-
-    2. Cost Minimization ("Normal Mode"): When there is ample slack time, the
-       strategy prioritizes using cheap Spot instances.
-        - If Spot is available, it is always chosen.
-        - If Spot is unavailable, the strategy exhibits patience, waiting for a
-          configurable number of time steps (`PATIENCE`) in the hopes that Spot
-          availability is transient. This avoids the overhead of a region switch.
-
-    3. Intelligent Region Switching: If Spot remains unavailable beyond the
-       patience threshold, the strategy evaluates switching to a different region.
-        - It maintains spot availability statistics for all regions.
-        - It prioritizes exploring unvisited regions to quickly build a complete
-          picture of the environment.
-        - Among visited regions, it switches to the one with the best-observed
-          spot availability.
-        - A switch is only triggered if the target region is significantly
-          better than the current one, preventing unstable "flapping" between
-          regions with similar performance.
-        - To ensure progress and safely gather data after a switch, the first
-          action in a new region is to use an On-Demand instance.
-    """
-    NAME = "my_strategy"
-
-    # --- Strategy Hyperparameters ---
-    # Number of consecutive no-spot steps to wait before considering a region switch.
-    PATIENCE = 2
-    # The required improvement in spot availability probability to justify a switch.
-    SWITCH_IMPROVEMENT_MARGIN = 0.05
-    # ---
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from the problem specification file.
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -61,104 +32,110 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Custom initialization after the parent class is set up.
+        # Custom state for the strategy
+        self.is_initialized = False
+        self.num_regions = 0
+        self.spot_history = []
+        self.total_steps_seen = 0
+
+        # --- Tunable Hyperparameters ---
+        # UCB exploration constant
+        self.ucb_c = math.sqrt(2.0)
+        
+        # Safety margin for switching to On-Demand, as a multiple of restart_overhead.
+        self.safety_margin_factor = 1.0
+        self.safety_margin_seconds = self.safety_margin_factor * self.restart_overhead
+        
+        return self
+
+    def _initialize_state(self):
+        """
+        One-time initialization on the first call to _step,
+        as the environment (`self.env`) is only available then.
+        """
         self.num_regions = self.env.get_num_regions()
         
-        # Initialize statistics for each region.
-        self.region_stats = [
-            {'probes': 0, 'success': 0, 'consecutive_fail': 0}
-            for _ in range(self.num_regions)
-        ]
+        # Initialize with a Beta(1,1) prior to encourage exploration
+        # and avoid division by zero (i.e., assume 1 success, 1 failure).
+        self.spot_history = [{'seen': 2, 'available': 1} for _ in range(self.num_regions)]
+        self.total_steps_seen = self.num_regions * 2
+        
+        self.is_initialized = True
 
-        # The safety margin for switching to On-Demand. If slack time drops
-        # below this, we enter "panic mode". It's set to the time lost in
-        # one failed spot attempt, giving us a one-step buffer.
-        self.on_demand_safety_margin = self.env.gap_seconds + self.restart_overhead
+    def _get_best_region_ucb(self) -> int:
+        """
+        Finds the best region to be in using the UCB1 algorithm.
+        """
+        if self.total_steps_seen == 0:
+            return self.env.get_current_region()
 
-        return self
+        ucb_scores = []
+        log_total_steps = math.log(self.total_steps_seen)
+
+        for i in range(self.num_regions):
+            history = self.spot_history[i]
+            
+            mean_availability = history['available'] / history['seen']
+            exploration_term = self.ucb_c * math.sqrt(log_total_steps / history['seen'])
+            ucb_scores.append(mean_availability + exploration_term)
+        
+        return max(range(self.num_regions), key=lambda i: ucb_scores[i])
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide the next action (which cluster type to use) based on the current state.
+        Decide next action based on current state.
+
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
+        # --- 1. Initialization ---
+        if not self.is_initialized:
+            self._initialize_state()
+
+        # --- 2. State Update ---
+        current_region = self.env.get_current_region()
+        self.spot_history[current_region]['seen'] += 1
+        self.total_steps_seen += 1
+        if has_spot:
+            self.spot_history[current_region]['available'] += 1
+        
+        # --- 3. Check for Task Completion ---
         work_done = sum(self.task_done_time)
+        if work_done >= self.task_duration:
+            return ClusterType.NONE
+
+        # --- 4. "Panic Mode" Check ---
         work_rem = self.task_duration - work_done
-
-        # If the task is finished, do nothing to save cost.
-        if work_rem <= 0:
-            return ClusterType.NONE
-
         time_rem = self.deadline - self.env.elapsed_seconds
-        current_region = self.env.get_current_region()
-
-        # --- 1. Update Region Statistics ---
-        stats = self.region_stats[current_region]
-        stats['probes'] += 1
-        if has_spot:
-            stats['success'] += 1
-            stats['consecutive_fail'] = 0
-        else:
-            stats['consecutive_fail'] += 1
-
-        # --- 2. Panic Mode Check ---
-        # The total work outstanding, including any pending restart overhead.
-        effective_work_rem = work_rem + self.remaining_restart_overhead
         
-        # If time is running out, we must use On-Demand to guarantee progress.
-        if time_rem <= effective_work_rem + self.on_demand_safety_margin:
+        # Time required if we switch to On-Demand now, conservatively
+        # assuming a restart overhead will be incurred.
+        time_needed_for_od = work_rem + self.restart_overhead
+
+        if time_rem <= time_needed_for_od + self.safety_margin_seconds:
             return ClusterType.ON_DEMAND
 
-        # --- 3. Normal Mode (Sufficient Slack) ---
+        # --- 5. "Opportunistic Mode" ---
         if has_spot:
-            # Spot is available and we have slack, so use the cheapest option.
+            # Spot is available, use it.
             return ClusterType.SPOT
-        
-        # Spot is unavailable. Decide whether to wait or switch regions.
-        if stats['consecutive_fail'] < self.PATIENCE:
-            # Be patient; spot availability might be temporarily low.
-            return ClusterType.NONE
         else:
-            # Patience has run out. Evaluate switching to a new region.
-            return self._find_and_switch_region()
+            # Spot is not available. Use UCB to find the most promising region.
+            best_region_to_be_in = self._get_best_region_ucb()
 
-    def _find_and_switch_region(self) -> ClusterType:
-        """
-        Helper function to find the best alternative region and execute the switch.
-        """
-        current_region = self.env.get_current_region()
-        
-        # --- Find the best alternative region ---
-        best_alt_region = -1
-        best_alt_score = -1.0
+            if best_region_to_be_in != current_region:
+                self.env.switch_region(best_region_to_be_in)
 
-        for i in range(self.num_regions):
-            if i == current_region:
-                continue
-
-            stats = self.region_stats[i]
-            # Unexplored regions are given an optimistic score of 1.0 to encourage exploration.
-            # Otherwise, use the observed success rate.
-            score = 1.0 if stats['probes'] == 0 else (stats['success'] / stats['probes'])
-            
-            if score > best_alt_score:
-                best_alt_score = score
-                best_alt_region = i
-
-        # --- Decide whether to switch ---
-        current_stats = self.region_stats[current_region]
-        current_score = 0.0
-        if current_stats['probes'] > 0:
-            current_score = current_stats['success'] / current_stats['probes']
-        
-        # Only switch if the alternative is significantly better to avoid flapping.
-        should_switch = (best_alt_region != -1 and
-                         best_alt_score > current_score + self.SWITCH_IMPROVEMENT_MARGIN)
-
-        if should_switch:
-            self.env.switch_region(best_alt_region)
-            # After switching, we are in an uncertain state. Use On-Demand to
-            # guarantee progress and gather a data point for the new region.
-            return ClusterType.ON_DEMAND
-        else:
-            # No better region found, or the improvement is not significant. Stay and wait.
+            # Since 'has_spot' was False, we cannot return SPOT.
+            # Wait by returning NONE to save cost, leveraging the time slack.
             return ClusterType.NONE

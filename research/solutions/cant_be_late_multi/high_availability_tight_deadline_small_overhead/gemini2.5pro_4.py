@@ -6,9 +6,20 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "Cant-Be-Late"
+    """Your multi-region scheduling strategy."""
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -19,68 +30,103 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
+
+        self.traces = []
+        try:
+            if "trace_files" in config:
+                for trace_file in config["trace_files"]:
+                    with open(trace_file) as f:
+                        self.traces.append(json.load(f))
+        except (IOError, json.JSONDecodeError):
+            self.traces = []
+
+        self.streaks = []
+        if self.traces and self.traces[0]:
+            num_regions = len(self.traces)
+            trace_len = len(self.traces[0])
+            self.streaks = [[0] * trace_len for _ in range(num_regions)]
+            
+            for r in range(num_regions):
+                if self.traces[r][trace_len - 1]:
+                    self.streaks[r][trace_len - 1] = 1
+                for t in range(trace_len - 2, -1, -1):
+                    if self.traces[r][t]:
+                        self.streaks[r][t] = 1 + self.streaks[r][t+1]
         
-        self._history_initialized = False
+        self.buffer_factor = 2.0
+        
         return self
 
-    def _initialize_state(self):
-        self.num_regions = self.env.get_num_regions()
-        
-        self.last_spot_seen_time = [-1.0] * self.num_regions
-        
-        initial_slack = self.deadline - self.task_duration
-        
-        self.PANIC_THRESHOLD = self.restart_overhead + self.env.gap_seconds
-        
-        self.WAIT_THRESHOLD = max(self.PANIC_THRESHOLD * 2, initial_slack / 6.0)
-        
-        self._history_initialized = True
-
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        if not self._history_initialized:
-            self._initialize_state()
+        """
+        Decide next action based on current state.
 
-        work_done = sum(self.task_done_time)
-        remaining_work = self.task_duration - work_done
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        remaining_work = self.task_duration - sum(self.task_done_time)
+        
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        current_region = self.env.get_current_region()
-        current_time = self.env.elapsed_seconds
-        if has_spot:
-            self.last_spot_seen_time[current_region] = current_time
-        
-        time_remaining = self.deadline - current_time
-        time_needed_on_demand = remaining_work + self.remaining_restart_overhead
-        slack = time_remaining - time_needed_on_demand
+        elapsed_time = self.env.elapsed_seconds
+        time_left = self.deadline - elapsed_time
 
-        if slack <= self.PANIC_THRESHOLD:
+        if time_left <= remaining_work:
+            return ClusterType.ON_DEMAND 
+
+        safety_buffer = self.buffer_factor * self.restart_overhead
+        time_needed_if_panic = self.restart_overhead + remaining_work + safety_buffer
+
+        if time_needed_if_panic >= time_left:
             return ClusterType.ON_DEMAND
 
         if has_spot:
             return ClusterType.SPOT
         
-        best_alt_region = -1
-        max_seen_time = -1.0
-        for r in range(self.num_regions):
-            if r != current_region:
-                if self.last_spot_seen_time[r] > max_seen_time:
-                    max_seen_time = self.last_spot_seen_time[r]
-                    best_alt_region = r
+        # No spot in the current region, so look for alternatives.
+        current_step = int(elapsed_time // self.env.gap_seconds)
         
-        is_alt_better = best_alt_region != -1
-        should_explore = all(t == -1.0 for t in self.last_spot_seen_time)
+        num_regions = self.env.get_num_regions()
+        trace_len = 0
+        if self.streaks and self.streaks[0]:
+            trace_len = len(self.streaks[0])
 
-        if self.num_regions > 1 and (is_alt_better or should_explore):
-            if should_explore:
-                region_to_switch = (current_region + 1) % self.num_regions
-            else:
-                region_to_switch = best_alt_region
+        best_region_idx = -1
+        max_streak = 0
+
+        # Find the region with the longest continuous spot availability from now.
+        for r in range(num_regions):
+            streak = 0
+            if current_step < trace_len:
+                streak = self.streaks[r][current_step]
             
-            self.env.switch_region(region_to_switch)
-            return ClusterType.NONE
+            if streak > max_streak:
+                max_streak = streak
+                best_region_idx = r
+        
+        if max_streak > 0:
+            # A region with spot is available. Switch to it.
+            if self.env.get_current_region() != best_region_idx:
+                self.env.switch_region(best_region_idx)
+            return ClusterType.SPOT
         else:
-            if slack > self.WAIT_THRESHOLD:
-                return ClusterType.NONE
-            else:
+            # No spot available in any region. Decide between ON_DEMAND and NONE.
+            # We wait (NONE) only if we can afford the time loss.
+            time_left_after_wait = time_left - self.env.gap_seconds
+            if time_needed_if_panic >= time_left_after_wait:
+                # Waiting is too risky. Must make progress with On-Demand.
                 return ClusterType.ON_DEMAND
+            else:
+                # It's safe to wait for a spot instance to become available.
+                return ClusterType.NONE

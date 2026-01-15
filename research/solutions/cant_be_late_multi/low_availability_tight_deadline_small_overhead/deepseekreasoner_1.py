@@ -1,23 +1,14 @@
 import json
 from argparse import Namespace
-from enum import Enum
-from typing import List
-import math
 
-class ClusterType(Enum):
-    SPOT = 1
-    ON_DEMAND = 2
-    NONE = 3
+from sky_spot.strategies.multi_strategy import MultiRegionStrategy
+from sky_spot.utils import ClusterType
 
-class Solution:
-    """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"
+class Solution(MultiRegionStrategy):
+    NAME = "adaptive_urgency"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -27,92 +18,104 @@ class Solution:
             restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
         )
-        
-        # Initialize base strategy
         super().__init__(args)
         
-        # Store configuration
-        self.regions = []
-        self.region_history = {}
-        self.current_region = 0
-        self.consecutive_failures = 0
-        self.last_action = ClusterType.NONE
+        # Initialize tracking variables
+        self.region_history = []
+        self.spot_availability = {}
+        self.last_decision = None
+        self.consecutive_no_spot = 0
+        self.last_spot_region = None
         
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
-        """
-        # Get current region if available
-        try:
-            self.current_region = self.env.get_current_region()
-        except:
-            self.current_region = 0
-            
-        # Calculate remaining work and time
-        work_done = sum(self.task_done_time) if self.task_done_time else 0
-        remaining_work = self.task_duration - work_done
-        time_remaining = self.deadline - self.env.elapsed_seconds
+        current_region = self.env.get_current_region()
+        elapsed = self.env.elapsed_seconds
+        gap = self.env.gap_seconds
         
-        # If no work left, do nothing
+        # Update spot availability tracking
+        self.spot_availability[current_region] = has_spot
+        if has_spot:
+            self.last_spot_region = current_region
+            self.consecutive_no_spot = 0
+        else:
+            self.consecutive_no_spot += 1
+        
+        # Calculate remaining work and time
+        total_work_done = sum(self.task_done_time)
+        remaining_work = self.task_duration - total_work_done
+        remaining_time = self.deadline - elapsed
+        
+        # If we're done, return NONE
         if remaining_work <= 0:
             return ClusterType.NONE
-            
-        # Calculate effective time needed considering restart overhead
-        effective_work_needed = remaining_work
-        if (last_cluster_type != ClusterType.NONE and 
-            self.last_action != last_cluster_type and 
-            self.last_action != ClusterType.NONE):
-            effective_work_needed += self.restart_overhead
-            
-        # Critical time check: if we're running out of time, use on-demand
-        time_needed_on_demand = effective_work_needed
-        spot_price_ratio = 0.9701 / 3.06  # Spot is about 31.7% of on-demand cost
         
-        # Calculate conservative time estimate for spot (accounting for potential interruptions)
-        spot_safety_factor = 1.5
-        time_needed_spot = effective_work_needed * spot_safety_factor
+        # Calculate urgency: how much work per time we need to maintain
+        required_rate = remaining_work / remaining_time if remaining_time > 0 else float('inf')
         
-        # If time is very critical, use on-demand
-        if time_remaining < time_needed_on_demand * 1.1:
-            self.last_action = ClusterType.ON_DEMAND
+        # Base success rate needed (work per step)
+        base_required_per_step = remaining_work / (remaining_time / gap) if remaining_time > 0 else float('inf')
+        
+        # If we're in restart overhead, wait
+        if self.remaining_restart_overhead > 0:
+            return ClusterType.NONE
+        
+        # Emergency mode: if we're running out of time, use on-demand
+        emergency_threshold = 1.2 * base_required_per_step
+        if required_rate > emergency_threshold and remaining_time < 4 * gap:
             return ClusterType.ON_DEMAND
-            
-        # If spot is available and we have reasonable time buffer, use spot
-        if has_spot and time_remaining > time_needed_spot:
-            self.last_action = ClusterType.SPOT
-            return ClusterType.SPOT
-            
-        # If spot is not available but we have time, consider switching regions
-        num_regions = self.env.get_num_regions()
-        if num_regions > 1 and time_remaining > time_needed_on_demand * 1.2:
-            # Try switching to another region
-            next_region = (self.current_region + 1) % num_regions
-            try:
-                self.env.switch_region(next_region)
-                self.current_region = next_region
-            except:
-                pass
-                
-            # After switching, use spot if available, otherwise pause
-            if has_spot:
-                self.last_action = ClusterType.SPOT
-                return ClusterType.SPOT
-            else:
-                self.last_action = ClusterType.NONE
+        
+        # High urgency: use on-demand if spot not available
+        if required_rate > 1.1 * base_required_per_step and not has_spot:
+            # Try to switch to a region with spot first
+            best_region = self._find_best_region()
+            if best_region != current_region:
+                self.env.switch_region(best_region)
+                # After switching, we'll have restart overhead
                 return ClusterType.NONE
-                
-        # Default to on-demand if we can't use spot and have time pressure
-        if time_remaining > effective_work_needed:
-            self.last_action = ClusterType.ON_DEMAND
             return ClusterType.ON_DEMAND
-            
-        # If we're really out of time but still have work, try spot as last resort
+        
+        # If spot is available and we're not in high urgency, use it
         if has_spot:
-            self.last_action = ClusterType.SPOT
+            # Check if we should switch to a better region
+            if self.consecutive_no_spot > 2 and self.last_spot_region is not None:
+                if self.last_spot_region != current_region:
+                    self.env.switch_region(self.last_spot_region)
+                    return ClusterType.NONE
             return ClusterType.SPOT
-            
-        # Final fallback
-        self.last_action = ClusterType.ON_DEMAND
-        return ClusterType.ON_DEMAND
+        
+        # Spot not available, medium urgency
+        if required_rate > 0.9 * base_required_per_step:
+            # Try to find a region with spot
+            best_region = self._find_best_region()
+            if best_region != current_region:
+                self.env.switch_region(best_region)
+                return ClusterType.NONE
+            # If no spot anywhere and we need to progress, use on-demand
+            return ClusterType.ON_DEMAND
+        
+        # Low urgency: try to find spot in another region
+        best_region = self._find_best_region()
+        if best_region != current_region:
+            self.env.switch_region(best_region)
+            return ClusterType.NONE
+        
+        # If we can't find spot and not urgent, wait
+        return ClusterType.NONE
+    
+    def _find_best_region(self) -> int:
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        
+        # Check current region first
+        if self.spot_availability.get(current_region, False):
+            return current_region
+        
+        # Check other regions for spot availability
+        for region in range(num_regions):
+            if region != current_region and self.spot_availability.get(region, False):
+                return region
+        
+        # If no spot anywhere, stay in current region
+        return current_region

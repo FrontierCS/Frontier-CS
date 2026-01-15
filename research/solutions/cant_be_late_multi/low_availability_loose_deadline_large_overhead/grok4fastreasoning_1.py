@@ -1,10 +1,7 @@
 import json
 from argparse import Namespace
-from typing import List
-
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
-
 
 class Solution(MultiRegionStrategy):
     NAME = "my_strategy"
@@ -13,14 +10,6 @@ class Solution(MultiRegionStrategy):
         with open(spec_path) as f:
             config = json.load(f)
 
-        self.num_regions = len(config["trace_files"])
-        self.traces = []
-        for tf in config["trace_files"]:
-            with open(tf, 'r') as f:
-                trace_data = json.load(f)
-            trace = [bool(x) for x in trace_data]
-            self.traces.append(trace)
-
         args = Namespace(
             deadline_hours=float(config["deadline"]),
             task_duration_hours=[float(config["duration"])],
@@ -28,70 +17,42 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
+        self.consecutive_pauses = 0
+        self.in_ondemand_mode = False
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        done = sum(self.task_done_time)
-        remain = self.task_duration - done
-        if remain <= 0:
+        done_work = sum(self.task_done_time)
+        if done_work >= self.task_duration:
             return ClusterType.NONE
 
-        s = self.env.elapsed_seconds
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
         gap = self.env.gap_seconds
-        t = int(s // gap)
-        time_left = self.deadline - s
-        pending = self.remaining_restart_overhead
-        effective_time_left = time_left - pending
+        work_left = self.task_duration - done_work
+        time_left = self.deadline - self.env.elapsed_seconds
 
-        current_r = self.env.get_current_region()
-        is_rush = remain > 0.8 * effective_time_left
-
-        if is_rush:
-            if has_spot:
-                return ClusterType.SPOT
-            else:
-                return ClusterType.ON_DEMAND
-
-        T = len(self.traces[0]) if self.traces else 0
-        if t >= T:
-            return ClusterType.ON_DEMAND
-
-        candidates = []
-        for r in range(self.num_regions):
-            if t < len(self.traces[r]) and self.traces[r][t]:
-                streak = 0
-                for tt in range(t, len(self.traces[r])):
-                    if self.traces[r][tt]:
-                        streak += 1
-                    else:
-                        break
-                candidates.append((streak, r))
-
-        if candidates:
-            def key_func(cand):
-                streak, r = cand
-                pref = 1 if r == current_r else 0
-                dist = abs(r - current_r)
-                return (streak, pref, -dist)
-            best_cand = max(candidates, key=key_func)
-            best_r = best_cand[1]
-            if best_r != current_r:
-                self.env.switch_region(best_r)
+        if has_spot:
+            self.consecutive_pauses = 0
+            self.in_ondemand_mode = False
             return ClusterType.SPOT
-
-        # no spot now, check for wait
-        t_next = None
-        for tt in range(t + 1, T):
-            has_spot_tt = any(tt < len(self.traces[r]) and self.traces[r][tt] for r in range(self.num_regions))
-            if has_spot_tt:
-                t_next = tt
-                break
-
-        if t_next is None:
-            return ClusterType.ON_DEMAND
-
-        wait_time = (t_next - t) * gap
-        if wait_time + remain > effective_time_left:
-            return ClusterType.ON_DEMAND
         else:
-            return ClusterType.NONE
+            if self.in_ondemand_mode:
+                return ClusterType.ON_DEMAND
+            else:
+                # Check if we should resort to on-demand due to time constraints
+                search_time_estimate = num_regions * gap
+                if time_left < work_left + search_time_estimate:
+                    self.in_ondemand_mode = True
+                    self.consecutive_pauses = 0
+                    return ClusterType.ON_DEMAND
+
+                if self.consecutive_pauses >= num_regions - 1:
+                    self.in_ondemand_mode = True
+                    self.consecutive_pauses = 0
+                    return ClusterType.ON_DEMAND
+                else:
+                    next_region = (current_region + 1) % num_regions
+                    self.env.switch_region(next_region)
+                    self.consecutive_pauses += 1
+                    return ClusterType.NONE

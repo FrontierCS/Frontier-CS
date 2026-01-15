@@ -4,6 +4,7 @@ Docker runner for research problems.
 Runs evaluations in local Docker containers.
 """
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +14,7 @@ from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE
+from ..gen.solution_format import FAILED_EXTENSION
 
 
 class DockerRunner(ResearchRunner):
@@ -110,6 +112,20 @@ class DockerRunner(ResearchRunner):
                 problem_id=problem_id,
                 status=EvaluationStatus.ERROR,
                 message=f"Solution file not found: {solution_path}",
+            )
+
+        # Check for generation failure marker (.FAILED file)
+        if solution_path.suffix == f".{FAILED_EXTENSION}":
+            try:
+                meta = json.loads(solution_path.read_text(encoding="utf-8"))
+                error_msg = meta.get("error", "Generation failed")
+            except (json.JSONDecodeError, OSError):
+                error_msg = "Generation failed"
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                score=0,
+                message=f"Generation failed: {error_msg}",
             )
 
         problem_path = self.get_problem_path(problem_id)

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .pair import Pair
+from ..gen.solution_format import parse_solution_filename
 
 
 def hash_file(path: Path) -> str:
@@ -426,13 +427,29 @@ class EvaluationState:
             if r.is_success
         ]
 
-    def aggregate_by_model(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by model (solution prefix before first _)."""
+    def aggregate_by_model(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by model (solution prefix before first _).
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_model: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None:
+                problem = pair_id.split(":")[1]
+                if problem not in valid_problems:
+                    continue
+
             solution = pair_id.split(":")[0]
-            # Extract model prefix (e.g., "gpt5_flash_attn" -> "gpt5")
-            model = solution.split("_")[0] if "_" in solution else solution
+            # Extract model from nested path (e.g., "llm_router/gpt5_1.py" -> "gpt5")
+            # Solution format: {problem}/{model}.ext or {problem}/{model}_{variant}.ext
+            filename = Path(solution).name
+            parsed = parse_solution_filename(filename)
+            model = parsed[0] if parsed else filename.rsplit(".", 1)[0]
             if model not in by_model:
                 by_model[model] = []
             by_model[model].append(result)
@@ -441,6 +458,7 @@ class EvaluationState:
         for model, results in by_model.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[model] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -448,14 +466,27 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
-    def aggregate_by_problem(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by problem."""
+    def aggregate_by_problem(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by problem.
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_problem: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
             problem = pair_id.split(":")[1]
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None and problem not in valid_problems:
+                continue
             if problem not in by_problem:
                 by_problem[problem] = []
             by_problem[problem].append(result)
@@ -464,6 +495,7 @@ class EvaluationState:
         for problem, results in by_problem.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[problem] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -471,23 +503,36 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
-    def export_aggregated_csv(self, path: Path, by: str = "model") -> None:
-        """Export aggregated results to CSV (by 'model' or 'problem')."""
+    def export_aggregated_csv(
+        self, path: Path, by: str = "model", valid_problems: Optional[Set[str]] = None
+    ) -> None:
+        """Export aggregated results to CSV (by 'model' or 'problem').
+
+        Args:
+            path: Output CSV path
+            by: Aggregation key - 'model' or 'problem'
+            valid_problems: If provided, only include results for these problems.
+                           Used to filter out orphaned results (results for problems
+                           that have been restructured or removed from the filesystem).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if by == "model":
-            data = self.aggregate_by_model()
+            data = self.aggregate_by_model(valid_problems)
             key_name = "model"
         else:
-            data = self.aggregate_by_problem()
+            data = self.aggregate_by_problem(valid_problems)
             key_name = "problem"
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score"])
+            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score", "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"])
             for key, stats in sorted(data.items()):
                 writer.writerow([
                     key,
@@ -497,4 +542,7 @@ class EvaluationState:
                     f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
                     f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
                     f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
+                    f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
+                    f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
+                    f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
                 ])

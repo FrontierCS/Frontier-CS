@@ -106,7 +106,7 @@ def expand_pairs(
     solutions_dir: Optional[Path] = None,
     validate_paths: bool = True,
     ext: str = "py",
-    interleave: bool = True,
+    interleave: bool = False,
 ) -> List[Pair]:
     """
     Expand problems × models × variants into pairs.
@@ -233,7 +233,7 @@ def scan_solutions_dir(
     solutions_dir: Path,
     *,
     problems_dir: Optional[Path] = None,
-    interleave: bool = True,
+    interleave: bool = False,
 ) -> List[Pair]:
     """
     Scan solutions directory and build pairs from nested solution files.

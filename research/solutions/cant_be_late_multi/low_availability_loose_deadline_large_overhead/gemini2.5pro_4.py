@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+import math
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -25,18 +26,15 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Custom initialization for the strategy's state and hyperparameters
-        self.initialized = False
-        self.num_regions = -1
-        self.consecutive_failures = []
-        
+        num_regions = self.env.get_num_regions()
+
+        # Prior: 1 success, 1 failure => 2 visits, 1 success
+        self.visits = [2] * num_regions
+        self.successes = [1] * num_regions
+
         # Hyperparameters
-        self.patience = 3
-        self.safety_preemptions = 2
-        
-        # State for efficient work tracking
-        self.work_done = 0.0
-        self.last_task_done_len = 0
+        self.switch_score_margin = 0.25
+        self.min_slack_for_switch_factor = 2.5
 
         return self
 
@@ -44,49 +42,49 @@ class Solution(MultiRegionStrategy):
         """
         Decide next action based on current state.
         """
-        if not self.initialized:
-            self.num_regions = self.env.get_num_regions()
-            self.consecutive_failures = [0] * self.num_regions
-            self.safety_buffer = self.safety_preemptions * (self.env.gap_seconds + self.restart_overhead)
-            self.initialized = True
-
         current_region = self.env.get_current_region()
+        self.visits[current_region] += 1
         if has_spot:
-            self.consecutive_failures[current_region] = 0
-        else:
-            self.consecutive_failures[current_region] += 1
-        
-        # Efficiently update the total work done
-        if len(self.task_done_time) > self.last_task_done_len:
-            # sum() is only called on the new segments, keeping this step fast.
-            new_segments = self.task_done_time[self.last_task_done_len:]
-            self.work_done += sum(new_segments)
-            self.last_task_done_len = len(self.task_done_time)
-            
-        remaining_work = self.task_duration - self.work_done
+            self.successes[current_region] += 1
 
+        remaining_work = self.task_duration - sum(self.task_done_time)
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        time_left = self.deadline - self.env.elapsed_seconds
-        
-        time_needed_on_demand = remaining_work + self.remaining_restart_overhead
+        time_to_deadline = self.deadline - self.env.elapsed_seconds
 
-        # Urgency check: If slack is below the safety buffer, force On-Demand.
-        if time_needed_on_demand >= time_left - self.safety_buffer:
+        # Panic mode check
+        work_steps_needed = math.ceil(remaining_work / self.env.gap_seconds)
+        time_for_work = work_steps_needed * self.env.gap_seconds
+        
+        critical_time = time_for_work + self.restart_overhead + self.env.gap_seconds
+
+        if time_to_deadline <= critical_time:
             return ClusterType.ON_DEMAND
 
-        # Standard operation: Prioritize cost-saving if not in danger.
+        # Normal mode
         if has_spot:
             return ClusterType.SPOT
         else:
-            # Spot unavailable: decide whether to use On-Demand or switch regions.
-            if self.num_regions > 1 and self.consecutive_failures[current_region] >= self.patience:
-                # Switch region if current one is persistently unavailable.
-                next_region = (current_region + 1) % self.num_regions
-                self.env.switch_region(next_region)
-                # Use On-Demand after switching to guarantee progress.
+            if self.env.get_num_regions() <= 1:
                 return ClusterType.ON_DEMAND
-            else:
-                # Wait for spot in the current region, using On-Demand to make progress.
+
+            scores = [(self.successes[i] / self.visits[i], i) for i in range(self.env.get_num_regions())]
+            best_score, best_region_idx = max(scores)
+
+            if best_region_idx == current_region:
                 return ClusterType.ON_DEMAND
+
+            current_score = self.successes[current_region] / self.visits[current_region]
+
+            if best_score < current_score + self.switch_score_margin:
+                return ClusterType.ON_DEMAND
+            
+            time_cost_of_switch = self.env.gap_seconds + self.restart_overhead
+            slack_time = time_to_deadline - (time_for_work + self.restart_overhead)
+
+            if slack_time < self.min_slack_for_switch_factor * time_cost_of_switch:
+                return ClusterType.ON_DEMAND
+            
+            self.env.switch_region(best_region_idx)
+            return ClusterType.NONE

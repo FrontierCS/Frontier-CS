@@ -134,8 +134,8 @@ def get_problem_name(problem_path: Path) -> str:
     Extract the problem name from the problem path.
     Returns just the problem identifier without any model prefix.
     Examples:
-    - research/vdb_pareto/balanced -> vdb_pareto_balanced
-    - research/cant_be_late_multi/high_availability -> cant_be_late_multi_high_availability
+    - research/vdb_pareto/balanced -> vdb_pareto/balanced
+    - research/cant_be_late_multi/high_availability -> cant_be_late_multi/high_availability
     """
     if problem_path.is_absolute():
         try:
@@ -146,4 +146,4 @@ def get_problem_name(problem_path: Path) -> str:
     parts = [p for p in problem_path.parts if p and p != "problems"]
     if not parts:
         raise ValueError(f"Unable to derive problem name from '{problem_path}'")
-    return "_".join(parts)
+    return "/".join(parts)

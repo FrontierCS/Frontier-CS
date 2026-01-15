@@ -6,12 +6,20 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy focusing on deadline safety and low cost."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "cant_be_late_multi_region_v1"
+    NAME = "cant_be_late_multi_region_v1"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize the solution from spec_path config."""
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -23,98 +31,91 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Caches for fast progress tracking
-        self._progress_done = 0.0
-        self._last_task_done_index = 0
+        # Internal bookkeeping
+        self._last_task_done_len = len(getattr(self, "task_done_time", []))
+        self._work_done = float(sum(self.task_done_time)) if self._last_task_done_len > 0 else 0.0
+        self.force_on_demand = False
 
-        # Lazy-init runtime parameters (depend on env)
-        self._initialized_runtime = False
-        self._bail_margin = 0.0
-        self._idle_margin = 0.0
-        self._od_min_margin = 0.0
+        # Cache scalar task duration and restart overhead in seconds
+        td = getattr(self, "task_duration", None)
+        if isinstance(td, (list, tuple)):
+            self._task_duration = float(td[0]) if td else 0.0
+        else:
+            self._task_duration = float(td) if td is not None else 0.0
+
+        ro = getattr(self, "restart_overhead", None)
+        if isinstance(ro, (list, tuple)):
+            self._restart_overhead = float(ro[0]) if ro else 0.0
+        else:
+            self._restart_overhead = float(ro) if ro is not None else 0.0
 
         return self
 
-    def _lazy_init_runtime(self) -> None:
-        """Initialize runtime-dependent thresholds once env is available."""
-        if self._initialized_runtime:
+    def _update_work_done(self) -> None:
+        """Incrementally track total completed work to avoid O(n) sum each step."""
+        segments = getattr(self, "task_done_time", None)
+        if not segments:
             return
+        current_len = len(segments)
+        if current_len > self._last_task_done_len:
+            new_segments = segments[self._last_task_done_len:current_len]
+            self._work_done += float(sum(new_segments))
+            self._last_task_done_len = current_len
 
-        gap = float(self.env.gap_seconds)
-        overhead = float(self.restart_overhead)
+    def _get_time_left(self) -> float:
+        deadline = getattr(self, "deadline", None)
+        elapsed = float(getattr(self.env, "elapsed_seconds", 0.0))
+        if deadline is None:
+            return float("inf")
+        return float(deadline - elapsed)
 
-        # Minimum margin (time slack) needed to safely finish using only On-Demand
-        # from the decision point onward, accounting for one restart overhead and
-        # one step granularity.
-        self._od_min_margin = gap + overhead
+    def _get_gap_seconds(self) -> float:
+        return float(getattr(self.env, "gap_seconds", 0.0))
 
-        # Bail margin: if margin <= this, we must stick to On-Demand only.
-        # Chosen conservatively so that even after a worst-case bad Spot step
-        # (losing up to gap + overhead of margin), we would still have at least
-        # _od_min_margin remaining when we switch to On-Demand.
-        unit = gap + overhead
-        self._bail_margin = 2.0 * unit
-
-        # Idle margin: when Spot is unavailable and margin > _idle_margin,
-        # it is safe and cost-effective to wait (ClusterType.NONE). Once the
-        # margin drops below this, we start using On-Demand if Spot is absent.
-        self._idle_margin = self._bail_margin + gap
-
-        self._initialized_runtime = True
-
-    def _update_progress_cache(self) -> None:
-        """Incrementally track total work done to avoid O(N) sum each step."""
-        td = self.task_done_time
-        if td is None:
-            return
-        n = len(td)
-        if n > self._last_task_done_index:
-            # Sum only the new segments appended since last step.
-            new_sum = 0.0
-            for v in td[self._last_task_done_index : n]:
-                new_sum += v
-            self._progress_done += new_sum
-            self._last_task_done_index = n
+    def _get_remaining_overhead(self) -> float:
+        return float(getattr(self, "remaining_restart_overhead", 0.0))
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """Decide next action based on current state."""
-        # Ensure runtime thresholds are initialized
-        self._lazy_init_runtime()
+        """
+        Decide next action based on current state.
 
-        # Update cached total progress
-        self._update_progress_cache()
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        # Update cached total work done
+        self._update_work_done()
 
-        # Remaining work (seconds)
-        remaining_work = self.task_duration - self._progress_done
-        if remaining_work <= 0:
-            # Task already completed
+        remaining_work = max(self._task_duration - self._work_done, 0.0)
+        if remaining_work <= 0.0:
+            # Task completed; run nothing further.
             return ClusterType.NONE
 
-        # Remaining wall-clock time until deadline (seconds)
-        remaining_time = self.deadline - self.env.elapsed_seconds
-
-        # If already past deadline, nothing we do can avoid the penalty, but we
-        # still return a valid action (cheap choice: Spot if available).
-        if remaining_time <= 0:
-            return ClusterType.SPOT if has_spot else ClusterType.NONE
-
-        # Margin: extra time beyond required work
-        margin = remaining_time - remaining_work
-
-        # If margin is small (or negative), we must rely on On-Demand only to
-        # avoid any further risk from Spot interruptions or idle waiting.
-        if margin <= self._bail_margin:
+        # If we've already committed to guaranteed completion via on-demand, stick with it.
+        if getattr(self, "force_on_demand", False):
             return ClusterType.ON_DEMAND
 
-        # We have comfortable slack here.
+        time_left = self._get_time_left()
+        gap = self._get_gap_seconds()
+        restart_overhead = self._restart_overhead
+        remaining_overhead = self._get_remaining_overhead()
+
+        # Conservative upper bound on time needed to finish using only on-demand from now.
+        # Includes:
+        # - Possible pending restart overhead
+        # - New restart overhead for switching to on-demand
+        # - Several gap intervals and a constant fudge factor for discretization effects
+        safety_margin = 3.0 * gap + 2.0 * restart_overhead + 60.0  # seconds
+        time_needed_on_demand = remaining_work + remaining_overhead + restart_overhead + safety_margin
+
+        # If we are close enough to the deadline that we cannot safely wait for spot,
+        # switch permanently to on-demand to avoid missing the deadline.
+        if time_left <= time_needed_on_demand:
+            self.force_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Cost-minimizing mode with ample slack:
+        # - Use Spot whenever available.
+        # - If Spot is unavailable, pause to wait for it (no cost) since we still have slack.
         if has_spot:
-            # Use Spot whenever available and we are not in the bailout zone.
             return ClusterType.SPOT
 
-        # Spot unavailable in this timestep.
-        # If slack is large enough, wait (NONE) to avoid expensive On-Demand.
-        if margin > self._idle_margin:
-            return ClusterType.NONE
-
-        # Slack is moderate: cannot afford to keep waiting, so use On-Demand.
-        return ClusterType.ON_DEMAND
+        return ClusterType.NONE

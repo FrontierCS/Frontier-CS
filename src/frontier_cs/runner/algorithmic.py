@@ -2,6 +2,7 @@
 Runner for algorithmic problems using the judge server.
 """
 
+import json
 import logging
 import os
 import subprocess
@@ -13,6 +14,7 @@ from typing import Optional
 import requests
 
 from .base import Runner, EvaluationResult, EvaluationStatus
+from ..gen.solution_format import FAILED_EXTENSION
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +263,20 @@ class AlgorithmicRunner(Runner):
                 problem_id=str(problem_id),
                 status=EvaluationStatus.ERROR,
                 message=f"Solution file not found: {solution_path}",
+            )
+
+        # Check for generation failure marker (.FAILED file)
+        if solution_path.suffix == f".{FAILED_EXTENSION}":
+            try:
+                meta = json.loads(solution_path.read_text(encoding="utf-8"))
+                error_msg = meta.get("error", "Generation failed")
+            except (json.JSONDecodeError, OSError):
+                error_msg = "Generation failed"
+            return EvaluationResult(
+                problem_id=str(problem_id),
+                status=EvaluationStatus.ERROR,
+                score=0,
+                message=f"Generation failed: {error_msg}",
             )
 
         code = solution_path.read_text(encoding="utf-8")

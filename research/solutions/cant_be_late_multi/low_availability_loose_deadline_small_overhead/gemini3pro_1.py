@@ -8,7 +8,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"
+    NAME = "robust_scheduler"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -29,48 +29,44 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-        Prioritizes finishing the task before deadline, then minimizes cost.
         """
-        # Calculate remaining work and time
+        # Update state variables
+        elapsed = self.env.elapsed_seconds
         work_done = sum(self.task_done_time)
-        work_remaining = self.task_duration - work_done
-        time_remaining = self.deadline - self.env.elapsed_seconds
+        work_remaining = max(0.0, self.task_duration - work_done)
+        time_left = self.deadline - elapsed
         
-        # Effective work needed includes the task duration plus any currently pending overhead
-        effective_work_needed = work_remaining + self.remaining_restart_overhead
-        
-        # Slack: How much "extra" time we have beyond the minimum required to finish
-        slack = time_remaining - effective_work_needed
-        
+        # Get environment parameters
         gap = self.env.gap_seconds
         overhead = self.restart_overhead
         
-        # Safety Threshold:
-        # We need to guarantee completion. If we fall below this buffer, we must force On-Demand.
-        # Buffer composition:
-        # 1. restart_overhead: If we switch to OD/Spot now, we might incur new overhead.
-        # 2. 2 * gap: Buffer for the current decision step and discrete time quantization.
-        safety_threshold = 2.0 * gap + 1.1 * overhead
+        # Calculate safety threshold to ensure deadline is met.
+        # We must switch to On-Demand (guaranteed resource) if we are close to running out of time.
+        # The threshold reserves time for:
+        # 1. The actual remaining work.
+        # 2. The restart overhead (incurred if we switch to OD or if Spot is preempted).
+        # 3. A safety buffer (2 * gap) to account for the current time step potentially being lost 
+        #    if we attempt Spot and it fails/is preempted, plus floating point margin.
+        safety_threshold = work_remaining + overhead + (gap * 2.0)
         
-        # 1. Safety Check: If slack is tight, force On-Demand to guarantee completion
-        if slack < safety_threshold:
+        # Panic condition: If time is tight, strictly use On-Demand.
+        if time_left < safety_threshold:
             return ClusterType.ON_DEMAND
-
-        # 2. Cost Optimization: Try to use Spot if available
+            
+        # If we have sufficient slack time, prefer Spot instances to minimize cost.
         if has_spot:
-            # Spot is available in the current region
             return ClusterType.SPOT
-        else:
-            # Spot is unavailable in current region, but we have slack.
-            # Strategy: Probe other regions.
-            # Action: Switch region and return NONE (Pause).
-            # This costs 'gap' time (reducing slack) but $0 money.
-            # In the next step, we will check availability in the new region.
-            
-            num_regions = self.env.get_num_regions()
-            current_region = self.env.get_current_region()
-            next_region = (current_region + 1) % num_regions
-            
-            self.env.switch_region(next_region)
-            
-            return ClusterType.NONE
+        
+        # If Spot is unavailable in the current region but we have slack:
+        # Search for Spot in other regions.
+        # We switch to the next region (Round-Robin) and return NONE.
+        # Returning NONE pauses execution for one time step (gap), allowing us to 
+        # check availability (has_spot) in the new region during the next _step call.
+        # The cost of waiting (time loss) is acceptable due to the slack buffer.
+        num_regions = self.env.get_num_regions()
+        current_region = self.env.get_current_region()
+        next_region = (current_region + 1) % num_regions
+        
+        self.env.switch_region(next_region)
+        
+        return ClusterType.NONE

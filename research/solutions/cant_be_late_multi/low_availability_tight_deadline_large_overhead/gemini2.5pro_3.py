@@ -1,18 +1,20 @@
 import json
 from argparse import Namespace
+import numpy as np
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
-
-    NAME = "adaptive_slack_lr_strategy"  # REQUIRED: unique identifier
+    """
+    A multi-region scheduling strategy that uses full trace lookahead.
+    """
+    NAME = "lookahead_pro"
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from spec_path config.
+        Initialize the solution from spec_path config and pre-process traces.
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -25,87 +27,129 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Defer environment-dependent initializations to the first _step call
-        self.initialized = False
+        # --- Pre-process trace files for lookahead ---
+        raw_traces = []
+        for trace_file in config["trace_files"]:
+            try:
+                with open(trace_file) as f:
+                    trace = [int(line.strip()) > 0 for line in f.readlines()]
+                    raw_traces.append(trace)
+            except (IOError, ValueError):
+                raw_traces.append([])
+        
+        if not raw_traces:
+            max_len = 0
+        else:
+            max_len = max(len(t) for t in raw_traces) if raw_traces else 0
+
+        padded_traces = []
+        for t in raw_traces:
+            padded_traces.append(t + [False] * (max_len - len(t)))
+
+        if not padded_traces:
+            self.spot_traces = np.empty((0, 0), dtype=bool)
+        else:
+            self.spot_traces = np.array(padded_traces, dtype=bool)
+
+        num_regions, num_timesteps = self.spot_traces.shape
+        
+        if num_timesteps > 0:
+            self.cumulative_spot = np.cumsum(self.spot_traces, axis=1, dtype=np.int32)
+            self.next_spot_step = np.full((num_regions, num_timesteps), 
+                                          fill_value=num_timesteps, dtype=np.int32)
+            for r in range(num_regions):
+                next_avail = num_timesteps
+                for t in range(num_timesteps - 1, -1, -1):
+                    if self.spot_traces[r, t]:
+                        next_avail = t
+                    self.next_spot_step[r, t] = next_avail
+        else:
+            self.cumulative_spot = np.empty((num_regions, 0), dtype=np.int32)
+            self.next_spot_step = np.empty((num_regions, 0), dtype=np.int32)
+        
+        self.safety_margin = 2 * self.env.gap_seconds
+        self.risk_factor = 1.5 
+
         return self
 
-    def _lazy_init(self):
-        """
-        Initializes strategy parameters that depend on the environment,
-        which is only available during the `_step` method.
-        """
-        self.num_regions = self.env.get_num_regions()
+    def _get_future_availability(self, region_idx: int, start_step: int, end_step: int) -> int:
+        """Calculates spot availability in a window using precomputed sums."""
+        if self.cumulative_spot.shape[1] == 0:
+            return 0
+        
+        max_step = self.cumulative_spot.shape[1] - 1
+        start_step = min(start_step, max_step)
+        end_step = min(end_step, max_step)
+        
+        if start_step < 0 or start_step > end_step:
+            return 0
 
-        # `must_be_safe_slack`: The minimum slack required to risk a Spot preemption.
-        # It's the time lost from one preemption event (one failed step + recovery).
-        self.must_be_safe_slack = self.env.gap_seconds + self.restart_overhead
-
-        # `slack_to_switch`: The minimum slack required to risk switching regions.
-        # It's the cost of a switch plus the safety buffer.
-        self.slack_to_switch = self.must_be_safe_slack + self.restart_overhead
-
-        # `patience`: Number of consecutive steps without spot before considering a switch.
-        self.patience = 2
-        self.consecutive_no_spot_steps = 0
-
-        # State for least-recently-visited switching policy.
-        self.last_visited_step = [-1] * self.num_regions
-        self.step_counter = 0
-
-        self.initialized = True
+        end_sum = self.cumulative_spot[region_idx, end_step]
+        start_sum = self.cumulative_spot[region_idx, start_step - 1] if start_step > 0 else 0
+        return end_sum - start_sum
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide next action based on current state.
+        Decide next action based on current state and full trace lookahead.
         """
-        if not self.initialized:
-            self._lazy_init()
-
-        self.step_counter += 1
-        current_region = self.env.get_current_region()
-        self.last_visited_step[current_region] = self.step_counter
-
         remaining_work = self.task_duration - sum(self.task_done_time)
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        remaining_time = self.deadline - self.env.elapsed_seconds
-        slack_time = remaining_time - remaining_work
+        current_seconds = self.env.elapsed_seconds
+        time_to_deadline = self.deadline - current_seconds
+        current_step = int(current_seconds // self.env.gap_seconds)
+        num_regions, num_timesteps = self.spot_traces.shape
 
-        # PANIC ZONE: If slack is too low to absorb a single failure,
-        # we must use the most reliable option to make guaranteed progress.
-        if slack_time <= self.must_be_safe_slack:
+        on_demand_finish_time = remaining_work + self.restart_overhead
+        if on_demand_finish_time >= time_to_deadline - self.safety_margin:
             return ClusterType.ON_DEMAND
 
-        # OPPORTUNISTIC ZONE: We have enough slack to tolerate failures.
-        # Prioritize using cheap Spot instances.
+        current_region = self.env.get_current_region()
+        
         if has_spot:
-            self.consecutive_no_spot_steps = 0
             return ClusterType.SPOT
+
+        slack = time_to_deadline - remaining_work
+        
+        can_afford_switch = slack > self.restart_overhead * self.risk_factor + self.safety_margin
+        safe_current_step = min(current_step, num_timesteps - 1)
+
+        if can_afford_switch and num_timesteps > 0:
+            regions_with_spot_now = []
+            for r in range(num_regions):
+                if r != current_region and self.spot_traces[r, safe_current_step]:
+                    regions_with_spot_now.append(r)
+
+            if regions_with_spot_now:
+                best_region_to_switch = -1
+                max_future_avail = -1
+                lookahead_steps = int(remaining_work / self.env.gap_seconds)
+                
+                for r in regions_with_spot_now:
+                    future_avail = self._get_future_availability(r, safe_current_step, safe_current_step + lookahead_steps)
+                    if future_avail > max_future_avail:
+                        max_future_avail = future_avail
+                        best_region_to_switch = r
+
+                if best_region_to_switch != -1:
+                    self.env.switch_region(best_region_to_switch)
+                    return ClusterType.SPOT
+
+        if num_timesteps == 0 or current_step >= num_timesteps:
+            return ClusterType.ON_DEMAND
+
+        next_avail_step = self.next_spot_step[current_region, safe_current_step]
+
+        if next_avail_step >= num_timesteps:
+            return ClusterType.ON_DEMAND
+
+        steps_to_wait = next_avail_step - current_step
+        time_to_wait = steps_to_wait * self.env.gap_seconds if steps_to_wait > 0 else 0
+
+        projected_time_if_wait = time_to_wait + remaining_work + self.restart_overhead
+        
+        if projected_time_if_wait < time_to_deadline - self.safety_margin:
+            return ClusterType.NONE
         else:
-            self.consecutive_no_spot_steps += 1
-            
-            # Decide whether to switch regions or use On-Demand.
-            if (self.consecutive_no_spot_steps >= self.patience and
-                    slack_time > self.slack_to_switch):
-
-                # Find the least recently visited region to switch to.
-                best_next_region = -1
-                min_step = float('inf')
-                for i in range(self.num_regions):
-                    if i == current_region:
-                        continue
-                    if self.last_visited_step[i] < min_step:
-                        min_step = self.last_visited_step[i]
-                        best_next_region = i
-
-                if best_next_region != -1:
-                    self.env.switch_region(best_next_region)
-                    self.consecutive_no_spot_steps = 0
-                    # After switching, a restart overhead is incurred.
-                    # We do nothing in this step to avoid additional costs.
-                    return ClusterType.NONE
-
-            # If we don't switch (not patient enough or not enough slack),
-            # use On-Demand to keep making progress.
             return ClusterType.ON_DEMAND

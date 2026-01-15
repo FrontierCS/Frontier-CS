@@ -4,7 +4,4 @@ gpt-5
 gpt-5.1
 gpt-5.2
 xai/grok-4-fast-reasoning
-anthropic/claude-sonnet-4-5-20250929
-anthropic/claude-opus-4-1
-anthropic/claude-opus-4-5
 deepseek/deepseek-reasoner

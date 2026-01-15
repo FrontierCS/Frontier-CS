@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
   int n = inf.readInt(), x = inf.readInt();
   vector<long long> inp(n);
   for(int i = 0; i < n; i++){
-    inp[i] = inf.readInt(-x, x);
+    inp[i] = inf.readInt(1, (ll)1e9);
   }
 
   int res = ouf.readInt();

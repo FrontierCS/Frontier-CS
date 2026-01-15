@@ -6,9 +6,9 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Cant-Be-Late Multi-Region Scheduling Strategy."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "CantBeLateStrategy"
+    NAME = "CantBeLate_Solution"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -29,56 +29,57 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-        
-        Strategy:
-        1. Calculate 'Slack': Time remaining minus work remaining.
-        2. Panic Mode: If slack is low (close to deadline), force ON_DEMAND to ensure completion.
-        3. Cost Optimization: If slack is sufficient:
-           - If Spot available in current region -> Use SPOT.
-           - If Spot unavailable -> Switch to next region and wait (NONE) to probe there next step.
         """
-        # 1. State Calculation
-        work_done = sum(self.task_done_time)
-        work_remaining = self.task_duration - work_done
+        # 1. Gather Telemetry
         elapsed = self.env.elapsed_seconds
-        time_left = self.deadline - elapsed
-        
-        # If task is effectively done, return NONE
-        if work_remaining <= 1e-6:
-            return ClusterType.NONE
-
         gap = self.env.gap_seconds
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        
+        done = sum(self.task_done_time)
+        remaining_work = self.task_duration - done
+        
+        if remaining_work <= 0:
+            return ClusterType.NONE
+            
+        time_left = self.deadline - elapsed
         overhead = self.restart_overhead
         
-        # 2. Panic Mode Check
-        # Calculate overhead we would pay if we switched to OD now (0 if already on OD)
-        switch_overhead = 0.0 if last_cluster_type == ClusterType.ON_DEMAND else overhead
+        # 2. Safety Analysis
+        # Calculate time required if we ran purely on On-Demand from now on
+        # We include one overhead for the potential switch/start
+        required_time = remaining_work + overhead
         
-        # Safety buffer: 
-        # We need to guarantee we can finish. 
-        # We use a buffer of 2.5 * gap to account for:
-        # - The current step duration
-        # - Discrete step granularity 
-        # - Safety margin against exact deadline failures
-        safety_buffer = 2.5 * gap
+        # Panic Threshold:
+        # If time_left is close to required_time, we must use OD to guarantee meeting deadline.
+        # We add a buffer of 1.5 * gap to account for step granularity and safety.
+        panic_buffer = 1.5 * gap
         
-        min_required_time = work_remaining + switch_overhead
-        
-        # If we are dangerously close to running out of time, use reliable On-Demand
-        if time_left < min_required_time + safety_buffer:
+        if time_left < (required_time + panic_buffer):
+            # Critical state: minimize risk, ignore cost
             return ClusterType.ON_DEMAND
 
-        # 3. Cost Optimization (Safe to explore)
+        # 3. Cost Optimization Strategy
         if has_spot:
-            # Cheapest option available
+            # Best case: Spot is available in current region
             return ClusterType.SPOT
         else:
-            # Spot not available here. We have enough slack to "hunt" for spot elsewhere.
-            # We switch region and return NONE. 
-            # This costs us 1 time step (gap) of idling but saves money if we find Spot.
-            curr_region = self.env.get_current_region()
-            num_regions = self.env.get_num_regions()
-            next_region = (curr_region + 1) % num_regions
-            
+            # Spot unavailable in current region.
+            # We should try another region.
+            next_region = (current_region + 1) % num_regions
             self.env.switch_region(next_region)
-            return ClusterType.NONE
+            
+            # Decision: Should we run OD in the new region immediately, or wait (NONE)?
+            # Run OD: Costs money ($3.06/hr), guarantees progress.
+            # Run NONE: Costs nothing ($0), wastes time (reduces slack).
+            #
+            # If we have abundant slack, we use NONE to "probe" the new region for free.
+            # If slack is getting tighter, we use OD to maintain progress while searching.
+            
+            current_slack = time_left - required_time
+            probe_threshold = 4.0 * gap  # Allow probing if we have >4 steps of slack
+            
+            if current_slack > probe_threshold:
+                return ClusterType.NONE
+            else:
+                return ClusterType.ON_DEMAND

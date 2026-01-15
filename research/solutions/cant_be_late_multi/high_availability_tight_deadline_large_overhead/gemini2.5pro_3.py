@@ -1,6 +1,6 @@
 import json
 from argparse import Namespace
-import math
+import numpy as np
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -9,7 +9,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -26,117 +26,92 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Custom state and parameters
-        self.initialized = False
-        self.stats = []
-        self.num_regions = 0
-        self.total_steps = 0
+        self.spot_traces = []
+        for trace_file in config["trace_files"]:
+            with open(trace_file) as f:
+                trace = [int(line.strip()) for line in f]
+                self.spot_traces.append(trace)
+        
+        self.spot_traces = np.array(self.spot_traces, dtype=np.int8)
 
-        # Heuristic parameter: How long to wait in a region with no spot
-        # before considering a switch, as a multiple of restart_overhead.
-        self.PATIENCE_FACTOR = 1.5
+        self.num_regions = self.spot_traces.shape[0]
+        self.max_trace_steps = self.spot_traces.shape[1]
+        self.deadline_step_idx = int(self.deadline / self.env.gap_seconds)
+        
+        self.panic_buffer_factor = 2.0
+        self.switch_gain_factor = 1.2
+        self.wait_slack_factor = 0.5
+        self.initial_slack = self.deadline - self.task_duration
 
-        # Heuristic parameter: UCB1 exploration constant.
-        self.EXPLORATION_CONSTANT = 1.0
+        self.region_scores_cache = {}
 
         return self
 
-    def _initialize(self):
-        """Lazy initialization on the first call to _step."""
-        self.num_regions = self.env.get_num_regions()
-        self.stats = [
-            {
-                'visits': 0,
-                'spot_avail': 0,
-                'current_unavail_streak': 0,
-            }
-            for _ in range(self.num_regions)
-        ]
-        self.initialized = True
+    def _get_region_scores(self, current_time_step: int) -> np.ndarray:
+        if current_time_step in self.region_scores_cache:
+            return self.region_scores_cache[current_time_step]
+
+        end_idx = min(self.deadline_step_idx, self.max_trace_steps)
+        
+        future_traces = self.spot_traces[:, current_time_step:end_idx]
+        scores = np.sum(future_traces, axis=1)
+        
+        self.region_scores_cache[current_time_step] = scores
+        return scores
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
         """
-        if not self.initialized:
-            self._initialize()
-
-        self.total_steps += 1
-
-        # 1. Calculate current state
-        progress = sum(self.task_done_time)
-        remaining_work = self.task_duration - progress
+        current_time = self.env.elapsed_seconds
+        remaining_work = self.task_duration - sum(self.task_done_time)
 
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        time_left = self.deadline - self.env.elapsed_seconds
-        # Worst-case time needed to finish if we switch to on-demand now.
-        time_needed_on_demand = remaining_work + self.restart_overhead
+        time_left = self.deadline - current_time
+        current_time_step = int(current_time / self.env.gap_seconds)
+        
+        if current_time_step >= self.max_trace_steps:
+            current_time_step = self.max_trace_steps - 1
+
+        time_needed_for_od = remaining_work + self.restart_overhead
+        safety_buffer = self.panic_buffer_factor * self.restart_overhead
+
+        if time_left <= time_needed_for_od + safety_buffer:
+            return ClusterType.ON_DEMAND
 
         current_region = self.env.get_current_region()
 
-        # 2. Update statistics for the current region
-        self.stats[current_region]['visits'] += 1
-        if has_spot:
-            self.stats[current_region]['spot_avail'] += 1
-            self.stats[current_region]['current_unavail_streak'] = 0
-        else:
-            self.stats[current_region]['current_unavail_streak'] += 1
+        region_scores = self._get_region_scores(current_time_step)
+        best_region_idx = np.argmax(region_scores)
+        
+        chosen_region = current_region
+        if best_region_idx != current_region:
+            current_region_score = region_scores[current_region]
+            best_region_score = region_scores[best_region_idx]
+            
+            gain_in_spot_steps = best_region_score - current_region_score
+            gain_in_seconds = gain_in_spot_steps * self.env.gap_seconds
+            
+            switch_cost = self.restart_overhead
+            
+            if gain_in_seconds > switch_cost * self.switch_gain_factor:
+                spot_available_at_target = self.spot_traces[best_region_idx, current_time_step] == 1
+                if spot_available_at_target:
+                    self.env.switch_region(best_region_idx)
+                    chosen_region = best_region_idx
 
-        # 3. Decision Logic
-
-        # A. Critical path: Not enough time for anything but On-Demand.
-        if time_left <= time_needed_on_demand:
-            return ClusterType.ON_DEMAND
-
-        # B. Happy path: Spot is available, use it.
-        if has_spot:
+        spot_available_now = self.spot_traces[chosen_region, current_time_step] == 1
+        if spot_available_now:
             return ClusterType.SPOT
-
-        # C. No spot: Decide whether to stay or switch.
-        patience_time = self.restart_overhead * self.PATIENCE_FACTOR
-        streak_duration = self.stats[current_region]['current_unavail_streak'] * self.env.gap_seconds
-
-        if self.num_regions > 1 and streak_duration >= patience_time:
-            # Patience has run out, time to switch.
-            best_region = -1
-            max_score = -float('inf')
-
-            for j in range(self.num_regions):
-                if j == current_region:
-                    continue
-
-                visits = self.stats[j]['visits']
-                if visits == 0:
-                    # Prioritize unvisited regions for exploration.
-                    best_region = j
-                    break
-
-                # UCB1 score to balance exploitation and exploration.
-                availability_rate = self.stats[j]['spot_avail'] / visits
-                # Add a small epsilon to total_steps to avoid log(0) if total_steps is 1
-                # Although log(1)=0 is fine, this is safer if total_steps starts at 0.
-                log_total_steps = math.log(self.total_steps + 1e-6)
-                exploration_bonus = self.EXPLORATION_CONSTANT * math.sqrt(
-                    log_total_steps / visits
-                )
-                score = availability_rate + exploration_bonus
-
-                if score > max_score:
-                    max_score = score
-                    best_region = j
-
-            if best_region != -1:
-                self.env.switch_region(best_region)
-                # After switching, ON_DEMAND is the safe choice that guarantees progress.
-                return ClusterType.ON_DEMAND
-
-        # D. Stay in the region: Decide between ON_DEMAND and NONE.
-        slack = time_left - time_needed_on_demand
-        if slack > self.env.gap_seconds:
-            # We have enough slack to wait for at least one time step.
-            return ClusterType.NONE
         else:
-            # Not enough slack to wait, must make progress.
-            return ClusterType.ON_DEMAND
+            current_slack = time_left - remaining_work
+            wait_threshold = self.initial_slack * self.wait_slack_factor
+            
+            future_spot_exists = region_scores[chosen_region] > 0
+
+            if current_slack > wait_threshold and future_spot_exists:
+                return ClusterType.NONE
+            else:
+                return ClusterType.ON_DEMAND

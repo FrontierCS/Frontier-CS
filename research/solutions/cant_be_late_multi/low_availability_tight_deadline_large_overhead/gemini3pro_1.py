@@ -1,4 +1,5 @@
 import json
+import random
 from argparse import Namespace
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
@@ -21,58 +22,64 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        self.consecutive_switches = 0
+        
+        self.ban_until = {}
+        self.cooldown = 7200.0  # 2 hours cooldown for bad regions
+        self.safety_buffer = 18000.0  # 5 hours safety buffer
+        
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # 1. Gather state
-        elapsed = self.env.elapsed_seconds
-        done = sum(self.task_done_time)
-        remaining_work = self.task_duration - done
-        time_left = self.deadline - elapsed
-        gap = self.env.gap_seconds
-        overhead = self.restart_overhead
-
-        # 2. Panic Check: Calculate safety margin
-        # If we switch to OD or start OD, we might incur overhead.
-        # If already on OD, overhead is 0.
-        overhead_penalty = 0 if last_cluster_type == ClusterType.ON_DEMAND else overhead
+        current_region = self.env.get_current_region()
+        current_time = self.env.elapsed_seconds
         
-        # Time strictly required to finish on OD
-        min_time_needed = remaining_work + overhead_penalty
+        # Mark current region as bad if no spot available
+        if not has_spot:
+            self.ban_until[current_region] = current_time + self.cooldown
+            
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
+        time_remaining = self.deadline - current_time
         
-        # Buffer to account for step quantization and minor delays.
-        # 2.5 * gap ensures we have at least 2 full steps of buffer.
-        safety_threshold = min_time_needed + (2.5 * gap)
-
-        # If time is running out, force On-Demand to guarantee completion
-        if time_left < safety_threshold:
-            self.consecutive_switches = 0
-            return ClusterType.ON_DEMAND
-
-        # 3. Strategy Logic
-        if has_spot:
-            # Cheapest option available
-            self.consecutive_switches = 0
-            return ClusterType.SPOT
+        # Calculate effective overhead if we were to switch to OD or restart
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            pending_overhead = self.remaining_restart_overhead
         else:
-            # Spot unavailable in current region.
-            # Check if we should search other regions or fallback to OD.
+            pending_overhead = self.restart_overhead
             
-            num_regions = self.env.get_num_regions()
-            slack = time_left - min_time_needed
-            
-            # If we have significant slack (>4 hours/steps), we can afford to search.
-            # Limit consecutive switches to prevent infinite loops without progress.
-            if slack > 4.0 * gap and self.consecutive_switches < num_regions:
-                curr_region = self.env.get_current_region()
-                next_region = (curr_region + 1) % num_regions
-                self.env.switch_region(next_region)
-                self.consecutive_switches += 1
-                
-                # Return NONE to wait one tick and check availability in new region
-                return ClusterType.NONE
-            
-            # Fallback: Not enough slack or all regions checked
-            self.consecutive_switches = 0
+        # Calculate Slack
+        slack = time_remaining - (work_remaining + pending_overhead)
+        
+        # Panic Mode: If slack is too low, use On-Demand to guarantee completion
+        if slack < self.safety_buffer:
             return ClusterType.ON_DEMAND
+            
+        # Spot Mode: If available, use Spot
+        if has_spot:
+            return ClusterType.SPOT
+            
+        # Search Mode: Switch region if current doesn't have Spot
+        num_regions = self.env.get_num_regions()
+        candidates = []
+        for r in range(num_regions):
+            if r == current_region:
+                continue
+            if self.ban_until.get(r, 0) <= current_time:
+                candidates.append(r)
+                
+        target = -1
+        if candidates:
+            target = random.choice(candidates)
+        else:
+            # If all valid candidates are banned, try the one expiring soonest
+            others = [r for r in range(num_regions) if r != current_region]
+            if others:
+                target = min(others, key=lambda x: self.ban_until.get(x, 0))
+                
+        if target != -1:
+            self.env.switch_region(target)
+            # Return NONE to handle overhead and allow next step to check availability
+            return ClusterType.NONE
+            
+        # Fallback if no other regions exist
+        return ClusterType.NONE

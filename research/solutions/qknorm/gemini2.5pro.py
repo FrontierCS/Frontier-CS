@@ -1,7 +1,6 @@
 import torch
 import triton
 import triton.language as tl
-import flashinfer
 
 
 @triton.autotune(
@@ -142,9 +141,8 @@ def qknorm(q: torch.Tensor, k: torch.Tensor, norm_weight: torch.Tensor):
         q_o_2d.stride(0), k_o_2d.stride(0),
         q_o_2d.stride(1), k_o_2d.stride(1),
         num_q_tokens,
-        hidden_dim,
-        eps,
         D=hidden_dim,  # Pass D as a key for autotuning
+        eps=eps,
     )
 
     # The kernel modifies q_o and k_o in place, which have the correct final shape.
@@ -153,20 +151,21 @@ def qknorm(q: torch.Tensor, k: torch.Tensor, norm_weight: torch.Tensor):
 class Solution:
     def solve(self, spec_path: str = None) -> dict:
         import inspect
-        import textwrap
-        
-        # Get the source code of the qknorm and _qknorm_kernel functions
-        qknorm_source = inspect.getsource(qknorm)
-        kernel_source = inspect.getsource(_qknorm_kernel)
-        
-        # Combine them into a single code string with necessary imports
-        full_code = f"""
-import torch
-import triton
-import triton.language as tl
-import flashinfer
 
-{textwrap.dedent(kernel_source)}
-{textwrap.dedent(qknorm_source)}
-"""
-        return {"code": full_code.strip()}
+        # Get the source file and read it directly
+        # (inspect.getsource doesn't work on @triton.autotune decorated functions)
+        source_file = inspect.getfile(qknorm)
+        with open(source_file, 'r') as f:
+            full_source = f.read()
+
+        # Remove the Solution class from the source (keep only the kernel and qknorm)
+        lines = full_source.split('\n')
+        code_lines = []
+        in_solution_class = False
+        for line in lines:
+            if line.startswith('class Solution:'):
+                in_solution_class = True
+            if not in_solution_class:
+                code_lines.append(line)
+
+        return {"code": '\n'.join(code_lines).strip()}

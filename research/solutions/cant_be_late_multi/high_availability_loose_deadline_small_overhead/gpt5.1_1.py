@@ -4,28 +4,9 @@ from argparse import Namespace
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
-# Handle potential naming differences in ClusterType implementation.
-try:
-    CLUSTER_NONE = ClusterType.NONE
-except AttributeError:  # pragma: no cover
-    CLUSTER_NONE = ClusterType.None  # type: ignore[attr-defined]
-
-try:
-    CLUSTER_SPOT = ClusterType.SPOT
-except AttributeError:  # pragma: no cover
-    CLUSTER_SPOT = ClusterType.Spot  # type: ignore[attr-defined]
-
-try:
-    CLUSTER_OD = ClusterType.ON_DEMAND
-except AttributeError:  # pragma: no cover
-    try:
-        CLUSTER_OD = ClusterType.ONDEMAND  # type: ignore[attr-defined]
-    except AttributeError:
-        CLUSTER_OD = ClusterType.OnDemand  # type: ignore[attr-defined]
-
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy implementation."""
+    """Multi-region scheduling strategy focusing on meeting deadline with minimal on-demand usage."""
 
     NAME = "my_strategy"
 
@@ -41,109 +22,118 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state for efficient progress tracking.
-        self._progress_initialized = False
-        self._last_task_len = 0
-        self._total_progress = 0.0
+        # Cross-episode state
+        self._last_elapsed = None
+        self._episode_initialized = False
+
+        # Per-episode cached state (initialized in _reset_episode_state)
+        self._use_on_demand = False
+        self._cached_done = 0.0
+        self._last_task_done_len = 0
+        self._gap_seconds = 0.0
+        self._restart_overhead = 0.0
+        self._delta_spot_max = 0.0
+        self._delta_none_max = 0.0
+        self._total_work_seconds = 0.0
+        self._deadline_seconds = 0.0
 
         return self
 
-    def _initialize_progress(self) -> None:
-        """Lazy initialization of progress-tracking variables."""
-        if self._progress_initialized:
-            return
-        self._progress_initialized = True
-        # At first step, task_done_time should correspond to work done so far (likely 0).
-        self._last_task_len = len(self.task_done_time)
-        if self._last_task_len > 0:
-            self._total_progress = float(sum(self.task_done_time))
-        else:
-            self._total_progress = 0.0
+    def _reset_episode_state(self):
+        """Reset per-episode state; called when a new trace/episode starts."""
+        self._episode_initialized = True
+        self._use_on_demand = False
+        self._cached_done = 0.0
+        self._last_task_done_len = 0
 
-    def _update_progress(self) -> None:
-        """Update cached total progress using newly appended segments."""
-        # Ensure internal structures are set up.
-        if not self._progress_initialized:
-            self._initialize_progress()
+        # Cache environment and problem constants (in seconds)
+        self._gap_seconds = float(getattr(self.env, "gap_seconds", 0.0))
 
-        n = len(self.task_done_time)
-        if n > self._last_task_len:
-            # Sum only the new segments since last step.
-            added = self.task_done_time[self._last_task_len:n]
-            if added:
-                self._total_progress += float(sum(added))
-            self._last_task_len = n
+        ro = getattr(self, "restart_overhead", 0.0)
+        if isinstance(ro, (list, tuple)):
+            ro = ro[0]
+        self._restart_overhead = float(ro)
+
+        td = getattr(self, "task_duration", 0.0)
+        if isinstance(td, (list, tuple)):
+            td = td[0]
+        self._total_work_seconds = float(td)
+
+        dl = getattr(self, "deadline", 0.0)
+        if isinstance(dl, (list, tuple)):
+            dl = dl[0]
+        self._deadline_seconds = float(dl)
+
+        # Conservative upper bounds on elapsed time per step
+        # For spot: at most one full gap plus one restart overhead if preempted
+        self._delta_spot_max = self._gap_seconds + self._restart_overhead
+        # For NONE: at most one full gap of wall-clock time without progress
+        self._delta_none_max = self._gap_seconds
+
+    def _update_work_done_cache(self):
+        """Incrementally maintain sum(self.task_done_time) in O(1) amortized time."""
+        td = self.task_done_time
+        l = len(td)
+        if l > self._last_task_done_len:
+            self._cached_done += sum(td[self._last_task_done_len:l])
+            self._last_task_done_len = l
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Keep cached progress up to date.
-        self._update_progress()
+        # Detect new episode by elapsed time reset
+        current_elapsed = float(self.env.elapsed_seconds)
+        if self._last_elapsed is None or current_elapsed < self._last_elapsed:
+            self._reset_episode_state()
+        self._last_elapsed = current_elapsed
 
-        # Basic parameters (seconds).
-        gap = float(getattr(self.env, "gap_seconds", 0.0))
-        restart_overhead = float(self.restart_overhead)
-        remaining_restart_overhead = float(
-            getattr(self, "remaining_restart_overhead", 0.0) or 0.0
-        )
-        # Effective overhead we must still pay before/while completing on a new cluster.
-        effective_overhead = restart_overhead
-        if remaining_restart_overhead > effective_overhead:
-            effective_overhead = remaining_restart_overhead
+        # Update cached completed work
+        self._update_work_done_cache()
+        work_done = self._cached_done
 
-        task_duration = float(self.task_duration)
+        total_work = self._total_work_seconds
+        work_remaining = max(total_work - work_done, 0.0)
 
-        # Remaining work in seconds.
-        remaining_work = task_duration - self._total_progress
-        if remaining_work <= 0.0:
-            # Task is already complete; no need to run any cluster.
-            return CLUSTER_NONE
+        # If task already finished, do nothing further
+        if work_remaining <= 0.0:
+            return ClusterType.NONE
 
-        now = float(self.env.elapsed_seconds)
-        deadline = float(self.deadline)
-        time_left = deadline - now
+        # If we've already committed to on-demand, always stay there
+        if self._use_on_demand:
+            return ClusterType.ON_DEMAND
 
-        if time_left <= 0.0:
-            # Already at or past deadline; choose ON_DEMAND (penalty is unavoidable anyway).
-            return CLUSTER_OD
+        # Time left until deadline
+        time_left = max(self._deadline_seconds - current_elapsed, 0.0)
 
-        # Time needed to finish if we switch to ON_DEMAND now:
-        # remaining work + (worst-case pending or new restart overhead).
-        od_needed_time = remaining_work + effective_overhead
+        # Conservative overhead to switch to on-demand
+        od_overhead = self._restart_overhead
 
-        # Safety margin based on environment granularity.
-        base_unit = max(gap, restart_overhead, 1.0)
-        safety = 4.0 * base_unit
+        # If even switching to on-demand immediately may not be enough,
+        # still choose on-demand as best-effort.
+        if time_left <= work_remaining + od_overhead:
+            self._use_on_demand = True
+            return ClusterType.ON_DEMAND
 
-        # If even switching to ON_DEMAND now leaves almost no slack,
-        # immediately (or continue to) use ON_DEMAND to minimize lateness risk.
-        if time_left <= od_needed_time + safety:
-            return CLUSTER_OD
-
-        # When Spot is available, decide whether it's still safe to gamble on it.
+        # Decision when spot is available
         if has_spot:
-            # Worst-case for taking one more Spot step:
-            # - We may waste an entire step of length `gap` with zero progress.
-            # - We may incur one restart overhead due to preemption.
-            # - Later, when we switch to ON_DEMAND, we may incur another restart overhead.
-            # So we require enough extra slack beyond `od_needed_time` to cover
-            # approximately `gap + 2 * restart_overhead`, plus safety.
-            extra_for_spot_risk = gap + 2.0 * restart_overhead + safety
+            # Maximum time we might lose this step if we choose spot but gain no progress
+            delta_max = self._delta_spot_max
 
-            if time_left >= od_needed_time + extra_for_spot_risk:
-                # Sufficient slack to safely take another Spot step.
-                return CLUSTER_SPOT
-            # Not enough slack to risk Spot; fall back to guaranteed ON_DEMAND.
-            return CLUSTER_OD
+            # Only use spot if we can afford to potentially waste delta_max time
+            # and still finish on-demand afterwards.
+            if time_left <= work_remaining + od_overhead + delta_max:
+                # Not enough slack to safely risk another spot step
+                self._use_on_demand = True
+                return ClusterType.ON_DEMAND
 
-        # No Spot available in the current region/time.
-        # Decide between idling (NONE) and using expensive ON_DEMAND.
+            # Safe to continue on spot
+            return ClusterType.SPOT
 
-        # If we idle for one step (`gap` seconds) with no progress, then at the next
-        # decision point we will have `time_left - gap` remaining and still need
-        # `od_needed_time` (since remaining_work unchanged). To keep a margin,
-        # require `time_left >= od_needed_time + gap + safety` for idling.
-        if time_left >= od_needed_time + gap + safety:
-            # Plenty of slack: wait for cheaper Spot instead of paying for OD now.
-            return CLUSTER_NONE
+        # Spot not available: consider idling (NONE) vs. switching to on-demand
+        delta_max = self._delta_none_max
 
-        # Slack is getting tight: must use ON_DEMAND to stay on track.
-        return CLUSTER_OD
+        # If we can't afford to lose one idle gap, switch to on-demand now
+        if time_left <= work_remaining + od_overhead + delta_max:
+            self._use_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Otherwise, wait for spot to return
+        return ClusterType.NONE

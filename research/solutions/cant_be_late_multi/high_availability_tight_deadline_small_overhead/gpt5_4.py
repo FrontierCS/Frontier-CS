@@ -1,13 +1,12 @@
 import json
 from argparse import Namespace
-from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_multi_region_v1"
+    NAME = "safe_rotating_guard"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,91 +20,68 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state for efficiency and region selection
+        # Internal state
+        self._committed_od = False
+        self._sum_task_done = 0.0
+        self._last_task_done_len = 0
         self._initialized = False
-        self._done_sum = 0.0
-        self._prev_work_len = 0
-        self._total_wait_seconds = 0.0
-        self._region_scores: List[float] = []
-        self._alpha = 0.08  # EMA update rate for region scores
-        self._last_region = None
+        self._eps = 1e-6  # seconds tolerance
+
         return self
 
-    def _init_once(self):
+    def _init_if_needed(self):
         if self._initialized:
             return
-        n_regions = max(1, int(self.env.get_num_regions()))
-        # Initialize region scores with a high prior since traces have high availability
-        self._region_scores = [0.75] * n_regions
+        # Initialize per-run state that depends on env
+        self._num_regions = self.env.get_num_regions()
         self._initialized = True
-        self._last_region = self.env.get_current_region()
 
-    def _update_progress_cache(self):
-        # Incremental sum to avoid O(n) sum every step
+    def _update_work_done_sum(self):
+        # Efficiently update cumulative work done to avoid summing every step
         cur_len = len(self.task_done_time)
-        if cur_len > self._prev_work_len:
-            self._done_sum += sum(self.task_done_time[self._prev_work_len:cur_len])
-            self._prev_work_len = cur_len
-
-    def _critical_buffer_seconds(self):
-        # Buffer to guarantee completion on switching to On-Demand:
-        # account for discrete step granularity and restart overheads.
-        gap = float(self.env.gap_seconds)
-        overhead = float(self.restart_overhead)
-        # Use a conservative buffer: 2 * gap + 3 * overhead (bounded minimum 30 minutes)
-        return max(1800.0, 2.0 * gap + 3.0 * overhead)
+        if cur_len > self._last_task_done_len:
+            for i in range(self._last_task_done_len, cur_len):
+                self._sum_task_done += self.task_done_time[i]
+            self._last_task_done_len = cur_len
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._init_once()
+        self._init_if_needed()
+        self._update_work_done_sum()
 
-        # Update region score for current region using current availability observation
-        current_region = self.env.get_current_region()
-        if 0 <= current_region < len(self._region_scores):
-            # EMA update
-            s = self._region_scores[current_region]
-            self._region_scores[current_region] = (1.0 - self._alpha) * s + self._alpha * (1.0 if has_spot else 0.0)
+        # Basic quantities (seconds)
+        gap = float(self.env.gap_seconds)
+        time_elapsed = float(self.env.elapsed_seconds)
+        time_left = float(self.deadline - time_elapsed)
 
-        # Maintain progress cache
-        self._update_progress_cache()
+        remaining_work = max(0.0, float(self.task_duration - self._sum_task_done))
 
-        # Basic variables in seconds
-        elapsed = float(self.env.elapsed_seconds)
-        time_left = float(self.deadline) - elapsed
-        remaining_work = float(self.task_duration) - self._done_sum
-
-        # If already done or no time left, do nothing
-        if remaining_work <= 0.0 or time_left <= 0.0:
+        # If already finished or no time left, do nothing
+        if remaining_work <= self._eps or time_left <= self._eps:
             return ClusterType.NONE
 
-        # Safety check: ensure we can finish with On-Demand if necessary
-        crit_buf = self._critical_buffer_seconds()
-
-        # If we are close to deadline, force On-Demand to guarantee completion
-        if time_left <= remaining_work + crit_buf:
+        # Once committed, stay on on-demand to guarantee completion
+        if self._committed_od:
             return ClusterType.ON_DEMAND
 
-        # Prefer SPOT whenever available and we're not at risk
+        # Determine if we can afford to spend this whole step not on OD (worst case 0 progress)
+        # Safety condition: after spending one full gap doing SPOT/NONE (worst-case no progress),
+        # we still must be able to finish with on-demand including one restart overhead.
+        # So require: time_left - gap >= remaining_work + restart_overhead
+        # Add small epsilon margin to avoid floating issues.
+        can_afford_non_od_step = (time_left - gap) >= (remaining_work + self.restart_overhead - self._eps)
+
+        if not can_afford_non_od_step:
+            # Must commit to on-demand now to safely finish
+            self._committed_od = True
+            return ClusterType.ON_DEMAND
+
+        # We can afford a non-OD step this round:
         if has_spot:
+            # Prefer spot when available
             return ClusterType.SPOT
 
-        # Spot not available at current region. Decide to wait (NONE) or use ON_DEMAND.
-        # Slack = spare time relative to required remaining work
-        slack = time_left - remaining_work
-
-        # If there is enough slack beyond critical buffer, we can afford to wait for spot
-        if slack > crit_buf:
-            # As we choose to wait, optionally switch to a better region (for next step)
-            n_regions = len(self._region_scores)
-            if n_regions > 1:
-                # Choose region with highest EMA score
-                best_idx = max(range(n_regions), key=lambda i: self._region_scores[i])
-                # Only switch if the best region is not current and has a sufficiently higher score
-                if best_idx != current_region:
-                    # Mild threshold to avoid thrash; switch if better by small margin
-                    if self._region_scores[best_idx] >= self._region_scores[current_region] + 0.02:
-                        self.env.switch_region(best_idx)
-            # Wait to conserve budget, given we have slack
-            return ClusterType.NONE
-
-        # Slack is not enough to wait: use On-Demand
-        return ClusterType.ON_DEMAND
+        # Spot not available: wait and rotate region to try finding spot next step
+        if self._num_regions > 1:
+            next_region = (self.env.get_current_region() + 1) % self._num_regions
+            self.env.switch_region(next_region)
+        return ClusterType.NONE

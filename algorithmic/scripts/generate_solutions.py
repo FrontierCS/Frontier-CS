@@ -17,6 +17,7 @@ import os
 import time
 import argparse
 import re
+import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -169,6 +170,27 @@ def read_solution_indices(path: Path) -> List[int]:
     return indices or [0]
 
 
+def get_failed_path(solution_path: Path) -> Path:
+    """Get the .FAILED file path for a solution."""
+    return solution_path.with_suffix(".FAILED")
+
+
+def has_failed_marker(solution_path: Path) -> bool:
+    """Check if a .FAILED file exists for this solution."""
+    return get_failed_path(solution_path).exists()
+
+
+def write_failed_marker(solution_path: Path, error: str, model: str) -> None:
+    """Write a .FAILED marker file for a failed generation."""
+    failed_path = get_failed_path(solution_path)
+    failed_path.parent.mkdir(parents=True, exist_ok=True)
+    failed_path.write_text(json.dumps({
+        "error": error,
+        "model": model,
+        "timestamp": datetime.now().isoformat(),
+    }, indent=2), encoding="utf-8")
+
+
 def generate_code(
     statement: str,
     *,
@@ -286,6 +308,10 @@ def main():
     # Execution control
     parser.add_argument("--force", action="store_true",
                         help="Regenerate existing solutions")
+    parser.add_argument("--only-failed", action="store_true",
+                        help="Only regenerate solutions that previously failed (.FAILED files)")
+    parser.add_argument("--mark-failed", action="store_true",
+                        help="Create .FAILED files for missing solutions without generating (for tracking)")
     parser.add_argument("--dryrun", action="store_true",
                         help="Show what would be generated")
     parser.add_argument("--concurrency", type=int, default=4,
@@ -401,9 +427,19 @@ def main():
                 # Nested format: {problem}/{model}.cpp or {problem}/{model}_{variant}.cpp
                 sol_path = get_solution_path(output_dir, problem_id, model_prefix, "cpp", variant_idx)
                 sol_filename = str(sol_path.relative_to(output_dir))
+                failed_path = get_failed_path(sol_path)
 
-                if sol_path.exists() and not args.force:
+                # Handle --only-failed: only process solutions with .FAILED marker
+                if args.only_failed:
+                    if not failed_path.exists():
+                        continue  # Skip - no failure marker
+                    # Has .FAILED - will regenerate
+                elif sol_path.exists() and not args.force:
                     skipped.append(sol_filename)
+                    continue
+                elif failed_path.exists() and not args.force:
+                    # Already tried and failed, skip unless --force
+                    skipped.append(f"{sol_filename} (previously failed)")
                     continue
 
                 tasks.append(GenerationTask(
@@ -448,6 +484,16 @@ def main():
     if not tasks:
         return
 
+    # Handle --mark-failed: create .FAILED files without generating
+    if args.mark_failed:
+        marked = 0
+        for task in tasks:
+            sol_path = output_dir / task.solution_name
+            write_failed_marker(sol_path, "Not generated (marked as failed)", task.model)
+            marked += 1
+        print(f"{yellow('Marked')} {yellow(bold(str(marked)))} solution(s) as failed (.FAILED files created)")
+        return
+
     # Execute tasks
     generated: List[str] = []
     failed: List[str] = []
@@ -471,6 +517,9 @@ def main():
         else:
             api_key = get_fallback_api_key(task.provider)
 
+        sol_path = output_dir / task.solution_name
+        failed_path = get_failed_path(sol_path)
+
         try:
             code = generate_code(
                 task.statement,
@@ -482,15 +531,21 @@ def main():
             )
 
             # Save solution to nested directory
-            sol_path = output_dir / task.solution_name
             sol_path.parent.mkdir(parents=True, exist_ok=True)
             sol_path.write_text(code, encoding="utf-8")
             print(f"  {green('✓')} Saved: {green(str(sol_path))}")
+
+            # Delete .FAILED file if it exists (successful retry)
+            if failed_path.exists():
+                failed_path.unlink()
 
             return ("generated", task.solution_name, None, task.provider, pool_token)
 
         except Exception as exc:
             print(f"  {red('✗')} {red('ERROR:')} {exc}")
+            # Write .FAILED marker file
+            write_failed_marker(sol_path, str(exc), task.model)
+            print(f"  {yellow('!')} Created: {yellow(str(failed_path))}")
             return ("failed", task.solution_name, str(exc), task.provider, pool_token)
 
     # Run tasks
@@ -510,7 +565,7 @@ def main():
             if status == "generated":
                 generated.append(sol_name)
             else:
-                failed.append(sol_name)
+                failed.append(sol_name if error_text is None else f"{sol_name} ({error_text})")
 
     # Print summary
     print(f"\n{bold('Summary:')}")
@@ -521,6 +576,10 @@ def main():
         print(f"  {yellow('○')} Skipped: {yellow(bold(str(len(skipped))))} existing")
     if failed:
         print(f"  {red('✗')} Failed: {red(bold(str(len(failed))))} solution(s)")
+        for name in failed[:5]:
+            print(f"    {dim('•')} {red(name)}")
+        if len(failed) > 5:
+            print(f"    {dim(f'... and {len(failed) - 5} more')}")
 
     print("─" * 40)
 

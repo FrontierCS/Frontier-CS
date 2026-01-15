@@ -1,12 +1,15 @@
 import json
 from argparse import Namespace
+from typing import List, Optional
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_mr"
+    """Your multi-region scheduling strategy."""
+
+    NAME = "cant_be_late_v8"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -20,112 +23,172 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal state
-        self._committed_to_od = False
-        self._done_acc = 0.0
-        self._last_done_len = 0
-        self._rr_initialized = False
-        self._rr_next_region = 0
+        # Internal state for efficient progress tracking
+        self._work_done_total = 0.0
+        self._last_task_len = 0  # number of entries already accounted from task_done_time
+        self._last_step_progress = 0.0
+
+        # Decision flags and thresholds
+        self._commit_to_od = False  # Once True, we keep using On-Demand until finish
+        self._safety_padding = 1.0  # seconds padding for numeric safety
+
+        # Region management
+        num_regions = self.env.get_num_regions()
+        self._gap = self.env.gap_seconds
+        self._last_region_switch_elapsed = -1e18
+        self._switch_cooldown_seconds = 4 * 3600.0  # avoid frequent switching (4 hours)
+        self._switch_min_improvement = 0.08  # improvement threshold to consider switching
+        self._preempt_progress_threshold = 0.10  # ratio to consider near-zero progress
+
+        # Stats per region for spot performance
+        self._region_stats = [
+            {
+                "spot_attempts": 0,
+                "spot_success_sec": 0.0,
+                "last_progress": 0.0,
+                "bad_streak": 0,
+                "good_streak": 0,
+                "fail_score": 0,
+            }
+            for _ in range(num_regions)
+        ]
+
+        # Prior for success rate smoothing
+        self._prior_attempts = 3.0
+        self._prior_success_ratio = 0.97
+
         return self
 
-    def _init_rr(self):
-        if not self._rr_initialized:
-            try:
-                n = self.env.get_num_regions()
-            except Exception:
-                n = 1
-            if n <= 0:
-                n = 1
-            try:
-                cur = self.env.get_current_region()
-            except Exception:
-                cur = 0
-            self._rr_next_region = (cur + 1) % n
-            self._rr_initialized = True
+    def _update_progress_and_stats(self, last_cluster_type: ClusterType):
+        # Update cumulative work done based on new task_done_time entries only
+        if len(self.task_done_time) > self._last_task_len:
+            new_entries = self.task_done_time[self._last_task_len :]
+            delta = 0.0
+            for v in new_entries:
+                delta += float(v)
+            self._work_done_total += delta
+            self._last_step_progress = delta
+            self._last_task_len = len(self.task_done_time)
+        else:
+            self._last_step_progress = 0.0
 
-    def _update_done_acc(self):
-        # Incremental sum of task_done_time to avoid O(n) sum per step
-        tlist = self.task_done_time
-        if tlist is None:
+        # Update per-region stats if last step used SPOT
+        if last_cluster_type == ClusterType.SPOT:
+            region = self.env.get_current_region()
+            stats = self._region_stats[region]
+            stats["spot_attempts"] += 1
+            # Cap progress to be within [0, gap] for stats stability
+            prog = self._last_step_progress
+            if prog < 0.0:
+                prog = 0.0
+            elif prog > self._gap:
+                prog = self._gap
+            stats["spot_success_sec"] += prog
+            stats["last_progress"] = prog
+            ratio = prog / self._gap if self._gap > 0 else 0.0
+            if ratio < self._preempt_progress_threshold:
+                stats["bad_streak"] = stats.get("bad_streak", 0) + 1
+                stats["fail_score"] = stats.get("fail_score", 0) + 1
+                stats["good_streak"] = 0
+            else:
+                stats["bad_streak"] = 0
+                stats["good_streak"] = stats.get("good_streak", 0) + 1
+
+    def _predict_region_success(self, region_idx: int) -> float:
+        stats = self._region_stats[region_idx]
+        attempts = stats["spot_attempts"]
+        success_sec = stats["spot_success_sec"]
+        prior_succ_sec = self._prior_success_ratio * self._gap * self._prior_attempts
+        denom = (attempts + self._prior_attempts) * self._gap
+        if denom <= 0:
+            base = self._prior_success_ratio
+        else:
+            base = (success_sec + prior_succ_sec) / denom
+        penalty = 0.03 * float(stats.get("fail_score", 0))
+        score = base - penalty
+        if score < 0.0:
+            score = 0.0
+        if score > 1.0:
+            score = 1.0
+        return score
+
+    def _choose_region_if_needed(self, has_spot: bool) -> None:
+        # Only consider switching when we plan to use SPOT and have cooldown passed
+        if not has_spot:
             return
-        if len(tlist) > self._last_done_len:
-            # Typically only 0 or 1 new segment per step
-            for i in range(self._last_done_len, len(tlist)):
-                self._done_acc += tlist[i]
-            self._last_done_len = len(tlist)
+        now = self.env.elapsed_seconds
+        if now - self._last_region_switch_elapsed < self._switch_cooldown_seconds:
+            return
 
-    def _get_remaining_work(self):
-        self._update_done_acc()
-        remaining = self.task_duration - self._done_acc
-        if remaining < 0.0:
-            remaining = 0.0
-        return remaining
+        current = self.env.get_current_region()
+        # Trigger switching only if last SPOT step had near-zero progress or consecutive failures
+        current_stats = self._region_stats[current]
+        recent_ratio = (
+            (current_stats["last_progress"] / self._gap) if self._gap > 0 else 0.0
+        )
+        had_recent_zero_like = recent_ratio < self._preempt_progress_threshold
+        has_bad_streak = current_stats.get("bad_streak", 0) >= 2
 
-    def _time_left(self):
-        tl = self.deadline - self.env.elapsed_seconds
-        if tl < 0.0:
-            tl = 0.0
-        return tl
+        if not (had_recent_zero_like or has_bad_streak):
+            return
 
-    def _next_region_rr(self):
-        self._init_rr()
-        try:
-            n = self.env.get_num_regions()
-        except Exception:
-            n = 1
-        if n <= 1:
-            return self.env.get_current_region() if hasattr(self.env, "get_current_region") else 0
-        nxt = self._rr_next_region
-        self._rr_next_region = (nxt + 1) % n
-        return nxt
+        # Compute predicted scores for all regions
+        num_regions = self.env.get_num_regions()
+        scores = [self._predict_region_success(r) for r in range(num_regions)]
+        best_region = max(range(num_regions), key=lambda r: scores[r])
+        best_score = scores[best_region]
+        current_score = scores[current]
+
+        # Switch only if there's a meaningful improvement and different region
+        improvement = best_score - current_score
+        if best_region != current and improvement >= self._switch_min_improvement:
+            self.env.switch_region(best_region)
+            self._last_region_switch_elapsed = now
+
+    def _should_commit_to_od(self, remaining_work: float, time_remaining: float) -> bool:
+        # We ensure that we do not risk missing the deadline
+        # Commit to OD if there's not enough slack to afford another step of waiting/spot attempt
+        # Conservative condition: if we try SPOT or wait for one gap, we must still be able to finish with OD.
+        # If not, commit to OD now.
+        if time_remaining <= remaining_work + self.restart_overhead + self._safety_padding:
+            return True
+        return False
+
+    def _can_wait_one_step(self, remaining_work: float, time_remaining: float) -> bool:
+        # Determine if we can afford to waste one step (gap) and still finish with OD afterward
+        return (time_remaining - self._gap) > (remaining_work + self.restart_overhead + self._safety_padding)
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Ensure round-robin state initialized
-        self._init_rr()
+        # Update internal progress/accounting
+        self._update_progress_and_stats(last_cluster_type)
 
-        # If already committed to on-demand, keep running OD
-        if self._committed_to_od:
+        # If already finished, do nothing
+        remaining_work = self.task_duration - self._work_done_total
+        if remaining_work <= 0.0:
+            return ClusterType.NONE
+
+        time_remaining = self.deadline - self.env.elapsed_seconds
+
+        # If we've committed to OD, keep using it to avoid extra overhead risk
+        if self._commit_to_od or last_cluster_type == ClusterType.ON_DEMAND:
+            self._commit_to_od = True
             return ClusterType.ON_DEMAND
 
-        # Compute remaining work and time
-        rem_work = self._get_remaining_work()
-        if rem_work <= 0.0:
-            return ClusterType.NONE
-        time_left = self._time_left()
-        if time_left <= 0.0:
-            # Out of time; return NONE to avoid errors
-            return ClusterType.NONE
-
-        step = self.env.gap_seconds
-        overhead = self.restart_overhead
-
-        # Slack is extra wall time beyond required work
-        slack = time_left - rem_work
-
-        # If slack is at or below overhead, we must commit to OD now to guarantee finish
-        if slack <= overhead:
-            self._committed_to_od = True
+        # Decide whether we must commit to OD now
+        if self._should_commit_to_od(remaining_work, time_remaining):
+            self._commit_to_od = True
             return ClusterType.ON_DEMAND
 
-        # If spot is available, use it to minimize cost
-        if has_spot:
-            return ClusterType.SPOT
+        # If no global spot availability this step, decide NONE vs OD based on slack
+        if not has_spot:
+            if self._can_wait_one_step(remaining_work, time_remaining):
+                return ClusterType.NONE
+            else:
+                self._commit_to_od = True
+                return ClusterType.ON_DEMAND
 
-        # Spot unavailable:
-        # Decide whether it's safe to wait one step (NONE) while switching region, or commit to OD now.
-        # It's safe to wait if after wasting one step, we still have at least overhead slack.
-        # i.e., (time_left - step) - rem_work >= overhead  => slack - step >= overhead
-        if slack - step >= overhead:
-            # Wait and try another region next step
-            try:
-                nxt = self._next_region_rr()
-                curr = self.env.get_current_region()
-                if nxt != curr:
-                    self.env.switch_region(nxt)
-            except Exception:
-                pass
-            return ClusterType.NONE
-
-        # Not safe to wait; commit to OD now
-        self._committed_to_od = True
-        return ClusterType.ON_DEMAND
+        # Spot is available; attempt SPOT if it's safe to afford one step
+        # We already ensured above that trying SPOT is safe if we didn't commit.
+        # Optionally switch to a better region if recent failure indicated issues
+        self._choose_region_if_needed(has_spot=True)
+        return ClusterType.SPOT

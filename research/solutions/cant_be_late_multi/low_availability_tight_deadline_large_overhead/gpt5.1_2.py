@@ -6,105 +6,107 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Cant-Be-Late multi-region scheduling strategy."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "cant_be_late_v1"
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
-        deadline_hours = float(config["deadline"])
-        duration_hours = float(config["duration"])
-        overhead_hours = float(config["overhead"])
-
         args = Namespace(
-            deadline_hours=deadline_hours,
-            task_duration_hours=[duration_hours],
-            restart_overhead_hours=[overhead_hours],
+            deadline_hours=float(config["deadline"]),
+            task_duration_hours=[float(config["duration"])],
+            restart_overhead_hours=[float(config["overhead"])],
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
 
-        # Convert key parameters to seconds from the initialized environment.
-        # MultiRegionStrategy should have already converted hours -> seconds.
-        self._deadline_seconds = float(self.deadline)
-        self._task_total_duration = float(self.task_duration)
-        self._restart_overhead_seconds = float(self.restart_overhead)
-
-        # Safety margin: keep a buffer before deadline when we switch fully to on-demand.
-        # Use up to 3 hours or half of slack, whichever is smaller.
-        slack_seconds = max(0.0, self._deadline_seconds - self._task_total_duration)
-        if slack_seconds <= 0.0:
-            margin_seconds = 0.0
-        else:
-            max_margin_seconds = 3.0 * 3600.0
-            margin_seconds = min(max_margin_seconds, 0.5 * slack_seconds)
-        self.safety_margin_seconds = margin_seconds
-
-        # State to track cumulative work done efficiently.
-        self._work_done = 0.0
-        self._last_task_done_len = 0
-
-        # Once this flag is set, we exclusively use ON_DEMAND until completion.
-        self._commit_to_on_demand = False
-
+        self._initialize_internal_state()
         return self
 
-    def _update_work_done(self) -> None:
-        """Incrementally update total work done from task_done_time segments."""
+    def _initialize_internal_state(self):
+        # Internal state for tracking progress and policy mode.
+        self._committed_to_on_demand = False
+        self._work_done = 0.0
+        self._last_task_len = 0
+        self._last_seen_elapsed = -1.0
+        if hasattr(self, "env") and hasattr(self.env, "gap_seconds"):
+            self._gap = float(self.env.gap_seconds)
+        else:
+            self._gap = 1.0
+
+    def _reset_if_new_episode(self):
+        # Detect environment reset by a decrease in elapsed time.
+        elapsed = getattr(self.env, "elapsed_seconds", 0.0)
+        if self._last_seen_elapsed < 0.0:
+            # First call ever.
+            self._last_seen_elapsed = elapsed
+        elif elapsed < self._last_seen_elapsed - 1e-6:
+            # New episode detected: reset internal state.
+            self._committed_to_on_demand = False
+            self._work_done = 0.0
+            self._last_task_len = 0
+        # Update stored gap each step (in case env changes it).
+        if hasattr(self.env, "gap_seconds"):
+            self._gap = float(self.env.gap_seconds)
+        self._last_seen_elapsed = elapsed
+
+    def _update_work_done(self):
+        # Incremental sum of task_done_time to avoid O(N^2).
         segments = self.task_done_time
-        cur_len = len(segments)
-        if cur_len > self._last_task_done_len:
-            # Sum only new segments appended since last call.
-            new_work = sum(segments[self._last_task_done_len : cur_len])
-            self._work_done += new_work
-            self._last_task_done_len = cur_len
+        n = len(segments)
+        if n > self._last_task_len:
+            total_new = 0.0
+            for i in range(self._last_task_len, n):
+                total_new += segments[i]
+            self._work_done += total_new
+            self._last_task_len = n
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Update cached work-done total.
+        # Handle potential new episode.
+        self._reset_if_new_episode()
+
+        # Update internal notion of work done.
         self._update_work_done()
 
-        work_done = self._work_done
-        if work_done >= self._task_total_duration:
-            # Task already complete: no need to run anything.
+        remaining_work = self.task_duration - self._work_done
+
+        # If task already done, do not run any more clusters.
+        if remaining_work <= 0.0:
             return ClusterType.NONE
 
-        env = self.env
-        elapsed = env.elapsed_seconds
-        time_left = self._deadline_seconds - elapsed
+        elapsed = self.env.elapsed_seconds
+        deadline = self.deadline
+        time_remaining = deadline - elapsed
 
-        # If we're out of time, nothing sensible to do; but return NONE to avoid extra cost.
-        if time_left <= 0.0:
-            return ClusterType.NONE
-
-        remaining_work = self._task_total_duration - work_done
-
-        # Decide when to fully commit to on-demand.
-        if not self._commit_to_on_demand:
-            # Minimal time needed if we immediately switch to on-demand and never stop:
-            # remaining work plus one restart overhead.
-            min_required_time = remaining_work + self._restart_overhead_seconds
-
-            # Commit when the remaining time is close to this bound (within safety margin).
-            if time_left <= min_required_time + self.safety_margin_seconds:
-                self._commit_to_on_demand = True
-
-        # Once committed, stay on ON_DEMAND regardless of spot availability.
-        if self._commit_to_on_demand:
-            if self._work_done >= self._task_total_duration:
-                return ClusterType.NONE
+        # If we've already passed the deadline (should rarely happen), best-effort ON_DEMAND.
+        if time_remaining <= 0.0:
+            self._committed_to_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Pre-commit phase: be aggressive with spot to minimize cost.
+        # Once we commit to on-demand, we never switch back (avoid further overhead).
+        if self._committed_to_on_demand:
+            return ClusterType.ON_DEMAND
+
+        gap = self._gap
+        restart_overhead = self.restart_overhead
+
+        # Safety check: if waiting one more step (with no progress) would make it
+        # impossible to finish using only on-demand before the deadline,
+        # then commit to on-demand right now.
+        if time_remaining <= remaining_work + restart_overhead + gap:
+            self._committed_to_on_demand = True
+            return ClusterType.ON_DEMAND
+
+        # Pre-commit phase: maximize cheap Spot usage; otherwise wait.
         if has_spot:
             return ClusterType.SPOT
-
-        # Spot not available and we still have ample slack before the commitment threshold:
-        # wait (NONE) instead of paying for expensive on-demand now.
-        return ClusterType.NONE
+        else:
+            return ClusterType.NONE

@@ -6,9 +6,8 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy with guaranteed-deadline fallback."""
-
-    NAME = "my_strategy"
+    """Multi-region scheduling strategy with hard-deadline guarantee."""
+    NAME = "cant_be_late_multi_region_heuristic"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -22,102 +21,180 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Normalize core parameters to scalars (seconds).
-        task_duration_attr = getattr(self, "task_duration", None)
-        if isinstance(task_duration_attr, (list, tuple)):
-            self._task_duration = float(task_duration_attr[0])
-        else:
-            self._task_duration = float(task_duration_attr)
+        # Caches and state
+        self._od_committed = False
+        self._work_done_cache = 0.0
+        self._last_num_segments = 0
+        self._region_initialized = False
 
-        restart_overhead_attr = getattr(self, "restart_overhead", None)
-        if isinstance(restart_overhead_attr, (list, tuple)):
-            self._restart_overhead = float(restart_overhead_attr[0])
+        # Task duration in seconds (handle both scalar and list forms)
+        td = getattr(self, "task_duration", None)
+        if isinstance(td, (list, tuple)):
+            self._task_duration_sec = float(td[0])
+        elif td is not None:
+            self._task_duration_sec = float(td)
         else:
-            self._restart_overhead = float(restart_overhead_attr)
+            # Fallback if parent class changes interface
+            self._task_duration_sec = float(config["duration"]) * 3600.0
 
-        deadline_attr = getattr(self, "deadline", None)
-        if isinstance(deadline_attr, (list, tuple)):
-            self._deadline = float(deadline_attr[0])
-        else:
-            self._deadline = float(deadline_attr)
+        # Choose a preferred region based on trace availability (best-effort, safe fallback)
+        trace_files = config.get("trace_files")
+        self._preferred_region = 0
+        if isinstance(trace_files, list) and trace_files:
+            self._preferred_region = self._infer_best_region(trace_files)
 
-        self._initialize_internal_state()
         return self
 
-    def _initialize_internal_state(self) -> None:
-        """Initialize or reset per-run internal state."""
-        env = getattr(self, "env", None)
-        gap = getattr(env, "gap_seconds", 0.0) if env is not None else 0.0
-        overhead = getattr(self, "_restart_overhead", 0.0)
+    def _infer_best_region(self, trace_files):
+        """Heuristically select region with highest spot availability from traces."""
+        best_idx = 0
+        best_ratio = -1.0
 
-        # Guard time large enough to cover one full step plus a restart.
-        self._guard_time = gap + overhead
+        for idx, path in enumerate(trace_files):
+            avail = 0
+            total = 0
+            try:
+                with open(path, "r") as f:
+                    for line in f:
+                        if total >= 10000:
+                            break  # Limit work per file
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        # Split by common delimiters
+                        line_mod = line.replace(";", ",").replace("\t", ",")
+                        tokens = [t.strip() for t in line_mod.split(",") if t.strip()]
+                        if not tokens:
+                            continue
+                        val = None
+                        # Try from the end; look for 0/1-like tokens
+                        for tok in reversed(tokens):
+                            if tok in ("0", "1"):
+                                val = int(tok)
+                                break
+                            low = tok.lower()
+                            if low == "true":
+                                val = 1
+                                break
+                            if low == "false":
+                                val = 0
+                                break
+                        if val is None:
+                            # Fallback: parse numeric 0/1
+                            for tok in reversed(tokens):
+                                try:
+                                    v = float(tok)
+                                except ValueError:
+                                    continue
+                                if v == 0.0 or v == 1.0:
+                                    val = int(v)
+                                    break
+                        if val is None:
+                            continue
+                        total += 1
+                        if val == 1:
+                            avail += 1
+            except Exception:
+                # If file can't be read or parsed, skip it
+                continue
 
-        # Whether we've irrevocably switched to on-demand.
-        self.force_on_demand = False
+            if total > 0:
+                ratio = avail / total
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_idx = idx
 
-        # Cached total work done (seconds), to avoid O(n) sum each step.
-        lst = getattr(self, "task_done_time", [])
-        self._progress_list_len = len(lst)
-        total = 0.0
-        for v in lst:
-            total += v
-        self._total_work_done = total
+        return best_idx
 
-        # Track elapsed time to detect environment resets.
-        self._last_elapsed = getattr(env, "elapsed_seconds", 0.0) if env is not None else 0.0
+    def _update_work_done_cache(self):
+        """Incrementally maintain total work done to avoid repeated full-list sums."""
+        # Initialize lazily in case solve wasn't called for some reason
+        if not hasattr(self, "_work_done_cache"):
+            self._work_done_cache = 0.0
+            self._last_num_segments = 0
+
+        segments = self.task_done_time
+        n = len(segments)
+        last_len = self._last_num_segments
+        if n > last_len:
+            # Add only new segments
+            self._work_done_cache += sum(segments[last_len:n])
+            self._last_num_segments = n
+        return self._work_done_cache
+
+    def _ensure_region_initialized(self):
+        """Switch to preferred region once at the beginning, if available."""
+        if getattr(self, "_region_initialized", False):
+            return
+        self._region_initialized = True
+        preferred = getattr(self, "_preferred_region", None)
+        try:
+            num_regions = self.env.get_num_regions()
+            cur_region = self.env.get_current_region()
+        except Exception:
+            return  # Environment might not support regions as expected
+
+        if (
+            preferred is not None
+            and isinstance(preferred, int)
+            and 0 <= preferred < num_regions
+            and preferred != cur_region
+        ):
+            try:
+                self.env.switch_region(preferred)
+            except Exception:
+                # If switching fails for any reason, just stay in current region
+                pass
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # Detect environment reset by decreased elapsed time.
-        current_elapsed = self.env.elapsed_seconds
-        last_elapsed = getattr(self, "_last_elapsed", None)
-        if last_elapsed is None or current_elapsed < last_elapsed:
-            self._initialize_internal_state()
-            current_elapsed = self.env.elapsed_seconds
-        else:
-            self._last_elapsed = current_elapsed
+        # Ensure initial region switch (if any)
+        self._ensure_region_initialized()
 
-        # Ensure guard time is set (in case env was unavailable during solve()).
-        if getattr(self, "_guard_time", None) is None:
-            gap = getattr(self.env, "gap_seconds", 0.0)
-            overhead = getattr(self, "_restart_overhead", 0.0)
-            self._guard_time = gap + overhead
+        # Update work done
+        work_done = self._update_work_done_cache()
+        task_total = getattr(self, "_task_duration_sec", None)
+        if task_total is None:
+            td = getattr(self, "task_duration", None)
+            if isinstance(td, (list, tuple)):
+                task_total = float(td[0])
+            else:
+                task_total = float(td)
+            self._task_duration_sec = task_total
 
-        # Incrementally update cached work done.
-        lst = self.task_done_time
-        n = len(lst)
-        if n > self._progress_list_len:
-            inc = 0.0
-            for i in range(self._progress_list_len, n):
-                inc += lst[i]
-            self._total_work_done += inc
-            self._progress_list_len = n
+        remaining_work = task_total - work_done
 
-        work_left = self._task_duration - self._total_work_done
-        if work_left <= 0.0:
-            # Task complete.
+        # If task finished, stop using any cluster
+        if remaining_work <= 0:
             return ClusterType.NONE
 
-        time_left = self._deadline - current_elapsed
-        if time_left <= 0.0:
-            # Already past deadline; nothing useful to do.
+        # Time-related quantities
+        elapsed = self.env.elapsed_seconds
+        deadline = self.deadline
+        time_remaining = deadline - elapsed
+
+        # If already past deadline, further work can't help the score; avoid extra cost
+        if time_remaining <= 0:
             return ClusterType.NONE
 
-        # Decide whether to switch permanently to on-demand.
-        if not self.force_on_demand:
-            # Conservative: assume we will pay a full restart overhead
-            # when we switch to on-demand.
-            safe_slack = time_left - (work_left + self._restart_overhead)
+        # Hard-deadline guarantee via on-demand fallback
+        # Commit to ON_DEMAND when remaining time is too short to safely rely on spot or idling.
+        gap = getattr(self.env, "gap_seconds", 0.0)
+        restart_overhead = self.restart_overhead
 
-            # Commit when slack is within one full step plus overhead.
-            if safe_slack <= self._guard_time:
-                self.force_on_demand = True
+        # Safety margin: restart_overhead plus one time step to account for discretization
+        safety_time = restart_overhead + gap
 
-        if self.force_on_demand:
+        if getattr(self, "_od_committed", False):
             return ClusterType.ON_DEMAND
 
-        # Spot-preferred phase: use Spot whenever available; otherwise wait.
+        if time_remaining <= remaining_work + safety_time:
+            # From now on, stay on on-demand until completion to guarantee finishing before deadline
+            self._od_committed = True
+            return ClusterType.ON_DEMAND
+
+        # Before committing, prefer cheap spot when available; otherwise, wait (NONE)
         if has_spot:
             return ClusterType.SPOT
-        else:
-            return ClusterType.NONE
+
+        # Spot not available and we still have ample slack: wait to avoid expensive on-demand
+        return ClusterType.NONE

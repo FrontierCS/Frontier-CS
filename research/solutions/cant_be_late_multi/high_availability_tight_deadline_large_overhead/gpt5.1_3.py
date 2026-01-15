@@ -6,20 +6,11 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Cant-Be-Late Multi-Region Scheduling Strategy."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "cant_be_late_safe_spot_priority_v1"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -30,108 +21,145 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-
-        # Custom runtime state will be initialized on first _step call.
-        self._initialized_runtime_state = False
-
+        self._setup_policy()
         return self
 
-    # ---- Internal helpers ----
+    def _setup_policy(self) -> None:
+        # Tracking for completed work
+        self._prev_segments_len = len(getattr(self, "task_done_time", []))
+        if self._prev_segments_len > 0:
+            self._total_done = float(sum(self.task_done_time))
+        else:
+            self._total_done = 0.0
+        self._last_total_done = self._total_done
 
-    def _init_runtime(self) -> None:
-        """Initialize per-run cached state (called on first _step)."""
-        self._initialized_runtime_state = True
+        # Time tracking
+        self._last_elapsed_seconds = getattr(self.env, "elapsed_seconds", 0.0)
 
-        # Cached total work done (in seconds).
-        self._work_done = 0.0
-        self._prev_task_len = len(getattr(self, "task_done_time", []))
-        if self._prev_task_len > 0:
-            # Sum once at start; afterwards we only incrementally add.
-            self._work_done = float(sum(self.task_done_time))
+        # Cluster-type performance stats (not heavily used, but kept for extensibility)
+        self._spot_time = 0.0
+        self._spot_work = 0.0
+        self._od_time = 0.0
+        self._od_work = 0.0
 
-        # Once we decide to use ON_DEMAND, we stick with it.
-        self._committed_ondemand = False
+        # Step counters / availability stats
+        self._total_steps = 0
+        self._spot_avail_steps = 0
+        self._spot_not_avail_steps = 0
 
-        # Safety margin before deadline, in seconds.
-        # Use at least 15 minutes or 10 steps, whichever is larger.
-        gap = getattr(self.env, "gap_seconds", 1.0)
-        self._safety_margin = max(15.0 * 60.0, 10.0 * gap)
+        # Commitment flag: once set, always use on-demand
+        self._commit_to_on_demand = False
 
-        # Step counter (not used in logic but may be useful).
-        self._step_count = 0
+        # Core parameters
+        self.task_duration = float(getattr(self, "task_duration", 0.0))
+        self.deadline = float(getattr(self, "deadline", 0.0))
+        self.restart_overhead = float(getattr(self, "restart_overhead", 0.0))
+        gap = float(getattr(self.env, "gap_seconds", 1.0))
 
-        # Number of regions (if available). We do not actively switch regions
-        # in this strategy, but capturing this keeps us compatible.
-        try:
-            self._num_regions = self.env.get_num_regions()
-        except Exception:
-            self._num_regions = 1
+        # Initial slack: total time beyond required pure running time
+        initial_slack = self.deadline - self.task_duration
+        if initial_slack < 0.0:
+            initial_slack = 0.0
+        self._initial_slack = initial_slack
 
-    def _update_work_done_cache(self) -> None:
-        """Incrementally update cached total work done from task_done_time."""
-        td = self.task_done_time
-        cur_len = len(td)
-        if cur_len > self._prev_task_len:
-            new_sum = 0.0
-            for i in range(self._prev_task_len, cur_len):
-                new_sum += td[i]
-            self._work_done += new_sum
-            self._prev_task_len = cur_len
+        # Commit-to-on-demand slack threshold.
+        # Chosen to be big enough to safely absorb one restart overhead and a time step,
+        # but small compared to total slack where applicable.
+        base_commit = gap + 2.0 * self.restart_overhead
+        if initial_slack > 0.0:
+            half_slack = 0.5 * initial_slack
+            commit_slack_threshold = base_commit if base_commit < half_slack else half_slack
+            if commit_slack_threshold < 0.0:
+                commit_slack_threshold = 0.0
+        else:
+            commit_slack_threshold = 0.0
+        self._commit_slack_threshold = commit_slack_threshold
 
-    # ---- Core decision logic ----
+        # Threshold where we start using on-demand when spot is unavailable.
+        # We allow a large portion of initial slack to be spent on waiting / spot overhead,
+        # but keep a buffer above the commit threshold.
+        idle_fraction = 0.3  # fraction of (initial_slack - commit_slack_threshold) we keep as buffer
+        if initial_slack > commit_slack_threshold:
+            extra_slack = initial_slack - commit_slack_threshold
+            use_od_no_spot_threshold = commit_slack_threshold + extra_slack * idle_fraction
+        else:
+            use_od_no_spot_threshold = commit_slack_threshold
+        self._use_od_no_spot_threshold = use_od_no_spot_threshold
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
+        # Defensive lazy init if solve() wasn't called (shouldn't happen in judge)
+        if not hasattr(self, "_prev_segments_len"):
+            self._setup_policy()
 
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
-        """
-        # Lazy initialization once environment is ready.
-        if not getattr(self, "_initialized_runtime_state", False):
-            self._init_runtime()
+        now = self.env.elapsed_seconds
 
-        self._step_count += 1
+        # Update completed work based on task_done_time segments
+        cur_len = len(self.task_done_time)
+        if cur_len > self._prev_segments_len:
+            added = 0.0
+            segments = self.task_done_time
+            for i in range(self._prev_segments_len, cur_len):
+                added += segments[i]
+            self._total_done += added
+            self._prev_segments_len = cur_len
 
-        # Update cached total work done.
-        self._update_work_done_cache()
+        # Update per-cluster statistics
+        delta_time = now - self._last_elapsed_seconds
+        if delta_time < 0.0:
+            delta_time = 0.0
+        new_work = self._total_done - self._last_total_done
+        if new_work < 0.0:
+            new_work = 0.0
 
-        # If somehow already done, do nothing.
-        if self._work_done >= self.task_duration:
+        if last_cluster_type == ClusterType.SPOT:
+            self._spot_time += delta_time
+            self._spot_work += new_work
+        elif last_cluster_type == ClusterType.ON_DEMAND:
+            self._od_time += delta_time
+            self._od_work += new_work
+
+        self._last_elapsed_seconds = now
+        self._last_total_done = self._total_done
+
+        # Availability statistics
+        self._total_steps += 1
+        if has_spot:
+            self._spot_avail_steps += 1
+        else:
+            self._spot_not_avail_steps += 1
+
+        # Remaining work and time
+        remaining_work = self.task_duration - self._total_done
+        if remaining_work <= 0.0:
+            # Task already finished; don't pay extra cost
             return ClusterType.NONE
 
-        # If we're already running ON_DEMAND, stay with it.
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            self._committed_ondemand = True
+        time_left = self.deadline - now
+        if time_left <= 0.0:
+            # Past deadline: no action can fix it, avoid further cost
+            return ClusterType.NONE
 
-        t = self.env.elapsed_seconds
-        g = self.env.gap_seconds
-        O = self.restart_overhead
-        R = max(0.0, self.task_duration - self._work_done)
-        D = self.deadline
-        M = self._safety_margin
+        slack = time_left - remaining_work
 
-        if self._committed_ondemand:
-            # Deterministic phase: always use On-Demand to avoid any risk.
+        # Decide if we must commit to on-demand
+        if not self._commit_to_on_demand:
+            if (
+                slack <= self._commit_slack_threshold
+                or time_left <= self._commit_slack_threshold
+                or time_left <= remaining_work + self.restart_overhead
+            ):
+                self._commit_to_on_demand = True
+
+        if self._commit_to_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Determine if it's safe to spend this step without committing
-        # to On-Demand (worst case: we gain no progress this step, then
-        # next step we start ON_DEMAND and pay one restart overhead).
-        #
-        # Safety condition for *delaying* the switch:
-        #   t + g (this step) + O (overhead when switching next step)
-        #   + R (remaining work) + M (extra safety margin) <= D
-        safe_to_delay = (t + g + O + R + M) <= D
-
-        if not safe_to_delay:
-            # We must start / stay on On-Demand now to guarantee finish.
-            self._committed_ondemand = True
-            return ClusterType.ON_DEMAND
-
-        # In the safe region: minimize cost.
-        # Prefer Spot if available, otherwise pause and wait.
+        # Pre-commit behavior: prefer Spot when available, otherwise potentially wait
         if has_spot:
+            # Spot available: cheapest option, use it
             return ClusterType.SPOT
-
-        # No Spot currently available: wait (no cost) and try again later.
-        return ClusterType.NONE
+        else:
+            # Spot unavailable: if we still have comfortable slack, wait; otherwise use on-demand
+            if slack > self._use_od_no_spot_threshold:
+                return ClusterType.NONE
+            else:
+                return ClusterType.ON_DEMAND

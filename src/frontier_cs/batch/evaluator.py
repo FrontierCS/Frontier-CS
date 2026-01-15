@@ -19,7 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 try:
     from tqdm import tqdm
@@ -514,6 +514,88 @@ class BatchEvaluator:
             score_unbounded=result.score_unbounded,
         )
 
+    def _get_valid_problems(self) -> Set[str]:
+        """
+        Get the set of valid problem names from the filesystem.
+
+        Scans the problems directory to find all valid problem directories.
+        This is used to detect orphaned results in state (results for problems
+        that have been restructured or removed).
+        """
+        if self.problems_dir:
+            probs_dir = self.problems_dir
+        elif self.track == "algorithmic":
+            probs_dir = self.base_dir / "algorithmic" / "problems"
+        else:
+            probs_dir = self.base_dir / "research" / "problems"
+
+        if not probs_dir.exists():
+            logger.warning(f"Problems directory not found: {probs_dir}")
+            return set()
+
+        valid_problems: Set[str] = set()
+
+        def scan_recursive(path: Path, prefix: str = "") -> None:
+            """Recursively scan for problem directories (those with evaluator.py or similar)."""
+            for item in path.iterdir():
+                if not item.is_dir() or item.name.startswith("."):
+                    continue
+
+                problem_name = f"{prefix}{item.name}" if prefix else item.name
+
+                # Check if this is a valid problem directory
+                # A problem directory must have evaluator.py (the actual evaluation script)
+                # config.yaml alone is not sufficient - it may be shared config
+                if self.track == "algorithmic":
+                    is_problem = (item / "problem.yaml").exists()
+                else:
+                    # Research problems must have evaluator.py to be a real problem
+                    is_problem = (item / "evaluator.py").exists() or (item / "evaluate.py").exists()
+
+                if is_problem:
+                    valid_problems.add(problem_name)
+
+                # Always recurse into subdirectories to find nested problems
+                # (e.g., poc_generation/heap_buffer_overflow/arvo_21000)
+                scan_recursive(item, f"{problem_name}/")
+
+        scan_recursive(probs_dir)
+        return valid_problems
+
+    def _get_orphaned_pairs(self) -> Set[str]:
+        """
+        Detect orphaned results in state.
+
+        Orphaned results are evaluation results stored in state for problems
+        that no longer exist in the filesystem. This can happen when:
+        - A problem is restructured (e.g., split into nested subproblems)
+        - A problem is renamed or removed
+
+        Returns:
+            Set of orphaned pair IDs (solution:problem format)
+        """
+        valid_problems = self._get_valid_problems()
+        if not valid_problems:
+            # If we can't determine valid problems, don't filter anything
+            return set()
+
+        orphaned: Set[str] = set()
+        for pair_id in self.state.results.keys():
+            problem = pair_id.split(":")[1]
+            if problem not in valid_problems:
+                orphaned.add(pair_id)
+
+        if orphaned:
+            # Log warning with details about orphaned results
+            orphaned_problems = sorted(set(pid.split(":")[1] for pid in orphaned))
+            logger.warning(
+                f"Found {len(orphaned)} orphaned result(s) in state for {len(orphaned_problems)} problem(s) "
+                f"that no longer exist: {orphaned_problems}. "
+                f"These will be excluded from aggregated reports."
+            )
+
+        return orphaned
+
     def _export_all_results(self, all_pairs: Optional[List[Pair]] = None) -> None:
         """Export all result files."""
         if self._bucket_storage:
@@ -526,8 +608,20 @@ class BatchEvaluator:
         pending_count = self.state.export_pending(self.results_dir / "pending.txt", all_pairs)
         self.state.export_skipped(self.results_dir / "skipped.txt")
 
-        self.state.export_aggregated_csv(self.results_dir / "by_model.csv", by="model")
-        self.state.export_aggregated_csv(self.results_dir / "by_problem.csv", by="problem")
+        # Detect orphaned pairs and filter them from aggregated reports
+        valid_problems = self._get_valid_problems()
+        if valid_problems:
+            orphaned = self._get_orphaned_pairs()  # This logs the warning
+            self.state.export_aggregated_csv(
+                self.results_dir / "by_model.csv", by="model", valid_problems=valid_problems
+            )
+            self.state.export_aggregated_csv(
+                self.results_dir / "by_problem.csv", by="problem", valid_problems=valid_problems
+            )
+        else:
+            # Fallback: no filtering if we can't determine valid problems
+            self.state.export_aggregated_csv(self.results_dir / "by_model.csv", by="model")
+            self.state.export_aggregated_csv(self.results_dir / "by_problem.csv", by="problem")
 
         logger.info(f"Results exported to {self.results_dir}")
         if failed_count > 0:

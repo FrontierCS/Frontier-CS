@@ -1,30 +1,22 @@
 import json
 from argparse import Namespace
+from collections import deque
 
+# These are part of the evaluation environment
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
     """
-    A dynamic multi-region scheduling strategy that balances cost and deadline.
-
-    Core logic:
-    1.  Prioritize Spot instances whenever available to minimize cost.
-    2.  Maintain a "slack" buffer. If the time buffer drops below a threshold,
-        switch to On-Demand to guarantee progress.
-    3.  If a region experiences persistent Spot unavailability, switch to another
-        region in a round-robin fashion to explore better availability.
-    4.  A "panic mode" engages On-Demand when the deadline is critically close,
-        ensuring the task finishes on time even with a potential upcoming failure.
+    A dynamic, adaptive, multi-region scheduling strategy that learns spot
+    availability patterns and makes decisions based on task urgency.
     """
 
-    NAME = "dynamic_slack_strategy"
+    NAME = "adaptive_scheduler"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-        """
+        """Initialize the solution from the problem specification."""
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -36,74 +28,90 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Strategy-specific state initialized in the first _step call
-        self.consecutive_spot_failures = None
+        # Custom initialization for the strategy
+        self.num_regions = len(config["trace_files"])
 
-        # --- Hyperparameters ---
-        # Number of consecutive hours of spot unavailability before switching region.
-        self.FAILURE_THRESHOLD = 2
-        # Number of potential future failures (preemptions/switches) to buffer for.
-        self.SLACK_BUFFER_FAILURES = 3
-        
+        self.history_window_size = 24
+        self.spot_history = {
+            i: deque(maxlen=self.history_window_size) for i in range(self.num_regions)
+        }
+        self.spot_probas = {i: 0.5 for i in range(self.num_regions)}
+
+        # Tunable parameters that control the strategy's risk tolerance
+        self.CRITICAL_BUFFER_FACTOR = 1.5
+        self.ONDEMAND_BUFFER_FACTOR = 5.0
+        self.SWITCH_BUFFER_FACTOR = 10.0
+        self.SWITCH_PROB_IMPROVEMENT = 0.2
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
-        """
-        # One-time initialization on the first step
-        if self.consecutive_spot_failures is None:
-            self.consecutive_spot_failures = [0] * self.env.get_num_regions()
+        """Decide the next action based on the current state."""
+        # Calculate current progress and remaining work/time
+        current_work_done = sum(self.task_done_time)
+        work_left = self.task_duration - current_work_done
 
-        # 1. Calculate current state
-        work_done = sum(self.task_done_time)
-        remaining_work = self.task_duration - work_done
-        
-        # 2. If task is finished, do nothing to save cost.
-        if remaining_work <= 0:
-            return ClusterType.NONE
+        if work_left <= 0.0:
+            return ClusterType.NONE  # Task is complete
 
-        elapsed_time = self.env.elapsed_seconds
-        time_left = self.deadline - elapsed_time
-
-        # 3. Panic Mode: If finishing on time is at risk, use On-Demand.
-        # This checks if we can afford one more failed time step before we
-        # absolutely must use on-demand to guarantee completion.
-        cost_of_one_failed_gamble = self.env.gap_seconds + self.restart_overhead
-        if time_left <= remaining_work + cost_of_one_failed_gamble:
-            return ClusterType.ON_DEMAND
-
+        time_left = self.deadline - self.env.elapsed_seconds
         current_region = self.env.get_current_region()
 
-        # 4. If Spot is available, use it.
+        # Learn from the latest spot availability information
+        history_q = self.spot_history[current_region]
+        history_q.append(1 if has_spot else 0)
+        if history_q:
+            self.spot_probas[current_region] = sum(history_q) / len(history_q)
+
+        # Determine the time needed to finish safely with on-demand
+        needed_overhead_for_od = (
+            0 if last_cluster_type == ClusterType.ON_DEMAND else self.restart_overhead
+        )
+        time_needed_od = work_left + needed_overhead_for_od
+
+        # CRITICAL STATE: If deadline is imminent, use On-Demand to guarantee completion.
+        critical_buffer = self.restart_overhead * self.CRITICAL_BUFFER_FACTOR
+        if time_left <= time_needed_od + critical_buffer:
+            return ClusterType.ON_DEMAND
+
+        # SAFE STATE: If there is sufficient time, optimize for cost.
+        # Ideal case: Spot is available, use it.
         if has_spot:
-            self.consecutive_spot_failures[current_region] = 0
             return ClusterType.SPOT
 
-        # --- From here, has_spot is False ---
-        
-        self.consecutive_spot_failures[current_region] += 1
+        # Fallback case: Spot is unavailable in the current region.
+        # Decide between switching regions, using On-Demand, or waiting.
 
-        # 5. Decide between On-Demand, waiting (None), or switching region.
-        # This decision is based on the available time slack.
-        slack = time_left - remaining_work
-        
-        # We require a buffer to handle future, unexpected preemptions or switches.
-        required_slack_buffer = self.SLACK_BUFFER_FAILURES * (
-            self.restart_overhead + self.env.gap_seconds)
+        # Evaluate switching to a region with better historical spot availability.
+        best_alt_region, max_alt_proba = -1, -1.0
+        regions_to_check = [
+            r for r in range(self.num_regions) if r != current_region
+        ]
+        for r in regions_to_check:
+            if self.spot_probas[r] > max_alt_proba:
+                max_alt_proba = self.spot_probas[r]
+                best_alt_region = r
 
-        if slack < required_slack_buffer:
-            # Not enough slack to risk waiting or switching. Use On-Demand.
-            return ClusterType.ON_DEMAND
+        is_promising = (
+            best_alt_region != -1
+            and max_alt_proba
+            > self.spot_probas[current_region] + self.SWITCH_PROB_IMPROVEMENT
+        )
+
+        switch_buffer = self.restart_overhead * self.SWITCH_BUFFER_FACTOR
+        time_needed_after_switch = work_left + self.restart_overhead
+        can_afford_switch = time_left > time_needed_after_switch + switch_buffer
+
+        if is_promising and can_afford_switch:
+            self.env.switch_region(best_alt_region)
+            return ClusterType.SPOT  # Bet on spot availability in the new region
+
+        # If not switching, decide between using On-Demand or waiting (NONE).
+        ondemand_buffer = self.restart_overhead * self.ONDEMAND_BUFFER_FACTOR
+        can_afford_to_wait = time_left > time_needed_od + ondemand_buffer
+
+        if can_afford_to_wait:
+            return ClusterType.NONE  # Ample slack, wait for spot to save cost
         else:
-            # We have enough slack to be patient.
-            # If spot has been down for too long, explore another region.
-            if self.consecutive_spot_failures[current_region] >= self.FAILURE_THRESHOLD:
-                # Switch to the next region in a round-robin fashion.
-                next_region = (current_region + 1) % self.env.get_num_regions()
-                self.env.switch_region(next_region)
-                # Reset failure counter for the region we are leaving.
-                self.consecutive_spot_failures[current_region] = 0
-
-            # After deciding whether to switch, we wait in this time step.
-            return ClusterType.NONE
+            # Slack is low, make guaranteed progress with On-Demand
+            return ClusterType.ON_DEMAND

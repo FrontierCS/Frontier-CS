@@ -8,7 +8,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "CostOptimizedStrategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -36,63 +36,47 @@ class Solution(MultiRegionStrategy):
         """
         Decide next action based on current state.
 
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        # Calculate current state
+        # Retrieve current state
         elapsed = self.env.elapsed_seconds
         done = sum(self.task_done_time)
-        remaining_work = self.task_duration - done
+        total_duration = self.task_duration
+        needed = total_duration - done
         
-        # If task is effectively complete
-        if remaining_work <= 1e-6:
-            return ClusterType.NONE
-
-        # Panic Logic: Switch to ON_DEMAND if time is running out.
-        # We calculate the latest possible time to switch to OD to ensure completion.
-        # Cost of switching/starting OD: self.restart_overhead.
-        # We add a safety buffer consisting of:
-        # 1. restart_overhead (to cover the switch cost)
-        # 2. 2.0 * gap_seconds (to cover step quantization/loss of current step)
-        # 3. Small margin (0.1 * overhead)
+        # Calculate time budget
+        time_left = self.deadline - elapsed
         
+        # Parameters
         gap = self.env.gap_seconds
-        overhead = self.restart_overhead
+        overhead_const = self.restart_overhead
+        current_penalty = self.remaining_restart_overhead
         
-        # Time required to finish if we start OD now (conservative estimate)
-        time_to_finish_od = remaining_work + overhead
+        # Panic Threshold Calculation:
+        # Determine if we must switch to On-Demand to guarantee completion.
+        # We need enough time to finish work + clear any penalty + safety buffer.
+        # Safety buffer accounts for the granularity of time steps (gap) and potential 
+        # overheads if we make a switch. 
+        # 3.0 * gap provides a robust buffer against losing a few steps to bad Spot attempts.
+        safety_margin = (3.0 * gap) + (2.0 * overhead_const)
         
-        # Buffer to trigger the switch before it's too late
-        safety_buffer = gap * 2.0 + overhead * 0.1
-        
-        if elapsed + time_to_finish_od + safety_buffer >= self.deadline:
+        if time_left < (needed + current_penalty + safety_margin):
+            # Slack is critical; minimize risk by forcing On-Demand
             return ClusterType.ON_DEMAND
-
-        # Strategy: Prefer Spot if available.
+            
+        # Cost Optimization Strategy
         if has_spot:
+            # If Spot is available in current region, use it (cheapest option)
             return ClusterType.SPOT
         else:
-            # Spot not available in current region.
-            # Strategy: Switch to the next region and wait (NONE) one step to check its availability.
-            # We prefer to explore regions rather than wait in a bad region or pay for OD prematurely.
-            
-            curr_region = self.env.get_current_region()
+            # Current region has no Spot, but we have sufficient slack.
+            # Switch to the next region to search for Spot availability.
             num_regions = self.env.get_num_regions()
-            next_region = (curr_region + 1) % num_regions
+            current_region = self.env.get_current_region()
+            next_region = (current_region + 1) % num_regions
             
             self.env.switch_region(next_region)
             
-            # We return NONE because:
-            # 1. 'has_spot' refers to the old region.
-            # 2. We don't know if the new region has spot.
-            # 3. Returning SPOT when unavailable raises an error.
-            # 4. Waiting one step allows us to poll the new region's status in the next _step call.
+            # We return NONE to avoid paying On-Demand costs while moving/searching.
+            # This consumes one time step (gap) but costs $0.
             return ClusterType.NONE

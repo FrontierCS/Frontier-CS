@@ -6,7 +6,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_fallback_v1"
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -20,46 +20,64 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self._commit_on_demand = False
-        self._pending_down_wait_seconds = 0.0
+        # Internal state for handling multiple traces/runs.
+        self._committed_to_on_demand = False
+        self._last_elapsed = -1.0
         return self
 
+    def _maybe_reset_internal_state(self):
+        # Detect new run by elapsed time reset.
+        if self._last_elapsed < 0.0 or self.env.elapsed_seconds < self._last_elapsed:
+            self._committed_to_on_demand = False
+        self._last_elapsed = self.env.elapsed_seconds
+
+    def _remaining_work(self) -> float:
+        done = sum(self.task_done_time) if self.task_done_time else 0.0
+        rem = self.task_duration - done
+        return rem if rem > 0.0 else 0.0
+
+    def _should_commit_on_demand(self, last_cluster_type: ClusterType) -> bool:
+        slack = self.deadline - self.env.elapsed_seconds
+        remaining_work = self._remaining_work()
+
+        # Overhead needed if we choose (or continue) On-Demand now.
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            overhead_needed = self.remaining_restart_overhead
+        else:
+            overhead_needed = self.restart_overhead
+
+        # Commit if we no longer have buffer to tolerate a switch later.
+        # This ensures finishing before deadline if we stay on On-Demand.
+        return slack <= (remaining_work + overhead_needed + 1e-9)
+
+    def _rotate_region(self):
+        n = self.env.get_num_regions()
+        if n <= 1:
+            return
+        cur = self.env.get_current_region()
+        nxt = (cur + 1) % n
+        self.env.switch_region(nxt)
+
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        dt = self.env.gap_seconds
-        progress = sum(self.task_done_time)
-        remain_work = max(0.0, self.task_duration - progress)
-        if remain_work <= 0.0:
+        self._maybe_reset_internal_state()
+
+        # If finished (or effectively finished), do nothing.
+        if self._remaining_work() <= 0.0:
             return ClusterType.NONE
 
-        time_remaining = self.deadline - self.env.elapsed_seconds
-
-        # Once on OD, stay on OD to avoid extra overhead and guarantee completion.
-        if self._commit_on_demand or last_cluster_type == ClusterType.ON_DEMAND:
-            self._commit_on_demand = True
+        # Once committed, stay on On-Demand to guarantee finish.
+        if self._committed_to_on_demand:
             return ClusterType.ON_DEMAND
 
-        overhead_to_switch = self.restart_overhead
-        fudge = dt  # buffer for discretization and overhead accounting uncertainties
-
-        # If we're running out of time, commit to On-Demand now.
-        need_if_switch_now = remain_work + overhead_to_switch
-        if time_remaining <= need_if_switch_now + fudge:
-            self._commit_on_demand = True
-            self._pending_down_wait_seconds = 0.0
+        # Decide whether to commit to On-Demand now.
+        if self._should_commit_on_demand(last_cluster_type):
+            self._committed_to_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Prefer Spot if available.
+        # Prefer Spot when available.
         if has_spot:
-            self._pending_down_wait_seconds = 0.0
             return ClusterType.SPOT
 
-        # Spot not available. Decide whether to wait (NONE) or failover to OD.
-        # If waiting another step risks missing the safe fallback window, switch to OD now.
-        if time_remaining - dt <= remain_work + overhead_to_switch + fudge:
-            self._commit_on_demand = True
-            self._pending_down_wait_seconds = 0.0
-            return ClusterType.ON_DEMAND
-
-        # Otherwise, wait to save cost.
-        self._pending_down_wait_seconds += dt
+        # Spot not available and we have slack: wait (NONE) and try another region next step.
+        self._rotate_region()
         return ClusterType.NONE
