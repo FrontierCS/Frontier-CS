@@ -83,7 +83,6 @@ def load_fused_linear_jsd_from_artifact(artifact_path: Path) -> Any:
                 temp_file = f.name
             
             # Import the module
-            import importlib.util
             spec = importlib.util.spec_from_file_location("temp_fused_linear_jsd_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

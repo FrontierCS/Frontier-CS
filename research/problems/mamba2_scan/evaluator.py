@@ -83,7 +83,6 @@ def load_chunk_scan_from_artifact(artifact_path: Path) -> Any:
                 temp_file = f.name
             
             # Import the module
-            import importlib.util
             spec = importlib.util.spec_from_file_location("temp_chunk_scan_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
