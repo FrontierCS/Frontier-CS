@@ -1,0 +1,21 @@
+[project]
+name = "gemm-optimization"
+version = "0.1.0"
+description = "GEMM optimization problem resources"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=2.0.0",
+    "triton>=2.1.0",
+    "numpy>=1.21.0",
+    "tqdm>=4.64.0",
+]
+
+[tool.setuptools]
+py-modules = ["benchmark"]
+
+[tool.setuptools.packages.find]
+exclude = ["__pycache__"]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
