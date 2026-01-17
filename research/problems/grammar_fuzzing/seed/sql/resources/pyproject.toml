@@ -1,0 +1,8 @@
+[project]
+name = "grammar-fuzzing-sql-seed"
+version = "0.1.0"
+description = "SQL test case generation problem for parser coverage"
+requires-python = ">=3.11"
+dependencies = [
+    "coverage>=7.0.0",
+]

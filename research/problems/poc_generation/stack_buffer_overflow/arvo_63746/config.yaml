@@ -4,3 +4,5 @@ runtime:
   docker:
     image: python:3.11-slim-trixie
     dind: true
+dependencies:
+  uv_project: ../../common

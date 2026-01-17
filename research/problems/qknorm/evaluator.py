@@ -79,25 +79,16 @@ def load_qknorm_from_artifact(artifact_path: Path) -> Any:
                 temp_file = f.name
             
             # Import the module
-            import importlib.util
             spec = importlib.util.spec_from_file_location("temp_qknorm_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
             if not hasattr(module, "qknorm"):
                 raise ValueError("Code must define a 'qknorm' function")
-            
-            # Clean up temporary file
-            os.unlink(temp_file)
-            
+
+            # Don't delete temp file - Triton JIT needs source file at compile time
             return module.qknorm
         except Exception as e:
-            # Clean up temporary file if it exists
-            try:
-                if 'temp_file' in locals():
-                    os.unlink(temp_file)
-            except:
-                pass
             raise
     
     elif "program_path" in artifact:
@@ -193,7 +184,15 @@ def evaluate(solution_path: Path, spec_path: Path) -> dict:
         
         # Evaluate performance
         evaluation_result = evaluate_kernel_performance(qknorm_func)
-        
+
+        # Check if evaluation had an internal error
+        if "error" in evaluation_result and "geometric_mean_speedup" not in evaluation_result:
+            return {
+                "status": "error",
+                "artifact_path": str(artifact_path),
+                **evaluation_result,
+            }
+
         return {
             "status": "success",
             "artifact_path": str(artifact_path),
@@ -248,7 +247,7 @@ def main():
         # Format: "score score_unbounded" (space-separated)
         print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
-        print(f"Evaluation failed: {result['error']}")
+        print(f"Evaluation failed: {result.get('error', 'Unknown error')}")
         # Print error score as last line
         print("0")
         sys.exit(1)

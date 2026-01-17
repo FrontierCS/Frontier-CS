@@ -1,17 +1,17 @@
 import json
-import math
 from argparse import Namespace
+from math import ceil
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """
-    An adaptive multi-region scheduling strategy that balances cost and deadline adherence.
-    """
+    """Your multi-region scheduling strategy."""
 
-    NAME = "adaptive_slack_v1"
+    NAME = "my_strategy"  # REQUIRED: unique identifier
+
+    OD_THRESHOLD = 9000.0
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -28,24 +28,11 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.num_regions = len(config.get("trace_files", []))
-        if self.num_regions == 0:
-            self.num_regions = 1 
-
-        self.region_stats = [
-            {'spot_seen': 0, 'total_seen': 0, 'consecutive_outages': 0}
-            for _ in range(self.num_regions)
-        ]
-
-        # --- Hyperparameters ---
-        self.INITIAL_SAFETY_MARGIN = 1.15
-        self.FINAL_SAFETY_MARGIN = 1.01
-        self.CONSECUTIVE_OUTAGE_THRESHOLD = 2
-        self.WAIT_SLACK_THRESHOLD_FACTOR = 0.25
-
-        # --- Calculated Parameters ---
-        initial_slack = self.deadline - self.task_duration
-        self.wait_slack_threshold_sec = initial_slack * self.WAIT_SLACK_THRESHOLD_FACTOR
+        self.spot_availability = []
+        for trace_file in config["trace_files"]:
+            with open(trace_file) as tf:
+                trace_data = json.load(tf)
+                self.spot_availability.append([bool(x) for x in trace_data])
 
         return self
 
@@ -53,84 +40,72 @@ class Solution(MultiRegionStrategy):
         """
         Decide next action based on current state.
         """
-        # --- 0. State Update and Pre-computation ---
-        env_num_regions = self.env.get_num_regions()
-        if env_num_regions > len(self.region_stats):
-             self.region_stats.extend([
-                {'spot_seen': 0, 'total_seen': 0, 'consecutive_outages': 0}
-                for _ in range(env_num_regions - len(self.region_stats))
-            ])
-             self.num_regions = env_num_regions
-
-        current_region = self.env.get_current_region()
-        
-        stats = self.region_stats[current_region]
-        stats['total_seen'] += 1
-        if has_spot:
-            stats['spot_seen'] += 1
-            stats['consecutive_outages'] = 0
-        else:
-            stats['consecutive_outages'] += 1
-
-        work_done = sum(self.task_done_time)
-        work_rem = self.task_duration - work_done
-
-        if work_rem <= 0:
+        if self.remaining_restart_overhead > 0:
             return ClusterType.NONE
 
-        time_to_deadline = self.deadline - self.env.elapsed_seconds
-        gap_seconds = self.env.gap_seconds
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
+        if work_remaining <= 0:
+            return ClusterType.NONE
 
-        # --- 1. Urgency Calculation (Panic Mode) ---
-        work_plus_overhead = work_rem + self.restart_overhead
-        
-        if gap_seconds <= 0:
-             return ClusterType.ON_DEMAND
-             
-        steps_needed_od = math.ceil(work_plus_overhead / gap_seconds)
-        time_needed_od = steps_needed_od * gap_seconds
+        current_time = self.env.elapsed_seconds
+        time_remaining = self.deadline - current_time
+        time_needed_for_od = work_remaining
+        slack = time_remaining - time_needed_for_od
 
-        progress_ratio = min(1.0, work_done / self.task_duration) if self.task_duration > 0 else 1.0
-        safety_margin = self.INITIAL_SAFETY_MARGIN - (self.INITIAL_SAFETY_MARGIN - self.FINAL_SAFETY_MARGIN) * progress_ratio
-        
-        if time_needed_od * safety_margin >= time_to_deadline:
+        if slack <= self.OD_THRESHOLD:
             return ClusterType.ON_DEMAND
 
-        # --- 2. Normal Mode (Sufficient Slack) ---
         if has_spot:
             return ClusterType.SPOT
 
-        # --- Spot is unavailable. Decide whether to switch, use OD, or wait. ---
-
-        # 2a. Evaluate Region Switching
-        if stats['consecutive_outages'] >= self.CONSECUTIVE_OUTAGE_THRESHOLD:
-            
-            def get_region_score(r_idx):
-                r_stats = self.region_stats[r_idx]
-                return (r_stats['spot_seen'] + 1) / (r_stats['total_seen'] + 2)
-
-            current_score = get_region_score(current_region)
-            
-            best_alt_region = -1
-            max_alt_score = -1.0
-            
-            for i in range(self.num_regions):
-                if i == current_region:
-                    continue
-                
-                score = get_region_score(i)
-                if score > max_alt_score:
-                    max_alt_score = score
-                    best_alt_region = i
-            
-            if best_alt_region != -1 and max_alt_score > current_score:
-                self.env.switch_region(best_alt_region)
-                return ClusterType.ON_DEMAND
-
-        # 2b. Stay in Region: On-Demand vs. Wait (None)
-        slack_sec = time_to_deadline - time_needed_od
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
+        gap_seconds = self.env.gap_seconds
         
-        if slack_sec > self.wait_slack_threshold_sec:
+        if gap_seconds <= 0:
+            return ClusterType.ON_DEMAND
+            
+        current_timestep = int(current_time // gap_seconds)
+
+        best_spot_region = -1
+        for i in range(num_regions):
+            region_idx = (current_region + 1 + i) % num_regions
+            if region_idx == current_region:
+                continue
+            
+            if current_timestep < len(self.spot_availability[region_idx]) and \
+               self.spot_availability[region_idx][current_timestep]:
+                best_spot_region = region_idx
+                break
+        
+        if best_spot_region != -1:
+            self.env.switch_region(best_spot_region)
+            return ClusterType.SPOT
+
+        deadline_timestep = int(self.deadline // gap_seconds)
+        next_spot_timestep = -1
+        
+        max_lookahead = min(deadline_timestep + 1, current_timestep + 100)
+
+        for t_ahead in range(current_timestep + 1, max_lookahead):
+            if t_ahead >= len(self.spot_availability[0]):
+                break 
+            
+            for r in range(num_regions):
+                if self.spot_availability[r][t_ahead]:
+                    next_spot_timestep = t_ahead
+                    break
+            if next_spot_timestep != -1:
+                break
+        
+        if next_spot_timestep == -1:
+            return ClusterType.ON_DEMAND
+
+        wait_steps = next_spot_timestep - current_timestep
+        time_lost_by_waiting = wait_steps * gap_seconds
+
+        if (slack - time_lost_by_waiting) > self.OD_THRESHOLD:
             return ClusterType.NONE
         else:
             return ClusterType.ON_DEMAND

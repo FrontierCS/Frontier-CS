@@ -264,7 +264,7 @@ def main(
     scenarios: List[Dict],
     deadline_hours: float,
     restart_overhead_hours: float,
-    default_solution: str = "../../execution_env/solution_env/solution.py",
+    default_solution: str = "/work/execution_env/solution_env/solution.py",
 ) -> None:
     """Entry point for variant evaluators."""
     parser = argparse.ArgumentParser(description="Evaluate cant-be-late-multi solution")
@@ -296,6 +296,7 @@ def main(
         print(json.dumps({"error": str(e), "score": 0, "traceback": traceback.format_exc()}))
         raise
     else:
+        # Output JSON only - run_evaluator.sh extracts score from JSON
         print(json.dumps(payload))
 
 

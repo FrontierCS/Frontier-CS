@@ -1,6 +1,11 @@
 name: Sync to HuggingFace
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'algorithmic/problems/**'
+      - 'research/problems/**'
   release:
     types: [published]
   workflow_dispatch:  # Allow manual trigger
@@ -23,7 +28,38 @@ jobs:
 
       - name: Upload to HuggingFace
         run: |
-          cd hf_export
-          hf upload FrontierCS/Frontier-CS data --repo-type dataset
+          python -c "
+          from huggingface_hub import HfApi, CommitOperationAdd
+          import os
+          from pathlib import Path
+
+          api = HfApi(token=os.environ['HF_TOKEN'])
+
+          # Collect all files for single commit
+          operations = []
+
+          # Add data files
+          data_dir = Path('hf_export/data')
+          for f in data_dir.iterdir():
+              operations.append(CommitOperationAdd(
+                  path_in_repo=f'data/{f.name}',
+                  path_or_fileobj=str(f)
+              ))
+
+          # Add README
+          operations.append(CommitOperationAdd(
+              path_in_repo='README.md',
+              path_or_fileobj='hf_export/README.md'
+          ))
+
+          # Single commit with all files
+          api.create_commit(
+              repo_id='FrontierCS/Frontier-CS',
+              repo_type='dataset',
+              operations=operations,
+              commit_message='Update dataset'
+          )
+          print(f'Uploaded {len(operations)} files')
+          "
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

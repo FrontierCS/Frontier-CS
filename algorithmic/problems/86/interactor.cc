@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) {
                 
                 // Calculate score: min((ref_queries + 1) / (your_queries + 1), 1)
                 double score_ratio = (double)(ref_queries + 1) / (double)(your_queries + 1);
-                double unbounded_ratio = max(0.0, score_ratio);
+                double unbounded_ratio = std::max(0.0, score_ratio);
                 score_ratio = std::min(1.0, score_ratio);
                 
                 quitp(score_ratio, "Correct tree in %lld queries. Ratio: %.4f, RatioUnbounded: %.4f", your_queries, score_ratio, unbounded_ratio);

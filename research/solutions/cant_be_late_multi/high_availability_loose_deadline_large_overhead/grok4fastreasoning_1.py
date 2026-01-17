@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
@@ -31,14 +32,13 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Load availability traces
-        self.gap = self.env.gap_seconds
-        self.num_regions = self.env.get_num_regions()
-        trace_files = config["trace_files"]
         self.availability = []
-        for path in trace_files:
-            with open(path, 'r') as f:
-                trace = json.load(f)
-                self.availability.append([bool(x) for x in trace])
+        for trace_path in config["trace_files"]:
+            with open(trace_path, "r") as tf:
+                self.availability.append(json.load(tf))
+        self.gap_seconds = self.env.gap_seconds
+        self.num_regions = self.env.get_num_regions()
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
@@ -58,38 +58,35 @@ class Solution(MultiRegionStrategy):
 
         Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
+        progress = sum(self.task_done_time)
+        if progress >= self.task_duration:
+            return ClusterType.NONE
+
         current_region = self.env.get_current_region()
-        step_idx = int(self.env.elapsed_seconds // self.gap)
-        done_work = sum(self.task_done_time)
-        remaining_work = self.task_duration - done_work
-        time_left = self.deadline - self.env.elapsed_seconds
+        elapsed = self.env.elapsed_seconds
+        step_idx = int(elapsed / self.gap_seconds)
 
-        # Safety check: if not enough time even for on-demand, use it
-        if time_left < remaining_work + self.restart_overhead * 2 + self.gap:
-            return ClusterType.ON_DEMAND
+        if has_spot:
+            return ClusterType.SPOT
 
-        # Find best region with longest spot streak starting from now
-        best_region = None
-        best_streak = -1
-        max_lookahead = min(10, int(time_left // self.gap))
+        # Find best region with spot at current step_idx and longest future streak
+        best_r = -1
+        best_streak = 0
         for r in range(self.num_regions):
-            if step_idx >= len(self.availability[r]):
-                continue
-            if not self.availability[r][step_idx]:
-                continue  # not available now
-            streak = 0
-            for s in range(step_idx, step_idx + max_lookahead):
-                if s >= len(self.availability[r]) or not self.availability[r][s]:
-                    break
-                streak += 1
-            if streak > best_streak:
-                best_streak = streak
-                best_region = r
+            if step_idx < len(self.availability[r]) and self.availability[r][step_idx]:
+                streak = 1
+                for t in range(step_idx + 1, len(self.availability[r])):
+                    if self.availability[r][t]:
+                        streak += 1
+                    else:
+                        break
+                if streak > best_streak:
+                    best_streak = streak
+                    best_r = r
 
-        if best_region is not None:
-            if best_region != current_region:
-                self.env.switch_region(best_region)
+        if best_r != -1:
+            if best_r != current_region:
+                self.env.switch_region(best_r)
             return ClusterType.SPOT
         else:
-            # No spot available anywhere now, use on-demand
             return ClusterType.ON_DEMAND

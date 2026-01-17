@@ -2,11 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-EXEC_ROOT=$(cd "$SCRIPT_DIR/../../../execution_env" && pwd 2>/dev/null || true)
-if [[ -z "$EXEC_ROOT" ]]; then
-  echo "Error: execution_env directory not found." >&2
-  exit 1
-fi
+EXEC_ROOT="/work/execution_env"
 
 if [[ ! -f "$EXEC_ROOT/solution_env/solution.py" ]]; then
   echo "Error: Missing $EXEC_ROOT/solution_env/solution.py" >&2

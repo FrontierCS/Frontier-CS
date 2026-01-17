@@ -6,17 +6,27 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
     inputs:
-      problems:
-        description: 'Comma-separated problem IDs (leave empty for all)'
+      track:
+        description: 'Track to evaluate (research, algorithmic, or both)'
         required: false
-        default: ''
-      max_concurrent:
-        description: 'Max concurrent evaluations'
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - research
+          - algorithmic
+      workers:
+        description: 'Number of parallel workers'
         required: false
-        default: '4'
+        default: '20'
+      clusters:
+        description: 'Number of SkyPilot clusters (research track only)'
+        required: false
+        default: '20'
 
 env:
   SKYPILOT_CLOUD: gcp
+  RAY_automatic_object_spilling_enabled: "false"
 
 jobs:
   evaluate:
@@ -27,20 +37,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout internal repository (hidden problems)
+      - name: Checkout internal repository
         uses: actions/checkout@v4
         with:
           repository: FrontierCS/Frontier-CS-internal
           token: ${{ secrets.INTERNAL_REPO_TOKEN }}
           path: internal
 
-      - name: Merge internal problems
-        run: |
-          # Copy internal problems to research/problems (overwrite if exists)
-          if [ -d "internal/research/problems" ]; then
-            cp -r internal/research/problems/* research/problems/
-            echo "Merged $(ls -d internal/research/problems/*/ 2>/dev/null | wc -l) problem directories from internal repo"
-          fi
+      - name: Checkout results repository
+        uses: actions/checkout@v4
+        with:
+          repository: FrontierCS/Frontier-CS-Result
+          token: ${{ secrets.RESULTS_REPO_TOKEN }}
+          path: results-repo
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -56,10 +65,8 @@ jobs:
       - name: Set up GCP credentials
         run: |
           echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/gcp-key.json
-          # Set as application default credentials for SkyPilot
           mkdir -p ~/.config/gcloud
           cp /tmp/gcp-key.json ~/.config/gcloud/application_default_credentials.json
-          # For service account, also activate with gcloud
           if grep -q '"type": "service_account"' /tmp/gcp-key.json; then
             gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
           fi
@@ -70,33 +77,55 @@ jobs:
       - name: Configure SkyPilot
         run: |
           mkdir -p ~/.sky
-          # SkyPilot uses GCP project from gcloud config or ADC
           uv run sky check gcp || true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
-      - name: Run batch evaluation
+      - name: Check internal ⊇ public
+        run: |
+          ./scripts/run_eval.sh --check-overlap --internal-dir internal
+
+      - name: Run research evaluation
+        if: ${{ github.event.inputs.track == 'both' || github.event.inputs.track == 'research' || github.event.inputs.track == '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
-          MAX_CONCURRENT="${{ github.event.inputs.max_concurrent || '4' }}"
+          WORKERS="${{ github.event.inputs.workers || '4' }}"
+          CLUSTERS="${{ github.event.inputs.clusters || '4' }}"
 
-          # Auto-discover solutions from research/solutions directory
-          uv run frontier-eval batch \
-            --solutions-dir research/solutions \
+          ./scripts/run_eval.sh \
+            --track research \
+            --internal-dir internal \
+            --results-repo results-repo \
+            --workers $WORKERS \
+            --clusters $CLUSTERS \
             --skypilot \
-            --max-concurrent $MAX_CONCURRENT \
-            --results-dir results/batch
+            --push
 
-      - name: Upload results
+      - name: Run algorithmic evaluation
+        if: ${{ github.event.inputs.track == 'both' || github.event.inputs.track == 'algorithmic' || github.event.inputs.track == '' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          WORKERS="${{ github.event.inputs.workers || '4' }}"
+
+          ./scripts/run_eval.sh \
+            --track algorithmic \
+            --internal-dir internal \
+            --results-repo results-repo \
+            --workers $WORKERS \
+            --skypilot \
+            --push
+
+      - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results-${{ github.run_id }}
-          path: results/
+          path: internal/results/
           retention-days: 90
 
       - name: Push results to results repository
@@ -104,13 +133,16 @@ jobs:
         env:
           RESULTS_REPO_TOKEN: ${{ secrets.RESULTS_REPO_TOKEN }}
         run: |
-          # Clone the results repository
-          git clone https://x-access-token:${RESULTS_REPO_TOKEN}@github.com/FrontierCS/Frontier-CS-Result.git /tmp/results-repo
+          # Copy results from internal to results-repo
+          if [ -d "internal/results" ]; then
+            cp -r internal/results/* results-repo/
+          fi
+          if [ -d "internal/algorithmic/results" ]; then
+            mkdir -p results-repo/algorithmic
+            cp -r internal/algorithmic/results/* results-repo/algorithmic/
+          fi
 
-          # Copy results
-          cp -r results/* /tmp/results-repo/
-
-          cd /tmp/results-repo
+          cd results-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -124,9 +156,12 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           echo "Cleaning up SkyPilot clusters..."
-          # List and terminate all eval-* clusters
-          uv run sky status --refresh 2>/dev/null | grep -E '^eval-' | awk '{print $1}' | while read cluster; do
-            echo "Terminating cluster: $cluster"
-            uv run sky down "$cluster" -y || true
-          done
+          CLUSTERS=$(uv run sky status --refresh 2>/dev/null | grep -E '^eval-' | awk '{print $1}' || true)
+          if [ -n "$CLUSTERS" ]; then
+            echo "$CLUSTERS" | while read cluster; do
+              echo "Terminating cluster: $cluster"
+              uv run sky down "$cluster" -y &
+            done
+            wait
+          fi
           echo "Cleanup complete"

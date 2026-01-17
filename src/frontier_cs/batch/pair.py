@@ -71,6 +71,33 @@ def _sanitize_name(name: str) -> str:
     return sanitized or "job"
 
 
+def _interleave_pairs(pairs: List[Pair]) -> List[Pair]:
+    """
+    Interleave pairs by problem for better load balancing.
+
+    Instead of evaluating all solutions for problem A, then all for problem B,
+    this interleaves them: A1, B1, C1, A2, B2, C2, ...
+    """
+    from collections import defaultdict
+
+    # Group pairs by problem
+    by_problem: dict = defaultdict(list)
+    for pair in pairs:
+        by_problem[pair.problem].append(pair)
+
+    # Interleave: round-robin across problems
+    result: List[Pair] = []
+    problems = list(by_problem.keys())
+    max_len = max(len(v) for v in by_problem.values()) if by_problem else 0
+
+    for i in range(max_len):
+        for problem in problems:
+            if i < len(by_problem[problem]):
+                result.append(by_problem[problem][i])
+
+    return result
+
+
 def expand_pairs(
     problems: List[str],
     models: List[str],
@@ -79,6 +106,7 @@ def expand_pairs(
     solutions_dir: Optional[Path] = None,
     validate_paths: bool = True,
     ext: str = "py",
+    interleave: bool = False,
 ) -> List[Pair]:
     """
     Expand problems × models × variants into pairs.
@@ -90,6 +118,7 @@ def expand_pairs(
         solutions_dir: Directory containing solutions (for validation)
         validate_paths: Whether to validate solution paths exist
         ext: File extension (default: "py", use "cpp" for algorithmic)
+        interleave: Interleave pairs by problem for load balancing (default: True)
 
     Returns:
         List of Pair objects
@@ -120,6 +149,9 @@ def expand_pairs(
                 # Store relative path from solutions_dir
                 rel_path = str(solution_path.relative_to(solutions_dir)) if solutions_dir else solution_path.name
                 pairs.append(Pair(solution=rel_path, problem=problem))
+
+    if interleave:
+        pairs = _interleave_pairs(pairs)
 
     return pairs
 
@@ -197,7 +229,12 @@ def read_variants_file(path: Path) -> List[int]:
     return variants if variants else [0]
 
 
-def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
+def scan_solutions_dir(
+    solutions_dir: Path,
+    *,
+    problems_dir: Optional[Path] = None,
+    interleave: bool = False,
+) -> List[Pair]:
     """
     Scan solutions directory and build pairs from nested solution files.
 
@@ -206,6 +243,8 @@ def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
 
     Args:
         solutions_dir: Path to solutions directory
+        problems_dir: Optional problems directory for validation (skip invalid problems)
+        interleave: Interleave pairs by problem for load balancing (default: True)
 
     Returns:
         List of Pair objects for valid solution files
@@ -218,7 +257,23 @@ def scan_solutions_dir(solutions_dir: Path) -> List[Pair]:
         return pairs
 
     for path, problem, model, variant in _scan_solutions(solutions_dir):
+        # Validate problem directory if problems_dir is provided
+        if problems_dir:
+            problem_path = problems_dir / problem
+            # A valid problem has evaluator.py/evaluate.sh (research) or config.yaml/testdata (algorithmic)
+            is_valid_problem = (
+                (problem_path / "evaluator.py").exists() or
+                (problem_path / "evaluate.sh").exists() or
+                (problem_path / "config.yaml").exists() or
+                (problem_path / "testdata").is_dir()
+            )
+            if not is_valid_problem:
+                continue
+
         rel_path = str(path.relative_to(solutions_dir))
         pairs.append(Pair(solution=rel_path, problem=problem))
+
+    if interleave:
+        pairs = _interleave_pairs(pairs)
 
     return pairs

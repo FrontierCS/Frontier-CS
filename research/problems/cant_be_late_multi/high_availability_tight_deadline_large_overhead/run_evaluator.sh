@@ -2,17 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-EXEC_ROOT=$(cd "$SCRIPT_DIR/../../../execution_env" && pwd 2>/dev/null || true)
-if [[ -z "$EXEC_ROOT" ]]; then
-  echo "Error: execution_env directory not found." >&2
-  exit 1
-fi
+# Use /work/execution_env in Docker, or local execution_env for manual runs
+EXEC_ROOT="/work/execution_env"
 
-PYBIN="$EXEC_ROOT/.venv/bin/python"
-if [[ ! -x "$PYBIN" ]]; then
-  echo "Error: venv python not found at $PYBIN. Did you run prepare_env.sh?" >&2
-  exit 1
-fi
+# Use system python3 (framework installs deps with uv pip install --system)
+PYBIN="python3"
 
 SOLUTION_PATH="$EXEC_ROOT/solution_env/solution.py"
 SPEC_PATH="$SCRIPT_DIR/resources/submission_spec.json"

@@ -255,7 +255,7 @@ class Evaluator:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate ImageNet Pareto 200K solution")
-    parser.add_argument("--solution", default="../../execution_env/solution_env/solution.py")
+    parser.add_argument("--solution", default="/work/execution_env/solution_env/solution.py")
     parser.add_argument("--out", default="results.json")
     args = parser.parse_args()
 

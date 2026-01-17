@@ -6,12 +6,14 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Multi-region scheduling strategy using spot-first then on-demand fallback."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "my_strategy"
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
-        """Initialize the solution from spec_path config."""
+        """
+        Initialize the solution from spec_path config.
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -23,72 +25,74 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Internal strategy state
-        self._mode_spot_first = 0  # 0: prefer spot, 1: committed to on-demand
-        self._mode = self._mode_spot_first
-        self._base_region = 0  # stick to initial region; avoid region-switch overheads
-
-        # Track accumulated work efficiently without re-summing full list
-        self._work_done = 0.0
-        self._last_task_done_len = 0
-
-        # Conservative safety guard time (seconds) when deciding to commit to on-demand
-        # Use ~3 hours or 3 * overhead, whichever is larger
-        three_hours = 3 * 3600.0
-        self._commit_guard = max(3 * self.restart_overhead, three_hours)
+        # Internal state for efficient progress tracking and policy control.
+        self.committed_to_on_demand = False
+        self._cached_work_done = 0.0
+        self._last_task_done_index = 0
 
         return self
 
     def _update_work_done(self) -> None:
-        """Incrementally update accumulated work from task_done_time list."""
-        td = self.task_done_time
-        n = len(td)
-        if n > self._last_task_done_len:
-            # Sum only new segments
-            s = 0.0
-            for i in range(self._last_task_done_len, n):
-                s += td[i]
-            self._work_done += s
-            self._last_task_done_len = n
-
-    def _should_commit_to_ondemand(self, time_left: float, work_remaining: float) -> bool:
-        """Decide if we must switch to on-demand to safely meet deadline."""
-        # Time needed if we switch to on-demand now (worst case: pay full restart_overhead once)
-        needed_time = work_remaining + self.restart_overhead
-        # Commit when remaining slack is no more than needed_time plus a guard buffer
-        return time_left <= needed_time + self._commit_guard
+        """Incrementally update cached work done to avoid O(n) sums each step."""
+        lst = self.task_done_time
+        idx = self._last_task_done_index
+        if idx < len(lst):
+            # Only sum newly added segments.
+            self._cached_work_done += sum(lst[idx:])
+            self._last_task_done_index = len(lst)
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """Decide next action based on current state."""
-        # Update internal work accounting
-        self._update_work_done()
+        """
+        Decide next action based on current state.
 
-        # If already completed, do nothing further
-        work_remaining = self.task_duration - self._work_done
-        if work_remaining <= 0:
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
+        # Efficiently track total work completed so far.
+        self._update_work_done()
+        work_done = self._cached_work_done
+
+        remaining_work = self.task_duration - work_done
+        if remaining_work <= 0.0:
+            # Task finished; no need to run more.
+            self.committed_to_on_demand = True
             return ClusterType.NONE
 
-        # Basic time bookkeeping
-        time_elapsed = self.env.elapsed_seconds
-        time_left = self.deadline - time_elapsed
+        elapsed = self.env.elapsed_seconds
+        time_remaining = self.deadline - elapsed
 
-        # Hard fail-safe: if somehow past deadline, just use on-demand
-        if time_left <= 0:
+        # If for some reason we're at/after deadline but not done, use on-demand.
+        if time_remaining <= 0.0:
+            self.committed_to_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Once committed, always use on-demand
-        if self._mode != self._mode_spot_first:
+        # Once committed, always run on-demand to avoid further restarts.
+        if self.committed_to_on_demand:
             return ClusterType.ON_DEMAND
 
-        # Still in spot-first phase: check if it's time to commit to on-demand
-        if self._should_commit_to_ondemand(time_left, work_remaining):
-            self._mode = 1  # committed to on-demand
+        gap = self.env.gap_seconds
+        # Conservative assumption: switching to on-demand later will incur
+        # at most one restart overhead.
+        commit_overhead = self.restart_overhead
+
+        # Time left after taking one "risky" step that might yield zero progress.
+        time_after_risky = time_remaining - gap
+
+        # If even one step doesn't fit cleanly, must use on-demand now.
+        if time_after_risky < 0.0:
+            self.committed_to_on_demand = True
             return ClusterType.ON_DEMAND
 
-        # Spot-first phase and still safe to gamble on spot
-        if has_spot:
-            # Prefer running on spot when available
-            return ClusterType.SPOT
-
-        # Spot not available and not yet time to commit: wait (no cost, spend slack)
-        return ClusterType.NONE
+        # Safe-to-wait check:
+        # After possibly wasting this step (0 progress), we still must be able
+        # to finish using pure on-demand with one restart overhead.
+        if time_after_risky >= remaining_work + commit_overhead:
+            # Still safe to take risk this step.
+            if has_spot:
+                return ClusterType.SPOT
+            else:
+                # No spot now; safe to idle and wait for cheaper spot later.
+                return ClusterType.NONE
+        else:
+            # Not safe anymore to risk; commit to on-demand from now on.
+            self.committed_to_on_demand = True
+            return ClusterType.ON_DEMAND

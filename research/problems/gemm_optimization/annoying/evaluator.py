@@ -81,9 +81,8 @@ def load_matmul_from_artifact(artifact_path: Path) -> Any:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                 f.write(artifact["code"])
                 temp_file = f.name
-            
-            # Import the module
-            import importlib.util
+
+            # Import the module (importlib.util already imported at top of file)
             spec = importlib.util.spec_from_file_location("temp_matmul_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -91,17 +90,9 @@ def load_matmul_from_artifact(artifact_path: Path) -> Any:
             if not hasattr(module, "matmul"):
                 raise ValueError("Code must define a 'matmul' function")
             
-            # Clean up temporary file
-            os.unlink(temp_file)
-            
+            # Don't delete temp file - Triton JIT needs source file at compile time
             return module.matmul
         except Exception as e:
-            # Clean up temporary file if it exists
-            try:
-                if 'temp_file' in locals():
-                    os.unlink(temp_file)
-            except:
-                pass
             raise
     
     elif "program_path" in artifact:
@@ -246,7 +237,7 @@ def main():
         json.dump(result, fout, indent=2)
     
     # Print summary
-    if result["status"] == "success":
+    if result["status"] == "success" and "geometric_mean_speedup" in result:
         print(f"Evaluation completed successfully!")
         print(f"Score: {result['score']:.2f}/100")
         print(f"Geometric mean speedup: {result['geometric_mean_speedup']:.3f}x")
@@ -255,10 +246,10 @@ def main():
         # Format: "score score_unbounded" (space-separated)
         print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
-        print(f"Evaluation failed: {result['error']}")
-        # Print error score as last line
+        error_msg = result.get('error', 'Unknown error')
+        print(f"Evaluation failed: {error_msg}")
+        # Print error score as last line (exit 0 since evaluation completed, just with score 0)
         print("0")
-        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -14,9 +14,9 @@ def customized_qknorm(q: torch.Tensor, k: torch.Tensor, norm_weight: torch.Tenso
     This implementation is upstreamed by flashinfer community.
     Args:
         q: Query tensor of arbitrary shape
-        k: Key tensor of arbitrary shape  
+        k: Key tensor of arbitrary shape
         norm_weight: Normalization weight tensor
-    
+
     Returns:
         Tuple of (q_normalized, k_normalized) tensors
     """

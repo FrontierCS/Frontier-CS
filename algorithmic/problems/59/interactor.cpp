@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
             // 0 �� queries �� limit
             // queries=0 -> 1.0, queries=limit -> 0.8
             double ratio = 0.8 + 0.2 * (1.0 - (double)queries / limit);
-            double ratio_unbounded = 0.8 * limit / query;
+            double ratio_unbounded = 0.8 * limit / queries;
             ratio = max(0.2, min(1.0, ratio));
 
             double score = ratio * 100.0, score_unbounded = ratio_unbounded * 100.0;

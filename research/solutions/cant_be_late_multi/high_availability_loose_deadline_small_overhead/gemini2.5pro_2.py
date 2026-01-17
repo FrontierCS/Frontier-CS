@@ -1,7 +1,6 @@
 import json
 from argparse import Namespace
-import numpy as np
-import pandas as pd
+import math
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -15,6 +14,12 @@ class Solution(MultiRegionStrategy):
     def solve(self, spec_path: str) -> "Solution":
         """
         Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -27,131 +32,99 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        trace_files = config.get('trace_files', [])
-        self.num_regions = len(trace_files)
-        raw_traces = []
-        for trace_file in trace_files:
-            try:
-                df = pd.read_csv(trace_file, header=None, dtype=bool)
-                raw_traces.append(df.iloc[:, 0].to_numpy())
-            except Exception:
-                try:
-                    with open(trace_file, 'r') as f_trace:
-                        trace = [bool(int(line.strip())) for line in f_trace]
-                    raw_traces.append(np.array(trace))
-                except (IOError, ValueError):
-                    # Handle empty or invalid files gracefully
-                    raw_traces.append(np.array([], dtype=bool))
-
-
-        max_len = max(len(t) for t in raw_traces) if raw_traces else 0
-        self.num_timesteps = max_len
+        # Custom initialization
+        self.num_regions = self.env.get_num_regions()
         
-        self.spot_availability = np.zeros((self.num_regions, self.num_timesteps), dtype=bool)
-        for i, trace in enumerate(raw_traces):
-            self.spot_availability[i, :len(trace)] = trace
+        # Hyperparameters
+        # How much extra slack (in multiples of gap_seconds) to have before choosing to wait (NONE).
+        self.WAIT_SLACK_FACTOR = 2.0
+        # Switch away from a region if it has this many consecutive spot outages.
+        self.SWITCH_OUTAGE_THRESHOLD = 1
 
-        # Precompute future consecutive spot availability streaks
-        self.future_streaks = np.zeros_like(self.spot_availability, dtype=int)
-        if self.num_timesteps > 0:
-            for r in range(self.num_regions):
-                if self.spot_availability[r, -1]:
-                    self.future_streaks[r, -1] = 1
-                for t in range(self.num_timesteps - 2, -1, -1):
-                    if self.spot_availability[r, t]:
-                        self.future_streaks[r, t] = 1 + self.future_streaks[r, t + 1]
-
-        # Precompute the index of the next available spot time slot
-        self.next_spot_idx = np.full_like(self.spot_availability, self.num_timesteps, dtype=int)
-        if self.num_timesteps > 0:
-            for r in range(self.num_regions):
-                next_spot = self.num_timesteps
-                for t in range(self.num_timesteps - 1, -1, -1):
-                    if self.spot_availability[r, t]:
-                        next_spot = t
-                    self.next_spot_idx[r, t] = next_spot
-
-        self.initialized_step = False
+        # State tracking across steps
+        # Stores the number of consecutive timesteps spot has been unavailable in each region.
+        self.consecutive_outages = [0] * self.num_regions
+        
         return self
-
-    def _initialize_on_first_step(self):
-        """Initializes attributes that depend on the live environment."""
-        self.gap_seconds = self.env.gap_seconds
-        
-        # --- Tunable Parameters ---
-        self.SWITCH_STREAK_FACTOR = 1.0
-        self.WAIT_SLACK_BUFFER_FACTOR = 2.0
-        self.OD_TO_SPOT_SWITCH_FACTOR = 2.0
-
-        self.initialized_step = True
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
+
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        if not self.initialized_step:
-            self._initialize_on_first_step()
+        # 1. Update state and calculate key metrics
+        current_region = self.env.get_current_region()
+        
+        if has_spot:
+            self.consecutive_outages[current_region] = 0
+        else:
+            self.consecutive_outages[current_region] += 1
             
         work_done = sum(self.task_done_time)
         work_remaining = self.task_duration - work_done
-        
-        if work_remaining <= 1e-9:
-            return ClusterType.NONE
-            
-        elapsed_seconds = self.env.elapsed_seconds
-        time_left = self.deadline - elapsed_seconds
-        
-        if time_left <= work_remaining:
-            return ClusterType.ON_DEMAND
-            
-        current_time_idx = min(int(elapsed_seconds // self.gap_seconds), self.num_timesteps - 1)
-        current_region = self.env.get_current_region()
-        
-        slack = time_left - work_remaining
-        
-        if has_spot:
-            if last_cluster_type == ClusterType.ON_DEMAND:
-                if slack > self.restart_overhead:
-                    if self.num_timesteps > 0:
-                        current_streak = self.future_streaks[current_region, current_time_idx]
-                        if current_streak * self.gap_seconds > self.restart_overhead * self.OD_TO_SPOT_SWITCH_FACTOR:
-                            return ClusterType.SPOT
-                return ClusterType.ON_DEMAND
-            else:
-                return ClusterType.SPOT
-        else:
-            # Spot is not available. Evaluate alternatives.
-            best_alt_region = -1
-            max_streak = 0
-            if self.num_timesteps > 0:
-                for r in range(self.num_regions):
-                    if r == current_region:
-                        continue
-                    streak = self.future_streaks[r, current_time_idx]
-                    if streak > max_streak:
-                        max_streak = streak
-                        best_alt_region = r
-            
-            can_afford_switch = (slack > self.restart_overhead)
-            is_switch_worthwhile = (max_streak * self.gap_seconds > self.restart_overhead * self.SWITCH_STREAK_FACTOR)
-            
-            if best_alt_region != -1 and can_afford_switch and is_switch_worthwhile:
-                self.env.switch_region(best_alt_region)
-                return ClusterType.SPOT
-            
-            if self.num_timesteps > 0:
-                next_spot_t_idx = self.next_spot_idx[current_region, current_time_idx]
-            else:
-                next_spot_t_idx = self.num_timesteps
 
-            if next_spot_t_idx < self.num_timesteps:
-                wait_time_steps = next_spot_t_idx - current_time_idx
-                wait_time_seconds = wait_time_steps * self.gap_seconds
-                safety_buffer = self.restart_overhead * self.WAIT_SLACK_BUFFER_FACTOR
-                
-                if slack > wait_time_seconds + safety_buffer:
-                    return ClusterType.NONE
-                else:
-                    return ClusterType.ON_DEMAND
-            else:
+        # If task is done, do nothing to save cost.
+        if work_remaining <= 0:
+            return ClusterType.NONE
+
+        time_now = self.env.elapsed_seconds
+        time_to_deadline = self.deadline - time_now
+
+        # Calculate the time required to finish if we switch to on-demand now.
+        # This is our safety baseline. We assume a restart overhead for a safe estimate.
+        time_needed_for_od = work_remaining + self.restart_overhead
+        steps_needed_for_od = math.ceil(time_needed_for_od / self.env.gap_seconds)
+        on_demand_guarantee_time = steps_needed_for_od * self.env.gap_seconds
+
+        # 2. Decision Logic
+
+        # PANIC MODE: If remaining time is less than or equal to the time needed for the
+        # safest option (on-demand), we must use on-demand. Don't switch regions
+        # as that would incur more overhead.
+        if time_to_deadline <= on_demand_guarantee_time:
+            return ClusterType.ON_DEMAND
+
+        # NORMAL MODE: We have some slack time.
+        if has_spot:
+            # Spot is available and is the cheapest option.
+            return ClusterType.SPOT
+        else:
+            # Spot is not available in the current region.
+            
+            # 2a. Decide whether to switch to a new region for the *next* step.
+            # We look for a region with a better spot availability history (fewer outages).
+            min_outages = min(self.consecutive_outages)
+            
+            # If the current region is not among the best (ones with min_outages),
+            # it's a candidate for switching away from.
+            if self.consecutive_outages[current_region] > min_outages:
+                # Switch if the number of outages has passed our threshold.
+                if self.consecutive_outages[current_region] >= self.SWITCH_OUTAGE_THRESHOLD:
+                    # Find the first region with the minimum number of outages and switch to it.
+                    best_region_idx = self.consecutive_outages.index(min_outages)
+                    self.env.switch_region(best_region_idx)
+
+            # 2b. Decide what to do in the *current* step (ON_DEMAND or NONE).
+            # Since has_spot is False, we can't use SPOT.
+            # The choice depends on how much slack we have.
+            wait_threshold_time = on_demand_guarantee_time + self.WAIT_SLACK_FACTOR * self.env.gap_seconds
+            
+            if time_to_deadline <= wait_threshold_time:
+                # Slack is getting tight. We should make progress using on-demand.
                 return ClusterType.ON_DEMAND
+            else:
+                # We have plenty of slack. We can afford to wait (NONE) for one step,
+                # hoping spot becomes available soon, either here or in the new region.
+                return ClusterType.NONE

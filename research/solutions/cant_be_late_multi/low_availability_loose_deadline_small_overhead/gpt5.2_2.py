@@ -1,37 +1,14 @@
 import json
 import math
 from argparse import Namespace
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
-def _ct_member(name: str) -> ClusterType:
-    m = getattr(ClusterType, name, None)
-    if m is not None:
-        return m
-    for x in ClusterType:
-        if getattr(x, "name", "").upper() == name.upper():
-            return x
-    raise AttributeError(f"ClusterType missing member {name}")
-
-
-_CT_SPOT = _ct_member("SPOT")
-_CT_ON_DEMAND = _ct_member("ON_DEMAND")
-_CT_NONE = _ct_member("NONE")
-
-
-def _as_scalar_seconds(x: Any) -> float:
-    if isinstance(x, (list, tuple)):
-        if not x:
-            return 0.0
-        return float(x[0])
-    return float(x)
-
-
 class Solution(MultiRegionStrategy):
-    NAME = "cb_late_bandit_v2"
+    NAME = "cant_be_late_mr_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -45,286 +22,220 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self._rt_init = False
-        self._n_regions = 0
-
-        self._task_duration_s = 0.0
-        self._deadline_s = 0.0
-        self._restart_overhead_s = 0.0
-
-        self._work_done_s = 0.0
-        self._last_done_len = 0
-
-        self._beta_a: List[float] = []
-        self._beta_b: List[float] = []
-
-        self._no_spot_streak = 0
-        self._locked_ondemand = False
-
-        self._peek_all_spot: Optional[Callable[[], Optional[List[bool]]]] = None
+        self._mr_inited = False
+        self._on_demand_committed = False
 
         return self
 
-    def _init_runtime(self) -> None:
-        if self._rt_init:
+    def _get_scalar(self, x: Any) -> float:
+        if isinstance(x, (list, tuple)):
+            if not x:
+                return 0.0
+            return float(x[0])
+        return float(x)
+
+    def _get_task_done_list(self) -> List[float]:
+        t = getattr(self, "task_done_time", None)
+        if t is None:
+            return []
+        if isinstance(t, (list, tuple)) and t and isinstance(t[0], (list, tuple)):
+            return list(t[0])
+        if isinstance(t, (list, tuple)):
+            return list(t)
+        return []
+
+    def _lazy_init(self) -> None:
+        if self._mr_inited:
             return
-        self._rt_init = True
+        self._mr_inited = True
 
-        self._n_regions = int(self.env.get_num_regions())
+        self._gap = float(getattr(self.env, "gap_seconds", 0.0) or 0.0)
+        if self._gap <= 0:
+            self._gap = 1.0
 
-        self._task_duration_s = _as_scalar_seconds(getattr(self, "task_duration", 0.0))
-        self._deadline_s = _as_scalar_seconds(getattr(self, "deadline", 0.0))
-        self._restart_overhead_s = _as_scalar_seconds(getattr(self, "restart_overhead", 0.0))
+        self._deadline = self._get_scalar(getattr(self, "deadline", 0.0))
+        self._task_duration = self._get_scalar(getattr(self, "task_duration", 0.0))
+        self._restart_overhead = self._get_scalar(getattr(self, "restart_overhead", 0.0))
 
-        self._beta_a = [1.0] * self._n_regions
-        self._beta_b = [1.0] * self._n_regions
+        self._n_regions = int(self.env.get_num_regions()) if hasattr(self.env, "get_num_regions") else 1
+        if self._n_regions <= 0:
+            self._n_regions = 1
 
-        self._work_done_s = 0.0
-        self._last_done_len = 0
-        self._no_spot_streak = 0
-        self._locked_ondemand = False
+        self._p_spot = [0.5] * self._n_regions
+        self._seen = [0] * self._n_regions
+        self._gamma = 0.05
+        self._explore_c = 0.12
 
-        self._peek_all_spot = self._detect_peek_all_spot()
+        self._consecutive_no_spot = 0
+        self._last_region = int(self.env.get_current_region()) if hasattr(self.env, "get_current_region") else 0
 
-    def _detect_peek_all_spot(self) -> Optional[Callable[[], Optional[List[bool]]]]:
-        env = self.env
-        n = self._n_regions
+        tdt = self._get_task_done_list()
+        self._tdt_len = len(tdt)
+        self._done_total = float(sum(tdt))
+        self._prev_done_total = self._done_total
+        self._prev_elapsed = float(getattr(self.env, "elapsed_seconds", 0.0))
+        self._prev_action = ClusterType.NONE
 
-        def _normalize_vec(v: Any) -> Optional[List[bool]]:
-            if v is None:
-                return None
-            if isinstance(v, (list, tuple)):
-                if len(v) != n:
-                    return None
-                try:
-                    return [bool(x) for x in v]
-                except Exception:
-                    return None
-            return None
+        self._spot_eff_ewma = 1.0
+        self._spot_eff_gamma = 0.05
 
-        list_method_names = (
-            "get_all_has_spot",
-            "get_has_spot_all",
-            "get_has_spot_all_regions",
-            "get_spot_availability",
-            "get_spot_availability_all",
-            "get_all_spot_availability",
-            "get_all_spot_status",
-            "spot_availability_all",
-        )
-        for name in list_method_names:
-            f = getattr(env, name, None)
-            if callable(f):
-                try:
-                    v = f()
-                except TypeError:
+    def _update_done_total(self) -> None:
+        tdt = self._get_task_done_list()
+        L = len(tdt)
+        if L < self._tdt_len:
+            self._tdt_len = L
+            self._done_total = float(sum(tdt))
+            return
+        if L > self._tdt_len:
+            s = 0.0
+            for v in tdt[self._tdt_len :]:
+                s += float(v)
+            self._done_total += s
+            self._tdt_len = L
+
+    def _remaining_restart(self) -> float:
+        r = getattr(self, "remaining_restart_overhead", 0.0)
+        if isinstance(r, (list, tuple)):
+            return float(r[0]) if r else 0.0
+        try:
+            return float(r)
+        except Exception:
+            return 0.0
+
+    def _steps_needed(self, work_seconds: float, pending_overhead_seconds: float) -> int:
+        w = float(work_seconds)
+        if w <= 1e-9:
+            return 0
+        p = float(pending_overhead_seconds)
+        if p < 0.0:
+            p = 0.0
+        x = (w + p) / self._gap
+        return int(math.ceil(x - 1e-12))
+
+    def _time_needed_on_demand_if_start_now(self, remaining_work: float, last_cluster_type: ClusterType) -> float:
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            pending = self._remaining_restart()
+        else:
+            pending = self._restart_overhead
+        steps = self._steps_needed(remaining_work, pending)
+        return steps * self._gap
+
+    def _choose_next_region_to_probe(self, current_region: int) -> int:
+        best_r = current_region
+        best_score = -1e18
+
+        total_seen = 0
+        for s in self._seen:
+            total_seen += s
+        total_seen = max(total_seen, 1)
+
+        for r in range(self._n_regions):
+            base = self._p_spot[r]
+            bonus = self._explore_c / math.sqrt(self._seen[r] + 1.0)
+            score = base + bonus
+            if r == current_region:
+                score += 0.01
+            if score > best_score:
+                best_score = score
+                best_r = r
+
+        if best_r == current_region and self._consecutive_no_spot >= 2:
+            second_r = current_region
+            second_score = -1e18
+            for r in range(self._n_regions):
+                if r == current_region:
                     continue
-                vec = _normalize_vec(v)
-                if vec is not None:
-                    def _peek(f=f) -> Optional[List[bool]]:
-                        try:
-                            vv = f()
-                        except Exception:
-                            return None
-                        return _normalize_vec(vv)
-                    return _peek
+                base = self._p_spot[r]
+                bonus = self._explore_c / math.sqrt(self._seen[r] + 1.0)
+                score = base + bonus
+                if score > second_score:
+                    second_score = score
+                    second_r = r
+            if second_r != current_region and second_score > best_score - 0.02:
+                best_r = second_r
 
-        list_attr_names = (
-            "has_spot_all",
-            "spot_availability",
-            "spot_availability_all",
-            "spot_status_all",
-            "all_has_spot",
-        )
-        for name in list_attr_names:
-            v = getattr(env, name, None)
-            vec = _normalize_vec(v)
-            if vec is not None:
-                def _peek_attr(name=name) -> Optional[List[bool]]:
-                    try:
-                        return _normalize_vec(getattr(env, name, None))
-                    except Exception:
-                        return None
-                return _peek_attr
-
-        one_method_names = (
-            "has_spot",
-            "get_has_spot",
-            "is_spot_available",
-            "get_spot",
-            "get_spot_availability_by_region",
-            "get_spot_availability_region",
-            "get_region_has_spot",
-        )
-        for name in one_method_names:
-            f = getattr(env, name, None)
-            if not callable(f):
-                continue
-            ok = False
-            try:
-                r0 = f(0)
-                ok = isinstance(r0, (bool, int, float))
-            except TypeError:
-                ok = False
-            except Exception:
-                ok = False
-            if ok:
-                def _peek_one(f=f) -> Optional[List[bool]]:
-                    out = [False] * n
-                    try:
-                        for i in range(n):
-                            out[i] = bool(f(i))
-                        return out
-                    except Exception:
-                        return None
-                return _peek_one
-
-        return None
-
-    def _update_work_done(self) -> None:
-        td = getattr(self, "task_done_time", None)
-        if not td:
-            return
-        if not isinstance(td, list):
-            return
-
-        L = len(td)
-        if L <= self._last_done_len:
-            return
-
-        inc = 0.0
-        for x in td[self._last_done_len:]:
-            try:
-                inc += float(x)
-            except Exception:
-                pass
-        self._work_done_s += inc
-        self._last_done_len = L
-
-    def _region_score(self, i: int) -> float:
-        a = self._beta_a[i]
-        b = self._beta_b[i]
-        denom = a + b
-        mean = a / denom
-        explore = 0.35 / math.sqrt(denom)
-        return mean + explore
-
-    def _pick_best_region(self, prefer_spot_vec: Optional[List[bool]] = None) -> int:
-        cur = int(self.env.get_current_region())
-        best_i = cur
-        best_s = -1e18
-
-        if prefer_spot_vec is not None:
-            for i in range(self._n_regions):
-                if not prefer_spot_vec[i]:
-                    continue
-                s = self._region_score(i)
-                if s > best_s:
-                    best_s = s
-                    best_i = i
-            if best_s > -1e17:
-                return best_i
-
-        for i in range(self._n_regions):
-            s = self._region_score(i)
-            if s > best_s:
-                best_s = s
-                best_i = i
-        return best_i
+        return best_r
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._init_runtime()
-        self._update_work_done()
+        self._lazy_init()
 
-        remaining_work = self._task_duration_s - self._work_done_s
-        if remaining_work <= 0:
-            return _CT_NONE
+        now_elapsed = float(getattr(self.env, "elapsed_seconds", 0.0))
+        self._update_done_total()
+        done_total = self._done_total
 
-        now = float(getattr(self.env, "elapsed_seconds", 0.0))
-        time_left = self._deadline_s - now
-        if time_left <= 0:
-            return _CT_NONE
+        if now_elapsed > self._prev_elapsed + 1e-12:
+            delta_work = done_total - self._prev_done_total
+            if self._prev_action == ClusterType.SPOT:
+                eff = 0.0
+                if self._gap > 1e-9:
+                    eff = max(0.0, min(1.0, float(delta_work) / self._gap))
+                self._spot_eff_ewma = (1.0 - self._spot_eff_gamma) * self._spot_eff_ewma + self._spot_eff_gamma * eff
 
-        gap = float(getattr(self.env, "gap_seconds", 0.0)) or 1.0
-        ro = self._restart_overhead_s
-        pending_ro = float(getattr(self, "remaining_restart_overhead", 0.0) or 0.0)
+        self._prev_elapsed = now_elapsed
+        self._prev_done_total = done_total
 
-        cur_region = int(self.env.get_current_region())
+        current_region = int(self.env.get_current_region()) if hasattr(self.env, "get_current_region") else 0
+        if current_region < 0:
+            current_region = 0
+        if current_region >= self._n_regions:
+            current_region = self._n_regions - 1
 
-        spot_vec: Optional[List[bool]] = None
-        if self._peek_all_spot is not None:
-            spot_vec = self._peek_all_spot()
+        obs = 1.0 if has_spot else 0.0
+        self._seen[current_region] += 1
+        self._p_spot[current_region] = (1.0 - self._gamma) * self._p_spot[current_region] + self._gamma * obs
 
-        if spot_vec is not None and len(spot_vec) == self._n_regions:
-            for i, s in enumerate(spot_vec):
-                if s:
-                    self._beta_a[i] += 1.0
-                else:
-                    self._beta_b[i] += 1.0
-            cur_has_spot = bool(spot_vec[cur_region])
-        else:
-            cur_has_spot = bool(has_spot)
-            if cur_has_spot:
-                self._beta_a[cur_region] += 1.0
-            else:
-                self._beta_b[cur_region] += 1.0
+        remaining_work = self._task_duration - done_total
+        if remaining_work <= 1e-6:
+            self._prev_action = ClusterType.NONE
+            self._last_region = current_region
+            return ClusterType.NONE
 
-        if cur_has_spot:
-            self._no_spot_streak = 0
-        else:
-            self._no_spot_streak += 1
+        time_left = self._deadline - now_elapsed
+        if time_left <= 0.0:
+            self._on_demand_committed = True
+            self._prev_action = ClusterType.ON_DEMAND
+            self._last_region = current_region
+            return ClusterType.ON_DEMAND
 
-        overhead_budget = time_left - remaining_work
-        safety = max(4.0 * ro, 0.10 * gap)
+        if self._on_demand_committed:
+            self._prev_action = ClusterType.ON_DEMAND
+            self._last_region = current_region
+            return ClusterType.ON_DEMAND
 
-        if overhead_budget <= safety + 1.1 * ro:
-            self._locked_ondemand = True
+        t_need_now = self._time_needed_on_demand_if_start_now(remaining_work, last_cluster_type)
+        safety_slack = self._gap
 
-        if self._locked_ondemand:
-            return _CT_ON_DEMAND
+        if time_left <= t_need_now + safety_slack + 1e-9:
+            self._on_demand_committed = True
+            self._prev_action = ClusterType.ON_DEMAND
+            self._last_region = current_region
+            return ClusterType.ON_DEMAND
 
-        def allow_idle_step() -> bool:
-            if overhead_budget < gap + safety:
-                return False
-            if pending_ro > 0.0 and overhead_budget < gap + safety + pending_ro:
-                return False
-            return True
+        time_left_next = time_left - self._gap
+        t_need_next = self._steps_needed(remaining_work, self._restart_overhead) * self._gap
 
-        if spot_vec is not None:
-            any_spot = any(spot_vec)
-            if any_spot:
-                if last_cluster_type == _CT_ON_DEMAND:
-                    if overhead_budget >= (2.0 * gap + 6.0 * ro + safety):
-                        target = self._pick_best_region(prefer_spot_vec=spot_vec)
-                        if target != cur_region:
-                            self.env.switch_region(int(target))
-                        return _CT_SPOT
-                    return _CT_ON_DEMAND
+        if time_left_next <= t_need_next + 1e-9:
+            self._on_demand_committed = True
+            self._prev_action = ClusterType.ON_DEMAND
+            self._last_region = current_region
+            return ClusterType.ON_DEMAND
 
-                target = self._pick_best_region(prefer_spot_vec=spot_vec)
-                if target != cur_region:
-                    self.env.switch_region(int(target))
-                return _CT_SPOT
+        if has_spot:
+            self._consecutive_no_spot = 0
+            self._prev_action = ClusterType.SPOT
+            self._last_region = current_region
+            return ClusterType.SPOT
 
-            if allow_idle_step():
-                if self._no_spot_streak >= 2:
-                    target = self._pick_best_region()
-                    if target != cur_region:
-                        self.env.switch_region(int(target))
-                return _CT_NONE
+        self._consecutive_no_spot += 1
 
-            return _CT_ON_DEMAND
+        target = self._choose_next_region_to_probe(current_region)
+        if target != current_region and hasattr(self.env, "switch_region"):
+            try:
+                self.env.switch_region(int(target))
+                current_region = target
+            except Exception:
+                pass
 
-        if cur_has_spot:
-            if last_cluster_type == _CT_ON_DEMAND and overhead_budget < (2.0 * gap + 6.0 * ro + safety):
-                return _CT_ON_DEMAND
-            return _CT_SPOT
-
-        if allow_idle_step():
-            if self._no_spot_streak >= 2:
-                target = self._pick_best_region()
-                if target != cur_region:
-                    self.env.switch_region(int(target))
-            return _CT_NONE
-
-        return _CT_ON_DEMAND
+        self._prev_action = ClusterType.NONE
+        self._last_region = current_region
+        return ClusterType.NONE

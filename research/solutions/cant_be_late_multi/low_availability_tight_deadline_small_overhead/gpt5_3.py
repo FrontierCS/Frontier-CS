@@ -6,7 +6,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "safe_spot_multi_v2"
+    NAME = "cb_late_rr_v1"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,103 +21,83 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Internal state initialization
-        self._inited = False
-        self._committed_to_od = False
-        self._last_done_len = 0
         self._done_sum = 0.0
-        self._alpha = 0.1
-        self._num_regions = None
-        self._est_prob = None
-        self._region_visit_counts = None
-        self._last_known_spot = None
-
+        self._last_done_len = 0
+        self._committed_od = False
+        try:
+            num_r = self.env.get_num_regions()
+        except Exception:
+            num_r = 1
+        try:
+            cur = self.env.get_current_region()
+        except Exception:
+            cur = 0
+        self._rr_next = (cur + 1) % max(num_r, 1)
         return self
 
-    def _lazy_init(self):
-        if not self._inited:
-            n = self.env.get_num_regions()
-            self._num_regions = n
-            self._est_prob = [0.5] * n
-            self._region_visit_counts = [0] * n
-            self._last_known_spot = [0] * n
-            self._inited = True
-
     def _update_progress_sum(self):
-        # Incrementally update the sum of task_done_time
-        cur_len = len(self.task_done_time)
-        if cur_len > self._last_done_len:
-            # Sum only the new elements
-            new_sum = 0.0
-            for i in range(self._last_done_len, cur_len):
-                new_sum += self.task_done_time[i]
-            self._done_sum += new_sum
-            self._last_done_len = cur_len
-
-    def _update_region_stats(self, has_spot: bool):
-        # Update EMA of availability for the current region
-        rid = self.env.get_current_region()
-        self._region_visit_counts[rid] += 1
-        cur_est = self._est_prob[rid]
-        self._est_prob[rid] = (1.0 - self._alpha) * cur_est + self._alpha * (1.0 if has_spot else 0.0)
-        self._last_known_spot[rid] = 1 if has_spot else 0
-
-    def _best_region(self):
-        # Choose region with highest estimated spot availability
-        rid = self.env.get_current_region()
-        best_idx = rid
-        best_val = self._est_prob[rid]
-        for i in range(self._num_regions):
-            if self._est_prob[i] > best_val + 1e-12:
-                best_val = self._est_prob[i]
-                best_idx = i
-        return best_idx
+        # Incrementally update the sum of task_done_time to avoid O(n) per step
+        curr_len = len(self.task_done_time)
+        if curr_len > self._last_done_len:
+            # Usually only one element appended per step
+            for i in range(self._last_done_len, curr_len):
+                self._done_sum += float(self.task_done_time[i])
+            self._last_done_len = curr_len
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._lazy_init()
+        # Update progress tracking
         self._update_progress_sum()
 
-        # If already done, no need to run
-        remaining_work = self.task_duration - self._done_sum
+        # Remaining work and time
+        gap = float(getattr(self.env, "gap_seconds", 1.0))
+        remaining_work = max(self.task_duration - self._done_sum, 0.0)
+        time_left = max(self.deadline - self.env.elapsed_seconds, 0.0)
+
+        # If already done, idle
         if remaining_work <= 0.0:
             return ClusterType.NONE
 
-        # Update region statistics with current observed spot availability
-        self._update_region_stats(has_spot)
+        # Commit buffer to account for discretization/rounding; small compared to overhead
+        commit_buffer = min(gap, 60.0)
+        commit_threshold = self.restart_overhead + commit_buffer
 
-        # If we are already on on-demand, keep running on-demand to avoid additional overhead and risk
-        if last_cluster_type == ClusterType.ON_DEMAND or self._committed_to_od:
-            self._committed_to_od = True
+        # If we've already committed to on-demand, keep using it
+        if self._committed_od:
             return ClusterType.ON_DEMAND
 
-        gap = self.env.gap_seconds
-        time_left = self.deadline - self.env.elapsed_seconds
-
-        # Latest safe start logic:
-        # To be safe even if we waste the entire next step (gap) on spot due to preemption,
-        # we need to ensure we can still finish with ON_DEMAND (including one restart overhead).
-        # Commit to ON_DEMAND when time_left is tight.
-        required_time_with_od_if_start_later = remaining_work + self.restart_overhead
-
-        # Commit margin: one step gap to cover worst-case lost step if we try spot and get nothing
-        commit_margin = gap
-
-        # If time is too tight, commit to ON_DEMAND now
-        if time_left <= required_time_with_od_if_start_later + commit_margin:
-            self._committed_to_od = True
+        # If already on ON_DEMAND (shouldn't be without commit), stick to it to avoid thrash
+        if last_cluster_type == ClusterType.ON_DEMAND:
+            self._committed_od = True
             return ClusterType.ON_DEMAND
 
-        # Otherwise, we have enough slack to try SPOT if available
+        # If time is very tight, commit to ON_DEMAND to guarantee finish
+        slack = time_left - remaining_work
+        if slack <= commit_threshold or time_left <= 0.0:
+            self._committed_od = True
+            return ClusterType.ON_DEMAND
+
+        # Prefer SPOT when available and we have sufficient slack
         if has_spot:
             return ClusterType.SPOT
 
-        # Spot not available: if we still have enough slack to wait one step, pause and switch to best region
-        if time_left > required_time_with_od_if_start_later + commit_margin:
-            # Switch to the region with highest estimated availability for the next step
-            best_r = self._best_region()
-            if best_r != self.env.get_current_region():
-                self.env.switch_region(best_r)
+        # SPOT not available: decide to wait (NONE) or commit to ON_DEMAND
+        allowed_wait = slack - commit_threshold
+
+        if allowed_wait > gap * 0.99:
+            # We can afford to wait this step: try another region (round-robin) to find spot
+            try:
+                num_r = self.env.get_num_regions()
+            except Exception:
+                num_r = 1
+            if num_r and num_r > 1:
+                curr = self.env.get_current_region()
+                # Ensure we don't keep setting to same region
+                if self._rr_next == curr:
+                    self._rr_next = (curr + 1) % num_r
+                self.env.switch_region(self._rr_next)
+                self._rr_next = (self._rr_next + 1) % num_r
             return ClusterType.NONE
 
-        # Fallback: commit to ON_DEMAND to ensure completion
-        self._committed_to_od = True
+        # Not enough slack to wait: commit to ON_DEMAND
+        self._committed_od = True
         return ClusterType.ON_DEMAND

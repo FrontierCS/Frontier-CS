@@ -3,14 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-# Use venv from resources directory (created by set_up_env.sh)
-VENV_DIR="$SCRIPT_DIR/resources/.venv"
-
-PYBIN="$VENV_DIR/bin/python"
-if [[ ! -x "$PYBIN" ]]; then
-  echo "Error: venv python not found at $PYBIN. Did you run set_up_env.sh?" >&2
-  exit 1
-fi
+# Use system python3 (framework installs deps with uv pip install --system)
+PYBIN="python3"
 
 # Docker runner places solution at /work/execution_env/solution_env/solution.py
 SOLUTION_PATH="/work/execution_env/solution_env/solution.py"

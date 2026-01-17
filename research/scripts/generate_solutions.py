@@ -90,6 +90,27 @@ def ensure_numpy_version(required: str) -> None:
 EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
 
 
+def get_failed_path(solution_path: Path) -> Path:
+    """Get the .FAILED file path for a solution."""
+    return solution_path.with_suffix(".FAILED")
+
+
+def has_failed_marker(solution_path: Path) -> bool:
+    """Check if a .FAILED file exists for this solution."""
+    return get_failed_path(solution_path).exists()
+
+
+def write_failed_marker(solution_path: Path, error: str, model: str) -> None:
+    """Write a .FAILED marker file for a failed generation."""
+    failed_path = get_failed_path(solution_path)
+    failed_path.parent.mkdir(parents=True, exist_ok=True)
+    failed_path.write_text(json.dumps({
+        "error": error,
+        "model": model,
+        "timestamp": datetime.now().isoformat(),
+    }, indent=2), encoding="utf-8")
+
+
 def discover_problems(problems_dir: Path) -> List[Path]:
     """Auto-discover all problem directories by finding leaf directories.
 
@@ -329,7 +350,14 @@ def build_tasks(
             problem_path_real, readme_text, inferred_problem_name = problem_cache[cache_key]
 
             sol_file = repo_root / "solutions" / sol_filename
-            if sol_file.exists():
+            failed_path = get_failed_path(sol_file)
+
+            # Handle --only-failed: only process solutions with .FAILED marker
+            if args.only_failed:
+                if not failed_path.exists():
+                    continue  # Skip - no failure marker
+                # Has .FAILED - will regenerate
+            elif sol_file.exists():
                 if args.force:
                     if not args.dryrun:
                         try:
@@ -341,6 +369,10 @@ def build_tasks(
                 else:
                     skipped.append(sol_filename)
                     continue
+            elif failed_path.exists() and not args.force:
+                # Already tried and failed, skip unless --force
+                skipped.append(f"{sol_filename} (previously failed)")
+                continue
 
             tasks.append(
                 GenerationTask(
@@ -403,8 +435,14 @@ def build_tasks(
                     solutions_dir = repo_root / "research" / "solutions"
                     sol_file = get_solution_path(solutions_dir, problem_name, model_prefix, "py", variant_index)
                     sol_filename = str(sol_file.relative_to(solutions_dir))
+                    failed_path = get_failed_path(sol_file)
 
-                    if sol_file.exists():
+                    # Handle --only-failed: only process solutions with .FAILED marker
+                    if args.only_failed:
+                        if not failed_path.exists():
+                            continue  # Skip - no failure marker
+                        # Has .FAILED - will regenerate
+                    elif sol_file.exists():
                         if args.force:
                             if not args.dryrun:
                                 try:
@@ -416,6 +454,10 @@ def build_tasks(
                         else:
                             skipped.append(sol_filename)
                             continue
+                    elif failed_path.exists() and not args.force:
+                        # Already tried and failed, skip unless --force
+                        skipped.append(f"{sol_filename} (previously failed)")
+                        continue
 
                     tasks.append(
                         GenerationTask(
@@ -488,6 +530,10 @@ Examples:
     # Execution control
     exec_group = parser.add_argument_group("Execution control")
     exec_group.add_argument("--force", action="store_true", help="Regenerate existing solutions")
+    exec_group.add_argument("--only-failed", action="store_true",
+                            help="Only regenerate solutions that previously failed (.FAILED files)")
+    exec_group.add_argument("--mark-failed", action="store_true",
+                            help="Create .FAILED files for missing solutions without generating (for tracking)")
     exec_group.add_argument("--dryrun", action="store_true", help="Show what would be generated")
     exec_group.add_argument("--indices", type=int, default=None,
                             help="Number of solutions to generate (e.g., --indices 4)")
@@ -799,6 +845,17 @@ Examples:
         print("No new tasks to generate.")
         return
 
+    # Handle --mark-failed: create .FAILED files without generating
+    if args.mark_failed:
+        solutions_dir = research_dir / "solutions"
+        marked = 0
+        for task in tasks:
+            sol_file = solutions_dir / task.solution_name
+            write_failed_marker(sol_file, "Not generated (marked as failed)", task.model)
+            marked += 1
+        print(f"{yellow('Marked')} {yellow(bold(str(marked)))} solution(s) as failed (.FAILED files created)")
+        return
+
     generated: List[str] = []
     failed: List[str] = []
 
@@ -806,6 +863,7 @@ Examples:
         variant_label = f"{task.variant_position + 1}/{task.total_variants}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
               f"({dim('model:')} {model_name(task.model)}, {dim('variant')} {variant_label})...")
         print(f"  {dim('Log:')} {dim(str(log_file))}")
@@ -823,6 +881,10 @@ Examples:
         else:
             api_key_for_task = get_fallback_api_key(task.provider)
 
+        solutions_dir = research_dir / "solutions"
+        sol_file = solutions_dir / task.solution_name
+        failed_path = get_failed_path(sol_file)
+
         try:
             code = generate_code(
                 task.readme,
@@ -836,16 +898,22 @@ Examples:
                 docker_config=docker_config,
             )
             # Write solution to nested directory
-            solutions_dir = research_dir / "solutions"
-            sol_file = solutions_dir / task.solution_name
             sol_file.parent.mkdir(parents=True, exist_ok=True)
             sol_file.write_text(code, encoding="utf-8")
             print(f"  {green('✓')} Created: {green(str(sol_file))}")
             print(f"  {dim('Log saved:')} {dim(str(log_file))}")
+
+            # Delete .FAILED file if it exists (successful retry)
+            if failed_path.exists():
+                failed_path.unlink()
+
             return ("generated", task.solution_name, None, task.provider, pool_token)
         except Exception as exc:
             message = f"{exc} (log: {log_file})"
             print(f"  {red('✗')} {red('ERROR:')} {exc}")
+            # Write .FAILED marker file
+            write_failed_marker(sol_file, str(exc), task.model)
+            print(f"  {yellow('!')} Created: {yellow(str(failed_path))}")
             return ("failed", task.solution_name, message, task.provider, pool_token)
 
     if total_tasks:

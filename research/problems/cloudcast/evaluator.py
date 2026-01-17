@@ -115,6 +115,7 @@ def evaluate_search_algorithm(program_module: ModuleType, config_files: List[Pat
         }
 
     cost_score = 1.0 / (1.0 + total_cost)
+    time_score = 1.0 / (1.0 + total_transfer_time)
     combined_score = cost_score
     score_unbounded = combined_score * 100
     score = score_unbounded
@@ -183,7 +184,7 @@ def evaluate(solution_path: Path, spec_path: Path) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate cloudcast broadcast optimizer")
-    parser.add_argument("--solution", default="../../execution_env/solution_env/solution.py")
+    parser.add_argument("--solution", default="/work/execution_env/solution_env/solution.py")
     parser.add_argument("--spec", default=str(SPEC_PATH))
     parser.add_argument("--out", default="results.json")
     args = parser.parse_args()

@@ -7,12 +7,13 @@ Provides different backends for running evaluations:
 - AlgorithmicRunner: Judge server for algorithmic problems
 """
 
-from .base import Runner, EvaluationResult
+from .base import Runner, ResearchRunner, EvaluationResult
 from .docker import DockerRunner
 from .algorithmic import AlgorithmicRunner
 
 __all__ = [
     "Runner",
+    "ResearchRunner",
     "EvaluationResult",
     "DockerRunner",
     "AlgorithmicRunner",

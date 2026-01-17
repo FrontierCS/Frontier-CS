@@ -5,7 +5,9 @@ Automatically launches a go-judge VM on cloud and uses it for evaluation.
 Uses SkyPilot Python API with sky-judge.yaml configuration.
 """
 
+import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -14,6 +16,7 @@ import requests
 
 from .algorithmic import AlgorithmicRunner
 from .base import EvaluationResult, EvaluationStatus
+from ..gen.solution_format import FAILED_EXTENSION
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,13 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
     CLUSTER_NAME = "algo-judge"
     DEFAULT_IDLE_TIMEOUT = 10  # minutes
 
+    # Class-level lock to prevent multiple threads from launching cluster simultaneously
+    _cluster_lock = threading.Lock()
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         cloud: Optional[str] = None,
         region: Optional[str] = None,
         keep_cluster: bool = False,
@@ -42,13 +49,14 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         Args:
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
+            problems_dir: Problems directory (not used directly, for consistency)
             cloud: Cloud provider override (default: use yaml config)
             region: Cloud region override (optional)
             keep_cluster: Keep cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
         """
         # Initialize parent class with placeholder URL (will be updated when cluster is ready)
-        super().__init__(judge_url="http://localhost:8081")
+        super().__init__(judge_url="http://localhost:8081", problems_dir=problems_dir)
 
         self.base_dir = base_dir or self._find_base_dir()
         self.cloud = cloud
@@ -133,7 +141,15 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
             # Set absolute path for file_mounts to avoid CWD issues
             algorithmic_dir = str(self.base_dir / "algorithmic")
-            task.update_file_mounts({"~/algorithmic": algorithmic_dir})
+            file_mounts = {"~/algorithmic": algorithmic_dir}
+
+            # Override problems directory if specified
+            if self.problems_dir:
+                problems_path = str(Path(self.problems_dir).resolve())
+                logger.info(f"Using problems from: {problems_path}")
+                file_mounts["~/algorithmic/problems"] = problems_path
+
+            task.update_file_mounts(file_mounts)
 
             if self.cloud or self.region:
                 resources = list(task.resources)[0] if task.resources else sky.Resources()
@@ -178,8 +194,8 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
     def _ensure_cluster(self) -> str:
         """Ensure the cluster is running and return judge URL."""
+        # Fast path: already initialized and accessible
         if self._judge_url and self._initialized:
-            # Verify it's still accessible
             try:
                 requests.get(f"{self._judge_url}/problems", timeout=5)
                 return self._judge_url
@@ -187,37 +203,47 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
                 # Cluster may have stopped, re-check
                 self._initialized = False
 
-        ip = self._get_cluster_ip()
+        # Use lock to prevent multiple threads from launching cluster simultaneously
+        with self._cluster_lock:
+            # Double-check after acquiring lock
+            if self._judge_url and self._initialized:
+                try:
+                    requests.get(f"{self._judge_url}/problems", timeout=5)
+                    return self._judge_url
+                except requests.RequestException:
+                    self._initialized = False
 
-        if ip:
-            logger.info(f"Found existing cluster at {ip}")
-            if self._wait_for_service(ip, timeout=30):
-                self._judge_url = f"http://{ip}:8081"
-                self._initialized = True
-                return self._judge_url
+            ip = self._get_cluster_ip()
 
-        ip = self._launch_cluster()
-        if not ip:
-            # Fallback: try to get IP from status if launch didn't return it
-            # May take a few seconds for cluster to be fully UP
-            logger.info("Waiting for cluster IP to become available...")
-            for attempt in range(10):
-                time.sleep(3)
-                ip = self._get_cluster_ip()
-                if ip:
-                    logger.info(f"Got cluster IP on attempt {attempt + 1}: {ip}")
-                    break
-        if not ip:
-            raise RuntimeError("Could not get cluster IP after launch")
+            if ip:
+                logger.info(f"Found existing cluster at {ip}")
+                if self._wait_for_service(ip, timeout=30):
+                    self._judge_url = f"http://{ip}:8081"
+                    self._initialized = True
+                    return self._judge_url
 
-        logger.info(f"Waiting for judge service at {ip}:8081 (timeout: 600s)")
-        if not self._wait_for_service(ip, timeout=600):
-            raise RuntimeError("Judge service did not become ready after 600s")
+            ip = self._launch_cluster()
+            if not ip:
+                # Fallback: try to get IP from status if launch didn't return it
+                # May take a few seconds for cluster to be fully UP
+                logger.info("Waiting for cluster IP to become available...")
+                for attempt in range(10):
+                    time.sleep(3)
+                    ip = self._get_cluster_ip()
+                    if ip:
+                        logger.info(f"Got cluster IP on attempt {attempt + 1}: {ip}")
+                        break
+            if not ip:
+                raise RuntimeError("Could not get cluster IP after launch")
 
-        self._judge_url = f"http://{ip}:8081"
-        self._initialized = True
-        logger.info(f"Judge service ready at {self._judge_url}")
-        return self._judge_url
+            logger.info(f"Waiting for judge service at {ip}:8081 (timeout: 600s)")
+            if not self._wait_for_service(ip, timeout=600):
+                raise RuntimeError("Judge service did not become ready after 600s")
+
+            self._judge_url = f"http://{ip}:8081"
+            self._initialized = True
+            logger.info(f"Judge service ready at {self._judge_url}")
+            return self._judge_url
 
     def evaluate(
         self,
@@ -260,6 +286,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         *,
         timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
+        unbounded: bool = True,
     ) -> EvaluationResult:
         """Evaluate a solution file using cloud-based go-judge."""
         if not solution_path.exists():
@@ -269,9 +296,23 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
                 message=f"Solution file not found: {solution_path}",
             )
 
+        # Check for generation failure marker (.FAILED file)
+        if solution_path.suffix == f".{FAILED_EXTENSION}":
+            try:
+                meta = json.loads(solution_path.read_text(encoding="utf-8"))
+                error_msg = meta.get("error", "Generation failed")
+            except (json.JSONDecodeError, OSError):
+                error_msg = "Generation failed"
+            return EvaluationResult(
+                problem_id=str(problem_id),
+                status=EvaluationStatus.ERROR,
+                score=0,
+                message=f"Generation failed: {error_msg}",
+            )
+
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
-        return self.evaluate(problem_id, code, timeout=timeout, lang=lang)
+        return self.evaluate(problem_id, code, timeout=timeout, lang=lang, unbounded=unbounded)
 
     def stop_cluster(self) -> bool:
         """Stop the algo-judge cluster."""

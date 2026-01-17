@@ -1,0 +1,100 @@
+SQL_SCRIPT        := statement_list
+
+statement_list    := statement ( ";" statement )* [ ";" ]
+
+STATEMENT         := CREATE_TABLE_STMT
+                   | INSERT_STMT
+                   | SELECT_STMT
+                   | UPDATE_STMT
+                   | DELETE_STMT
+
+CREATE_TABLE_STMT := "CREATE" "TABLE" [ "IF" "NOT" "EXISTS" ] table_name "(" column_def ("," column_def )* ")"
+column_def        := column_name type_name [ column_constraint* ]
+type_name         := "INT" | "INTEGER" | "TEXT" | "VARCHAR" "(" number ")" | "REAL" | "BLOB" | "BOOLEAN"
+column_constraint := "PRIMARY" "KEY" [ "AUTOINCREMENT" ]
+                   | "NOT" "NULL"
+                   | "UNIQUE"
+                   | "DEFAULT" literal_value
+                   | "CHECK" "(" expression ")"
+
+INSERT_STMT       := "INSERT" "INTO" table_name [ "(" column_name_list ")" ] "VALUES" value_rows
+value_rows        := "(" value_list ")" ( "," "(" value_list ")" )*
+
+SELECT_STMT       := "SELECT" [ "DISTINCT" | "ALL" ] select_list "FROM" table_source
+                     [ where_clause ]
+                     [ "GROUP" "BY" column_name_list ]
+                     [ "HAVING" expression ]
+                     [ "ORDER" "BY" order_list ]
+                     [ "LIMIT" number [ "OFFSET" number ] ]
+
+select_list       := "*" | select_item ( "," select_item )*
+select_item       := expression [ [ "AS" ] alias ]
+
+table_source      := table_primary [ join_clause* ]
+table_primary     := table_name [ [ "AS" ] table_alias ]
+                   | "(" SELECT_STMT ")" [ [ "AS" ] table_alias ]
+
+join_clause       := [ "INNER" | "LEFT" [ "OUTER" ] | "RIGHT" [ "OUTER" ] | "FULL" [ "OUTER" ] ] "JOIN" 
+                     table_primary "ON" expression
+
+UPDATE_STMT       := "UPDATE" table_name
+                     "SET" update_list
+                     [ where_clause ]
+
+update_list       := column_name "=" expression ( "," column_name "=" expression )*
+
+DELETE_STMT       := "DELETE" "FROM" table_name
+                     [ where_clause ]
+
+where_clause      := "WHERE" expression
+
+expression        := or_expression
+
+or_expression     := and_expression ( "OR" and_expression )*
+
+and_expression    := equality_expression ( "AND" equality_expression )*
+
+equality_expression := relational_expression ( ( "=" | "<>" | "!=" ) relational_expression )*
+
+relational_expression := additive_expression 
+                       ( ( "<" | ">" | "<=" | ">=" | "LIKE" ) additive_expression 
+                       | "IN" "(" ( SELECT_STMT | value_list ) ")"
+                       | "NOT" "IN" "(" ( SELECT_STMT | value_list ) ")"
+                       | "BETWEEN" additive_expression "AND" additive_expression
+                       | "IS" [ "NOT" ] "NULL" )*
+
+additive_expression := multiplicative_expression ( ( "+" | "-" ) multiplicative_expression )*
+
+multiplicative_expression := unary_expression ( ( "*" | "/" | "%" ) unary_expression )*
+
+unary_expression  := "NOT" unary_expression
+                   | "EXISTS" "(" SELECT_STMT ")"
+                   | ( "+" | "-" ) unary_expression
+                   | primary_expression
+
+primary_expression := literal_value
+                    | column_reference
+                    | function_call
+                    | "(" expression ")"
+
+column_reference  := [ table_name "." ] column_name
+
+function_call     := function_name "(" [ function_args ] ")"
+function_args     := expression ( "," expression )*
+                   | "*"
+
+order_list        := order_item ( "," order_item )*
+order_item        := expression [ "ASC" | "DESC" ]
+
+column_name_list  := column_name ("," column_name )*
+value_list        := literal_value ("," literal_value )*
+
+literal_value     := string_literal | number | "NULL" | "TRUE" | "FALSE"
+string_literal    := "'" string_content "'" | '"' string_content '"'
+number            := integer | real
+table_name        := identifier
+column_name       := identifier
+alias             := identifier
+table_alias       := identifier
+function_name     := identifier
+identifier        := letter ( letter | digit | "_" )*

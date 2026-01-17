@@ -83,25 +83,16 @@ def load_decoding_attn_from_artifact(artifact_path: Path) -> Any:
                 temp_file = f.name
             
             # Import the module
-            import importlib.util
             spec = importlib.util.spec_from_file_location("temp_decoding_attn_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
             if not hasattr(module, "decoding_attn"):
                 raise ValueError("Code must define a 'decoding_attn' function")
-            
-            # Clean up temporary file
-            os.unlink(temp_file)
-            
+
+            # Don't delete temp file - Triton JIT needs source file at compile time
             return module.decoding_attn
         except Exception as e:
-            # Clean up temporary file if it exists
-            try:
-                if 'temp_file' in locals():
-                    os.unlink(temp_file)
-            except:
-                pass
             raise
     
     elif "program_path" in artifact:

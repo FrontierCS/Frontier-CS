@@ -1,15 +1,25 @@
 import json
 from argparse import Namespace
-from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "my_strategy"
+    """Your multi-region scheduling strategy."""
+
+    NAME = "my_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
+        """
+        Initialize the solution from spec_path config.
+
+        The spec file contains:
+        - deadline: deadline in hours
+        - duration: task duration in hours
+        - overhead: restart overhead in hours
+        - trace_files: list of trace file paths (one per region)
+        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -23,6 +33,22 @@ class Solution(MultiRegionStrategy):
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
+        """
+        Decide next action based on current state.
+
+        Available attributes:
+        - self.env.get_current_region(): Get current region index
+        - self.env.get_num_regions(): Get total number of regions
+        - self.env.switch_region(idx): Switch to region by index
+        - self.env.elapsed_seconds: Current time elapsed
+        - self.task_duration: Total task duration needed (seconds)
+        - self.deadline: Deadline time (seconds)
+        - self.restart_overhead: Restart overhead (seconds)
+        - self.task_done_time: List of completed work segments
+        - self.remaining_restart_overhead: Current pending overhead
+
+        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
+        """
         if self.env.elapsed_seconds >= self.deadline:
             return ClusterType.NONE
 
@@ -30,17 +56,24 @@ class Solution(MultiRegionStrategy):
         if remaining_work <= 0:
             return ClusterType.NONE
 
-        remaining_time = self.deadline - self.env.elapsed_seconds
-        safe_ratio = remaining_work / max(remaining_time, 1.0)
+        gap = self.env.gap_seconds
+        remaining_time = self.deadline - self.env.elapsed_seconds - self.remaining_restart_overhead
+        if remaining_time <= 0:
+            return ClusterType.NONE
 
-        if safe_ratio > 0.9:
-            return ClusterType.ON_DEMAND
+        steps_remaining = remaining_time / gap
+        work_steps_needed = remaining_work / gap
 
         if has_spot:
             return ClusterType.SPOT
+
+        # No spot available
+        if work_steps_needed < steps_remaining * 0.8:  # Have some slack to search for better region
+            current_region = self.env.get_current_region()
+            num_regions = self.env.get_num_regions()
+            next_region = (current_region + 1) % num_regions
+            self.env.switch_region(next_region)
+            return ClusterType.NONE
         else:
-            current = self.env.get_current_region()
-            num = self.env.get_num_regions()
-            next_r = (current + 1) % num
-            self.env.switch_region(next_r)
+            # Tight on time, use on-demand
             return ClusterType.ON_DEMAND

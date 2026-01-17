@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -8,7 +9,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "streak_spot"
+    NAME = "greedy_streak"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -31,69 +32,62 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        # Load traces
-        self.traces = []
-        for tf in config["trace_files"]:
-            with open(tf, 'r') as tfh:
-                self.traces.append(json.load(tfh))
+        # Load traces assuming each is a JSON list of 0/1 or booleans
+        self.traces: List[List[bool]] = []
+        trace_files = config.get("trace_files", [])
+        for path in trace_files:
+            with open(path, "r") as f:
+                trace_data = json.load(f)
+            if isinstance(trace_data, dict) and "availability" in trace_data:
+                trace = [bool(x) for x in trace_data["availability"]]
+            else:
+                trace = [bool(x) for x in trace_data]
+            self.traces.append(trace)
+
         self.num_regions = len(self.traces)
-        if self.num_regions == 0:
-            self.num_regions = 1  # fallback
-        self.max_steps = len(self.traces[0]) if self.traces else 0
-
-        # Precompute streaks
-        self.streaks = [[0 for _ in range(self.num_regions)] for _ in range(self.max_steps)]
-        for r in range(self.num_regions):
-            for s in range(self.max_steps - 1, -1, -1):
-                if self.traces[r][s]:
-                    k = 1
-                    if s + 1 < self.max_steps:
-                        k += self.streaks[s + 1][r]
-                    self.streaks[s][r] = k
-                else:
-                    self.streaks[s][r] = 0
-
         self.step = 0
+        if self.num_regions > 0:
+            self.num_steps = len(self.traces[0])
+            self.streaks = [[0] * self.num_steps for _ in range(self.num_regions)]
+            for r in range(self.num_regions):
+                for t in range(self.num_steps - 1, -1, -1):
+                    if self.traces[r][t]:
+                        next_streak = self.streaks[r][t + 1] if t + 1 < self.num_steps else 0
+                        self.streaks[r][t] = 1 + next_streak
+                    else:
+                        self.streaks[r][t] = 0
+        else:
+            self.num_steps = 0
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
-
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
         """
-        current_step = self.step
-        self.step += 1
+        total_done = sum(self.task_done_time)
+        if total_done >= self.task_duration:
+            return ClusterType.NONE
 
-        if current_step >= self.max_steps:
-            return ClusterType.ON_DEMAND
+        t = self.step
+        self.step += 1
 
         current_region = self.env.get_current_region()
 
-        if self.traces[current_region][current_step]:
+        best_region = -1
+        best_streak = -1
+        for r in range(self.num_regions):
+            if t >= self.num_steps:
+                streak = 0
+            else:
+                streak = self.streaks[r][t]
+            if streak > best_streak:
+                best_streak = streak
+                best_region = r
+
+        if best_streak > 0:
+            if best_region != current_region:
+                self.env.switch_region(best_region)
             return ClusterType.SPOT
-
-        # Find candidates with spot now
-        candidates = [r for r in range(self.num_regions) if self.traces[r][current_step]]
-
-        if not candidates:
+        else:
             return ClusterType.ON_DEMAND
-
-        # Choose the one with longest streak
-        best_r = max(candidates, key=lambda r: self.streaks[current_step][r])
-
-        if best_r != current_region:
-            self.env.switch_region(best_r)
-
-        return ClusterType.SPOT

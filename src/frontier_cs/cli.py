@@ -268,6 +268,12 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Solutions directory to scan (default: solutions/)",
     )
 
+    batch_parser.add_argument(
+        "--problems-dir",
+        type=Path,
+        help="Problems directory (default: auto-detect from code location)",
+    )
+
     batch_output = batch_parser.add_argument_group("Output Options")
     batch_output.add_argument(
         "--results-dir",
@@ -296,6 +302,17 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Use SkyPilot for cloud evaluation",
     )
     batch_backend.add_argument(
+        "--clusters",
+        type=int,
+        help="Number of SkyPilot clusters (research + skypilot only, default: same as --workers)",
+    )
+    batch_backend.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers/concurrent evaluations (default: 1)",
+    )
+    batch_backend.add_argument(
         "--idle-timeout",
         type=int,
         default=10,
@@ -305,12 +322,6 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         "--keep-cluster",
         action="store_true",
         help="Keep SkyPilot cluster running after evaluation (disables autostop)",
-    )
-    batch_backend.add_argument(
-        "--max-concurrent",
-        type=int,
-        default=1,
-        help="Maximum concurrent evaluations (default: 1)",
     )
     batch_backend.add_argument(
         "--timeout",
@@ -344,7 +355,7 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
     batch_control.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Retry all failed pairs",
+        help="Retry failed pairs (includes error/timeout AND score=0)",
     )
     batch_control.add_argument(
         "--report",
@@ -491,24 +502,38 @@ def run_batch(args: argparse.Namespace) -> int:
         format="[%(levelname)s] %(message)s",
     )
 
-    # Create batch evaluator
+    # Determine backend
     backend = "skypilot" if args.skypilot else "docker"
+
     track = "algorithmic" if getattr(args, "algorithmic", False) else "research"
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
     judge_url = getattr(args, "judge_url", None)
-    batch = BatchEvaluator(
+
+    # Get workers and clusters
+    workers = args.workers
+    clusters = args.clusters  # None means same as workers
+
+    # Create batch evaluator
+    problems_dir = getattr(args, "problems_dir", None)
+    # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)
+    batch_kwargs = dict(
         results_dir=args.results_dir,
+        problems_dir=problems_dir,
         backend=backend,
         track=track,
-        max_concurrent=args.max_concurrent,
-        timeout=args.timeout,
+        workers=workers,
+        clusters=clusters,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
         idle_timeout=idle_timeout,
         judge_url=judge_url,
     )
+    if args.timeout is not None:
+        batch_kwargs["timeout"] = args.timeout
+
+    batch = BatchEvaluator(**batch_kwargs)
 
     # Handle status command
     if args.status:
@@ -542,19 +567,41 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Handle report command
     if args.report:
-        print("\nAggregated Results by Model")
+        # Detect and filter orphaned results (results for problems that no longer exist)
+        valid_problems = batch._get_valid_problems()
+        orphaned = batch._get_orphaned_pairs()
+        if orphaned:
+            orphaned_problems = sorted(set(pid.split(":")[1] for pid in orphaned))
+            print(f"\n⚠️  Warning: Found {len(orphaned)} orphaned result(s) for problems that no longer exist:")
+            for p in orphaned_problems:
+                print(f"    - {p}")
+            print("  These will be excluded from the report.\n")
+
+        print("Aggregated Results by Model")
         print("=" * 60)
-        by_model = batch.state.aggregate_by_model()
+        by_model = batch.state.aggregate_by_model(valid_problems if valid_problems else None)
         for model, stats in sorted(by_model.items()):
             avg = f"{stats['avg_score']:.4f}" if stats['avg_score'] is not None else "N/A"
             print(f"  {model}: {stats['successful']}/{stats['total']} successful, avg={avg}")
 
         print("\nAggregated Results by Problem")
         print("=" * 60)
-        by_problem = batch.state.aggregate_by_problem()
+        by_problem = batch.state.aggregate_by_problem(valid_problems if valid_problems else None)
         for problem, stats in sorted(by_problem.items()):
             avg = f"{stats['avg_score']:.4f}" if stats['avg_score'] is not None else "N/A"
             print(f"  {problem}: {stats['successful']}/{stats['total']} successful, avg={avg}")
+
+        # Also export CSV files
+        results_dir = Path(args.results_dir)
+        batch.state.export_aggregated_csv(
+            results_dir / "by_model.csv", by="model",
+            valid_problems=valid_problems if valid_problems else None
+        )
+        batch.state.export_aggregated_csv(
+            results_dir / "by_problem.csv", by="problem",
+            valid_problems=valid_problems if valid_problems else None
+        )
+        print(f"\nCSV files exported to {results_dir}")
         return 0
 
     # Handle export-failed command
@@ -564,18 +611,21 @@ def run_batch(args: argparse.Namespace) -> int:
         return 0
 
     # Handle retry-failed command
+    # Retries both error/timeout AND score=0 pairs (can't distinguish real 0 from failure)
     if args.retry_failed:
         print(f"\nRetrying failed pairs from {args.results_dir}")
         state = batch.retry_failed()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
-        return 0 if state.error_count == 0 else 1
+        # Return 0 even if some evaluations failed - individual errors are expected
+        return 0
 
     # Handle resume command
     if args.resume:
         print(f"\nResuming batch evaluation from {args.results_dir}")
         state = batch.resume()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
-        return 0 if state.error_count == 0 else 1
+        # Return 0 even if some evaluations failed - individual errors are expected
+        return 0
 
     # Determine input mode
     resume = not args.no_resume
@@ -592,7 +642,8 @@ def run_batch(args: argparse.Namespace) -> int:
             solution, problem = p.split(":", 1)
             pairs.append(Pair(solution=solution.strip(), problem=problem.strip()))
 
-        print(f"\nBatch evaluation: {len(pairs)} pairs")
+        backend_info = f" [backend={backend}]" if backend != "docker" else ""
+        print(f"\nBatch evaluation{backend_info}: {len(pairs)} pairs")
         state = batch.evaluate_pairs(pairs, resume=resume)
 
     elif args.pairs_file:
@@ -601,7 +652,8 @@ def run_batch(args: argparse.Namespace) -> int:
             print(f"Error: Pairs file not found: {args.pairs_file}", file=sys.stderr)
             return 1
 
-        print(f"\nBatch evaluation from pairs file: {args.pairs_file}")
+        backend_info = f" [backend={backend}]" if backend != "docker" else ""
+        print(f"\nBatch evaluation{backend_info} from pairs file: {args.pairs_file}")
         state = batch.evaluate_pairs_file(args.pairs_file, resume=resume)
 
     else:
@@ -621,12 +673,20 @@ def run_batch(args: argparse.Namespace) -> int:
             print("Use --solutions-dir or --pairs-file to specify", file=sys.stderr)
             return 1
 
-        pairs = scan_solutions_dir(solutions_dir)
+        # Determine problems_dir for validation
+        probs_dir = problems_dir
+        if probs_dir is None:
+            base_dir = Path(__file__).parents[2]
+            track_dir = "algorithmic" if track == "algorithmic" else "research"
+            probs_dir = base_dir / track_dir / "problems"
+
+        pairs = scan_solutions_dir(solutions_dir, problems_dir=probs_dir)
         if not pairs:
             print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1
 
-        print(f"\nBatch evaluation ({track}): {len(pairs)} solutions from {solutions_dir}")
+        backend_info = f", backend={backend}" if backend != "docker" else ""
+        print(f"\nBatch evaluation ({track}{backend_info}): {len(pairs)} solutions from {solutions_dir}")
         state = batch.evaluate_pairs(pairs, resume=resume)
 
     # Print summary
@@ -644,7 +704,8 @@ def run_batch(args: argparse.Namespace) -> int:
     if state.error_count > 0:
         print(f"  - failed.txt: {state.error_count} failed pairs")
 
-    return 0 if state.error_count == 0 else 1
+    # Return 0 even if some evaluations failed - individual errors are expected
+    return 0
 
 
 def run_list(args: argparse.Namespace) -> int:

@@ -8,7 +8,7 @@ from sky_spot.utils import ClusterType
 class Solution(MultiRegionStrategy):
     """Your multi-region scheduling strategy."""
 
-    NAME = "CantBeLateStrategy"
+    NAME = "cost_optimized_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -24,57 +24,54 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        
-        # Initialize progress cache to avoid O(N^2) complexity with sum()
-        self.cached_progress = 0.0
-        self.last_step_count = 0
-        
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
         """
-        # Efficiently calculate progress
-        current_len = len(self.task_done_time)
-        if current_len > self.last_step_count:
-            self.cached_progress += sum(self.task_done_time[self.last_step_count:])
-            self.last_step_count = current_len
+        # Calculate remaining work
+        done_seconds = sum(self.task_done_time)
+        needed_seconds = self.task_duration - done_seconds
 
-        remaining_work = self.task_duration - self.cached_progress
-        
-        # If work is effectively done, stop
-        if remaining_work <= 1e-6:
+        if needed_seconds <= 0:
             return ClusterType.NONE
 
+        # Calculate time constraints
         elapsed = self.env.elapsed_seconds
         remaining_time = self.deadline - elapsed
         
-        # Determine if we are in a critical state
-        # We need enough time to finish using On-Demand (efficiency 1.0)
-        # plus overhead (if we need to restart/switch) plus a safety buffer.
-        # Safety buffer of 1.5 gaps allows for one failed probe step + margin.
-        overhead = self.restart_overhead
-        safety_buffer = 1.5 * self.env.gap_seconds
+        # Calculate effective available time.
+        # We subtract remaining_restart_overhead because if we start running now,
+        # that time is consumed before progress begins.
+        effective_time = remaining_time - self.remaining_restart_overhead
         
-        required_time = remaining_work + overhead + safety_buffer
-        
-        if remaining_time < required_time:
-            # Critical: Slack is low. Use On-Demand to guarantee finish.
+        # Slack is the buffer we have before we MUST run perfectly to finish.
+        slack = effective_time - needed_seconds
+
+        # Determine threshold for panic mode (switching to On-Demand).
+        # We maintain a safety buffer of 3 * gap_seconds.
+        # This protects against:
+        # 1. Step quantization (gap_seconds)
+        # 2. Potential preemption overhead near the deadline
+        # 3. Switching overhead
+        panic_threshold = 3.0 * self.env.gap_seconds
+
+        if slack < panic_threshold:
+            # Urgency is high: prioritize deadline over cost
             return ClusterType.ON_DEMAND
-        
-        # If not critical, try to save money with Spot
+
+        # If not urgent, prioritize cost
         if has_spot:
             return ClusterType.SPOT
+        
+        # Spot is not available in current region, but we have slack.
+        # Strategy: Hunt for Spot in other regions.
+        if self.env.get_num_regions() > 1:
+            current_region = self.env.get_current_region()
+            next_region = (current_region + 1) % self.env.get_num_regions()
+            self.env.switch_region(next_region)
             
-        # No Spot in current region, but we have slack.
-        # Strategy: Switch to next region and probe (Wait).
-        # We use ClusterType.NONE to avoid On-Demand costs while searching.
-        # We cycle regions to ensure coverage.
-        current_region = self.env.get_current_region()
-        num_regions = self.env.get_num_regions()
-        next_region = (current_region + 1) % num_regions
-        
-        self.env.switch_region(next_region)
-        
+        # Return NONE to avoid paying On-Demand cost while searching or waiting.
+        # This consumes time (reducing slack) but saves money.
         return ClusterType.NONE

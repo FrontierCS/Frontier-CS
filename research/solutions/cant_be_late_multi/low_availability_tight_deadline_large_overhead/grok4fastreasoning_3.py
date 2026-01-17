@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
@@ -18,33 +19,27 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
-        self.consecutive_no_spot = 0
+        self.no_spot_count = 0
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        completed_work = sum(self.task_done_time)
-        if completed_work >= self.task_duration:
+        remaining_work = self.task_duration - sum(self.task_done_time)
+        if remaining_work <= 0:
             return ClusterType.NONE
 
-        remaining_work = self.task_duration - completed_work
-        time_left = self.deadline - self.env.elapsed_seconds
+        if has_spot:
+            self.no_spot_count = 0
+            return ClusterType.SPOT
 
-        # Conservative: if tight on time, use ON_DEMAND regardless
-        if time_left < remaining_work + self.restart_overhead * 3:
-            return ClusterType.ON_DEMAND
-
+        self.no_spot_count += 1
         current_region = self.env.get_current_region()
         num_regions = self.env.get_num_regions()
+        if self.no_spot_count >= 2 and num_regions > 1:
+            next_region = (current_region + 1) % num_regions
+            self.env.switch_region(next_region)
+            self.no_spot_count = 0
 
-        if has_spot:
-            self.consecutive_no_spot = 0
-            return ClusterType.SPOT
-        else:
-            self.consecutive_no_spot += 1
-            if self.consecutive_no_spot >= 3 and num_regions > 1:
-                next_region = (current_region + 1) % num_regions
-                self.env.switch_region(next_region)
-                self.consecutive_no_spot = 0
-                return ClusterType.ON_DEMAND
-            else:
-                return ClusterType.ON_DEMAND
+        time_left = self.deadline - self.env.elapsed_seconds - self.remaining_restart_overhead
+        if remaining_work > time_left:
+            return ClusterType.ON_DEMAND
+        return ClusterType.ON_DEMAND

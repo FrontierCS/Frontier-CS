@@ -1,0 +1,15 @@
+[project]
+name = "symbolic-regression"
+version = "0.1.0"
+description = "Symbolic regression problem resources"
+requires-python = ">=3.9"
+dependencies = [
+    "pysr>=0.16",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "sympy>=1.12",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

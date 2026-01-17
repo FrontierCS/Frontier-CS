@@ -4,6 +4,7 @@ Docker runner for research problems.
 Runs evaluations in local Docker containers.
 """
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -11,11 +12,12 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple
 
-from .base import Runner, EvaluationResult, EvaluationStatus
-from ..config import load_runtime_config, DockerConfig, DEFAULT_DOCKER_IMAGE
+from .base import ResearchRunner, EvaluationResult, EvaluationStatus
+from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE
+from ..gen.solution_format import FAILED_EXTENSION
 
 
-class DockerRunner(Runner):
+class DockerRunner(ResearchRunner):
     """
     Runner for research problems using local Docker.
 
@@ -31,6 +33,7 @@ class DockerRunner(Runner):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
+        problems_dir: Optional[Path] = None,
         datasets_dir: Optional[Path] = None,
     ):
         """
@@ -38,20 +41,12 @@ class DockerRunner(Runner):
 
         Args:
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
+            problems_dir: Problems directory (overrides base_dir/research/problems if set)
             datasets_dir: Directory for cached datasets (default: base_dir/research/datasets)
         """
-        self.base_dir = base_dir or self._find_base_dir()
-        self.research_dir = self.base_dir / "research"
+        super().__init__(base_dir=base_dir, problems_dir=problems_dir)
         self.datasets_dir = datasets_dir or (self.research_dir / "datasets")
         self._has_gpu: Optional[bool] = None
-
-    def _find_base_dir(self) -> Path:
-        """Find the Frontier-CS base directory."""
-        # src/frontier_cs/runner/docker.py -> repo root
-        base = Path(__file__).parents[3]
-        if not (base / "research").is_dir():
-            raise RuntimeError(f"research/ not found in {base}")
-        return base
 
     @property
     def has_gpu(self) -> bool:
@@ -67,14 +62,6 @@ class DockerRunner(Runner):
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 self._has_gpu = False
         return self._has_gpu
-
-    def get_problem_path(self, problem_id: str) -> Path:
-        """Get the path to a research problem directory.
-
-        With nested solution structure, problem_id is already the nested path
-        (e.g., "cant_be_late/high_availability_loose_deadline_large_overhead").
-        """
-        return self.research_dir / "problems" / problem_id
 
     def evaluate(
         self,
@@ -127,6 +114,20 @@ class DockerRunner(Runner):
                 message=f"Solution file not found: {solution_path}",
             )
 
+        # Check for generation failure marker (.FAILED file)
+        if solution_path.suffix == f".{FAILED_EXTENSION}":
+            try:
+                meta = json.loads(solution_path.read_text(encoding="utf-8"))
+                error_msg = meta.get("error", "Generation failed")
+            except (json.JSONDecodeError, OSError):
+                error_msg = "Generation failed"
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                score=0,
+                message=f"Generation failed: {error_msg}",
+            )
+
         problem_path = self.get_problem_path(problem_id)
         if not problem_path.exists():
             return EvaluationResult(
@@ -148,8 +149,10 @@ class DockerRunner(Runner):
         start_time = time.time()
 
         # Load config from problem's config.yaml
-        runtime_config = load_runtime_config(problem_path)
+        problem_config = load_problem_config(problem_path)
+        runtime_config = problem_config.runtime
         docker_config = runtime_config.docker
+        uv_project = problem_config.dependencies.get("uv_project")
 
         # Determine timeout
         effective_timeout = timeout or runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
@@ -174,6 +177,7 @@ class DockerRunner(Runner):
                 docker_config=docker_config,
                 needs_gpu=needs_gpu,
                 timeout=effective_timeout,
+                uv_project=uv_project,
             )
 
             duration = time.time() - start_time
@@ -234,7 +238,7 @@ class DockerRunner(Runner):
         parts = problem_id.split("/")
         for i in range(1, len(parts)):
             parent = "/".join(parts[:i])
-            common_dir = self.research_dir / "problems" / parent / "common"
+            common_dir = self.problems_dir / parent / "common"
             if common_dir.is_dir():
                 dest = workspace / "research" / parent / "common"
                 shutil.copytree(common_dir, dest)
@@ -250,6 +254,7 @@ class DockerRunner(Runner):
         docker_config: DockerConfig,
         needs_gpu: bool,
         timeout: int,
+        uv_project: Optional[str] = None,
     ) -> Tuple[subprocess.CompletedProcess, str]:
         """Run the Docker container."""
         cmd = ["docker", "run", "--rm"]
@@ -276,7 +281,7 @@ class DockerRunner(Runner):
         cmd.append(docker_config.image)
 
         # Run script
-        run_script = self._get_run_script()
+        run_script = self._get_run_script(uv_project=uv_project, dind=docker_config.dind)
         cmd.extend(["bash", "-c", run_script])
 
         # Wrap with timeout
@@ -293,17 +298,53 @@ class DockerRunner(Runner):
         logs = result.stdout + "\n" + result.stderr
         return result, logs
 
-    def _get_run_script(self) -> str:
+    def _get_run_script(self, uv_project: Optional[str] = None, dind: bool = False) -> str:
         """Get the bash script to run inside Docker."""
-        return '''
+        # Build uv install command if uv_project is specified
+        if uv_project:
+            uv_install_cmd = f'''
+# Install dependencies from uv_project
+if [ -d "{uv_project}" ] && [ -f "{uv_project}/pyproject.toml" ]; then
+    echo "[framework] Installing dependencies from {uv_project}"
+    uv pip install --system -e "{uv_project}"
+fi
+'''
+        else:
+            uv_install_cmd = "# No uv_project specified"
+
+        # Build Docker CLI install command for DinD
+        if dind:
+            dind_install_cmd = '''
+# Install Docker CLI for DinD
+if ! command -v docker &>/dev/null; then
+    echo "[framework] Installing Docker CLI for DinD..."
+    DOCKER_VERSION="27.3.1"
+    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" | tar xz -C /tmp
+    mv /tmp/docker/docker /usr/local/bin/docker
+    chmod +x /usr/local/bin/docker
+    rm -rf /tmp/docker
+fi
+'''
+        else:
+            dind_install_cmd = "# DinD not enabled"
+
+        return f'''
 set -euo pipefail
 
 # Copy workspace to writable location
 cp -r /workspace/* /work/
 cd /work
 
+# Make all scripts executable
+find /work -name "*.sh" -exec chmod +x {{}} \\;
+
+# Create execution_env and copy solution BEFORE set_up_env.sh
+# (some scripts expect this structure to exist)
+mkdir -p /work/execution_env/solution_env
+cp /work/solution/solution.py /work/execution_env/solution_env/
+
 # Find the problem directory
-PROBLEM_DIR=$(find research -mindepth 1 -maxdepth 4 -name "evaluator.py" -exec dirname {} \\; | head -1)
+PROBLEM_DIR=$(find research -mindepth 1 -maxdepth 4 -name "evaluator.py" -exec dirname {{}} \\; | head -1)
 if [ -z "$PROBLEM_DIR" ]; then
     echo "ERROR: Could not find problem directory"
     exit 1
@@ -311,18 +352,35 @@ fi
 
 cd "$PROBLEM_DIR"
 
+# Install curl if not present (needed for uv install and other downloads)
+if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+    if command -v apt-get &>/dev/null; then
+        apt-get update -qq && apt-get install -y -qq curl >/dev/null 2>&1 || true
+    fi
+fi
+
+{dind_install_cmd}
+
+# Install uv if not present
+if ! command -v uv &>/dev/null; then
+    if command -v curl &>/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget &>/dev/null; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
+    else
+        pip install uv -q 2>/dev/null || true
+    fi
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+{uv_install_cmd}
+
 # Run setup if exists
 if [ -f set_up_env.sh ]; then
-    chmod +x set_up_env.sh
     ./set_up_env.sh
 fi
 
-# Copy solution
-mkdir -p /work/execution_env/solution_env
-cp /work/solution/solution.py /work/execution_env/solution_env/
-
 # Run evaluation
-chmod +x evaluate.sh
 ./evaluate.sh
 '''
 

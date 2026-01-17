@@ -103,7 +103,7 @@ def pull_docker_image(image: str) -> bool:
             ["docker", "pull", image],
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=900  # 15 minutes for large images (some oss-fuzz images are 10+ GB)
         )
         if result.returncode == 0:
             print(f"[Evaluator] Successfully pulled {image}")
@@ -496,7 +496,7 @@ def evaluate(solution_path: Path, task_ids: List[str], gt_poc_lens: Optional[dic
 def main(
     task_ids: List[str],
     gt_poc_lens: Optional[dict] = None,
-    default_solution: str = "../../execution_env/solution_env/solution.py",
+    default_solution: str = "/work/execution_env/solution_env/solution.py",
 ) -> None:
     """
     Main entry point for variant evaluators.
@@ -542,7 +542,10 @@ def main(
         json.dump(payload, fout, indent=2)
 
     print(f"[Evaluator] Results saved to {args.out}")
-    print(payload.get("score", 0))
+    # Format: "score score_unbounded" (space-separated) for batch runner
+    score = payload.get("score", 0)
+    score_unbounded = payload.get("score_unbounded", score)
+    print(f"{score} {score_unbounded}")
 
 
 if __name__ == "__main__":

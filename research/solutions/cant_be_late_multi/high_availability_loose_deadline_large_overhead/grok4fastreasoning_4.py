@@ -1,25 +1,15 @@
 import json
 from argparse import Namespace
+from typing import List
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Your multi-region scheduling strategy."""
-
-    NAME = "my_strategy"  # REQUIRED: unique identifier
+    NAME = "my_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
-        """
-        Initialize the solution from spec_path config.
-
-        The spec file contains:
-        - deadline: deadline in hours
-        - duration: task duration in hours
-        - overhead: restart overhead in hours
-        - trace_files: list of trace file paths (one per region)
-        """
         with open(spec_path) as f:
             config = json.load(f)
 
@@ -30,31 +20,63 @@ class Solution(MultiRegionStrategy):
             inter_task_overhead=[0.0],
         )
         super().__init__(args)
+
+        self.num_regions = len(config["trace_files"])
+        self.traces: List[List[bool]] = [None] * self.num_regions
+        for i, path in enumerate(config["trace_files"]):
+            with open(path, 'r') as tf:
+                trace_data = json.load(tf)
+                if isinstance(trace_data, dict) and "availability" in trace_data:
+                    self.traces[i] = trace_data["availability"]
+                else:
+                    self.traces[i] = trace_data
+
         return self
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        """
-        Decide next action based on current state.
+        elapsed = self.env.elapsed_seconds
+        gap = self.env.gap_seconds
+        deadline = self.deadline
+        task_duration = self.task_duration
+        task_done_time = self.task_done_time
 
-        Available attributes:
-        - self.env.get_current_region(): Get current region index
-        - self.env.get_num_regions(): Get total number of regions
-        - self.env.switch_region(idx): Switch to region by index
-        - self.env.elapsed_seconds: Current time elapsed
-        - self.task_duration: Total task duration needed (seconds)
-        - self.deadline: Deadline time (seconds)
-        - self.restart_overhead: Restart overhead (seconds)
-        - self.task_done_time: List of completed work segments
-        - self.remaining_restart_overhead: Current pending overhead
+        done_work = sum(task_done_time)
+        remaining_work = task_duration - done_work
+        if remaining_work <= 0:
+            return ClusterType.NONE
 
-        Returns: ClusterType.SPOT, ClusterType.ON_DEMAND, or ClusterType.NONE
-        """
-        # Your decision logic here
+        time_left = deadline - elapsed
+        if time_left <= 0:
+            return ClusterType.NONE
+
+        current_region = self.env.get_current_region()
+        step_idx = int(elapsed // gap)
+
         if has_spot:
             return ClusterType.SPOT
+
+        # Find best region with spot available this step
+        best_r = -1
+        max_streak = -1
+        for r in range(self.num_regions):
+            if r == current_region:
+                continue
+            if step_idx >= len(self.traces[r]) or not self.traces[r][step_idx]:
+                continue
+            # Compute streak
+            streak = 0
+            max_possible = min(step_idx + 48, len(self.traces[r]))  # limit for efficiency
+            for s in range(step_idx, max_possible):
+                if self.traces[r][s]:
+                    streak += 1
+                else:
+                    break
+            if streak > max_streak:
+                max_streak = streak
+                best_r = r
+
+        if best_r != -1:
+            self.env.switch_region(best_r)
+            return ClusterType.SPOT
         else:
-            num_regions = self.env.get_num_regions()
-            current_region = self.env.get_current_region()
-            next_region = (current_region + 1) % num_regions
-            self.env.switch_region(next_region)
-            return ClusterType.ON_DEMAND
+            return ClusterType.NONE

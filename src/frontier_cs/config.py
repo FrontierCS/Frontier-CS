@@ -81,7 +81,6 @@ class ProblemConfig:
     tag: Optional[str] = None  # Problem category: os, hpc, ai, db, pl, security
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     dependencies: Dict[str, Any] = field(default_factory=dict)
-    datasets: list = field(default_factory=list)
 
 
 def load_problem_config(problem_path: Path) -> ProblemConfig:
@@ -117,9 +116,8 @@ def load_problem_config(problem_path: Path) -> ProblemConfig:
     if config.get("tag"):
         problem_config.tag = str(config["tag"])
 
-    # Parse dependencies and datasets
+    # Parse dependencies (datasets are handled by set_up_env.sh, not framework)
     problem_config.dependencies = config.get("dependencies", {})
-    problem_config.datasets = config.get("datasets", [])
 
     # Parse runtime section
     runtime = config.get("runtime", {})

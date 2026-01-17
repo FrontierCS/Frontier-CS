@@ -59,11 +59,26 @@ print(f"Score (unbounded): {result.score_unbounded}")
 
 ```bash
 # Evaluate a solution
-frontier eval --algorithmic 1 solution.cpp
+frontier-eval --algorithmic 1 solution.cpp
 
 # Get unbounded score
-frontier eval --algorithmic 1 solution.cpp --unbounded
+frontier-eval --algorithmic 1 solution.cpp --unbounded
 ```
+
+### Batch Evaluation
+
+```bash
+# Evaluate all solutions in algorithmic/solutions/
+frontier-eval batch --algorithmic --workers 10
+
+# With SkyPilot (cloud go-judge)
+frontier-eval batch --algorithmic --skypilot --workers 10
+
+# Check status
+frontier-eval batch --algorithmic --status
+```
+
+**Note:** For algorithmic track, `--clusters` is not used. All workers share a single go-judge server (local Docker or SkyPilot).
 
 ### Cloud Evaluation (SkyPilot)
 

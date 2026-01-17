@@ -1,4 +1,5 @@
 import json
+import math
 from argparse import Namespace
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
@@ -6,7 +7,7 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    NAME = "cant_be_late_guarded"
+    NAME = "cant_be_late_lazy_fallback_v2"
 
     def solve(self, spec_path: str) -> "Solution":
         with open(spec_path) as f:
@@ -21,81 +22,66 @@ class Solution(MultiRegionStrategy):
         super().__init__(args)
 
         # Internal state
-        self._initialized = False
-        self._cached_done_sum = 0.0
-        self._cached_done_len = 0
-        self._committed_on_demand = False
+        self._committed = False
+        self._no_spot_count = 0
+        gap = self.env.gap_seconds
+        # Switch region only if waiting longer than overhead is likely beneficial.
+        self._switch_threshold_steps = max(2, int(math.ceil(self.restart_overhead / gap)) + 1)
         return self
 
-    # ----------------------- Internal helpers -----------------------
-
-    def _ensure_init(self):
-        if self._initialized:
-            return
-        num_regions = self.env.get_num_regions()
-        self._region_seen = [0] * num_regions
-        self._region_spot_up = [0] * num_regions
-        self._initialized = True
-
-    def _update_region_stats(self, has_spot: bool):
-        idx = self.env.get_current_region()
-        self._region_seen[idx] += 1
-        if has_spot:
-            self._region_spot_up[idx] += 1
-
-    def _get_total_done(self) -> float:
-        # Efficiently maintain running sum
-        if len(self.task_done_time) > self._cached_done_len:
-            new_seg_sum = sum(self.task_done_time[self._cached_done_len :])
-            self._cached_done_sum += new_seg_sum
-            self._cached_done_len = len(self.task_done_time)
-        return self._cached_done_sum
-
-    def _choose_region_on_wait(self) -> int:
-        # Simple round-robin to diversify chances across regions
-        n = self.env.get_num_regions()
-        if n <= 1:
-            return self.env.get_current_region()
-        return (self.env.get_current_region() + 1) % n
-
-    # ----------------------- Decision Logic -------------------------
-
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        self._ensure_init()
-        # Update stats about current region availability
-        self._update_region_stats(has_spot)
+        # Remaining required work in seconds
+        remain_work = max(0.0, self.task_duration - sum(self.task_done_time))
+        if remain_work <= 0.0:
+            return ClusterType.NONE
 
-        # If already committed to On-Demand, keep running OD to ensure finish
-        if self._committed_on_demand:
-            return ClusterType.ON_DEMAND
-
-        # Time accounting
         now = self.env.elapsed_seconds
-        time_remaining = self.deadline - now
+        time_left = self.deadline - now
+        gap = self.env.gap_seconds
 
-        done = self._get_total_done()
-        remaining_work = max(0.0, self.task_duration - done)
-
-        # If we commit to OD now, how much time is needed (work + overhead)
-        if self.env.cluster_type == ClusterType.ON_DEMAND:
-            overhead_if_commit_now = self.remaining_restart_overhead
-        else:
-            overhead_if_commit_now = self.restart_overhead
-
-        time_needed_by_od = remaining_work + max(0.0, overhead_if_commit_now)
-
-        # Guard policy: must commit to OD if we cannot afford to lose another step
-        # i.e., worst-case losing one more gap before switching to OD.
-        if time_remaining <= time_needed_by_od + self.env.gap_seconds:
-            self._committed_on_demand = True
+        # Once we switch to On-Demand, stay on it to avoid extra overhead and risk.
+        if self._committed or last_cluster_type == ClusterType.ON_DEMAND:
+            self._committed = True
             return ClusterType.ON_DEMAND
 
-        # Otherwise, we can still chase Spot
+        overhead_if_od_now = self.restart_overhead
+        safety_margin = max(gap, 0.0)
+
+        # If we must commit now to guarantee finishing by deadline
+        if time_left <= remain_work + overhead_if_od_now + safety_margin:
+            self._committed = True
+            self._no_spot_count = 0
+            return ClusterType.ON_DEMAND
+
+        # Prefer SPOT when available and not yet committed
         if has_spot:
+            self._no_spot_count = 0
             return ClusterType.SPOT
 
-        # Spot unavailable: wait to save cost and switch region to search
-        next_region = self._choose_region_on_wait()
-        if next_region != self.env.get_current_region():
-            self.env.switch_region(next_region)
+        # Spot not available: decide to idle, switch region, or commit to OD if cannot idle
+        # Guard: can we afford idling one full step and still finish if we switch to OD next step?
+        if time_left - gap <= remain_work + self.restart_overhead + safety_margin:
+            self._committed = True
+            self._no_spot_count = 0
+            return ClusterType.ON_DEMAND
+
+        # We can afford to wait at least one step
+        self._no_spot_count += 1
+
+        # Consider switching regions if prolonged unavailability and multiple regions exist
+        num_regions = self.env.get_num_regions() if hasattr(self.env, "get_num_regions") else 1
+        should_switch = False
+        if num_regions > 1 and self._no_spot_count >= self._switch_threshold_steps:
+            # Avoid switching too close to commit; ensure extra slack for switch + potential later OD commit
+            if time_left - gap > remain_work + self.restart_overhead + safety_margin + self.restart_overhead:
+                should_switch = True
+
+        if should_switch:
+            new_region = (self.env.get_current_region() + 1) % num_regions
+            if new_region != self.env.get_current_region():
+                self.env.switch_region(new_region)
+            self._no_spot_count = 0
+            return ClusterType.NONE
+
+        # Default: wait for spot to return
         return ClusterType.NONE

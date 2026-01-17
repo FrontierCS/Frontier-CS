@@ -18,7 +18,7 @@ class Strategy:
     NAME = 'abstract'
     SUBCLASSES: typing.Dict[str, typing.Type['Strategy']] = {}
 
-    def __init__(self, args):
+    def __init__(self, args=None):
         self.args = args
 
     def reset(self, env: 'env.Env', task: 'task_lib.Task'):

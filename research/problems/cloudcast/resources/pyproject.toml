@@ -1,17 +1,16 @@
-[tool.poetry]
+[project]
 name = "cloudcast"
 version = "0.1.0"
 description = "Cloud broadcast optimization simulator."
-authors = ["Frontier-CS"]
-
-[tool.poetry.dependencies]
-python = ">=3.10,<3.13"
-networkx = ">=3.0"
-numpy = ">=1.24"
-colorama = ">=0.4.6"
-pandas = ">=1.5"
-graphviz = ">=0.20"
+requires-python = ">=3.10"
+dependencies = [
+    "networkx>=3.0",
+    "numpy>=1.24",
+    "colorama>=0.4.6",
+    "pandas>=1.5",
+    "graphviz>=0.20",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

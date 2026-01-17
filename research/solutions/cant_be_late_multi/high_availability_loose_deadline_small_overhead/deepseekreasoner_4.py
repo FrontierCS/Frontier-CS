@@ -1,7 +1,7 @@
 import json
 from argparse import Namespace
+from typing import List, Tuple, Optional
 import math
-from typing import List, Tuple
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
@@ -22,97 +22,125 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
         
-        # Initialize strategy state
         self.spot_price = 0.9701
         self.ondemand_price = 3.06
-        self.price_ratio = self.spot_price / self.ondemand_price
-        
-        # Region tracking
+        self.total_regions = 0
         self.region_history = []
-        self.current_region_streak = 0
-        self.last_action = ClusterType.NONE
-        self.consecutive_failures = 0
-        self.switch_count = 0
+        self.last_region = 0
+        self.consecutive_spot_failures = 0
+        self.max_spot_failures = 3
+        self.emergency_threshold = 0.3
+        self.safety_margin = 0.1
         
         return self
 
+    def _get_remaining_work(self) -> float:
+        """Calculate remaining work in seconds."""
+        return self.task_duration - sum(self.task_done_time)
+
+    def _get_time_remaining(self) -> float:
+        """Calculate time remaining until deadline."""
+        return self.deadline - self.env.elapsed_seconds
+
+    def _get_critical_ratio(self) -> float:
+        """Calculate ratio of remaining work to remaining time."""
+        remaining_work = self._get_remaining_work()
+        time_remaining = self._get_time_remaining()
+        if time_remaining <= 0:
+            return float('inf')
+        return remaining_work / time_remaining
+
+    def _should_use_ondemand(self) -> bool:
+        """Determine if we should switch to on-demand."""
+        if self._get_remaining_work() <= 0:
+            return False
+            
+        remaining_work = self._get_remaining_work()
+        time_remaining = self._get_time_remaining()
+        
+        if time_remaining <= 0:
+            return True
+            
+        if self.remaining_restart_overhead > 0:
+            remaining_work += self.remaining_restart_overhead
+            
+        required_time = remaining_work + self.restart_overhead
+        
+        if required_time > time_remaining * (1 - self.safety_margin):
+            return True
+            
+        critical_ratio = self._get_critical_ratio()
+        if critical_ratio > self.emergency_threshold:
+            return True
+            
+        if self.consecutive_spot_failures >= self.max_spot_failures:
+            return True
+            
+        return False
+
+    def _choose_best_region(self, has_spot: bool) -> int:
+        """Choose the best region to run in."""
+        if self.total_regions == 0:
+            self.total_regions = self.env.get_num_regions()
+            
+        current_region = self.env.get_current_region()
+        
+        if has_spot:
+            return current_region
+            
+        for region in range(self.total_regions):
+            if region != current_region:
+                return region
+                
+        return current_region
+
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
-        # If task is complete, do nothing
-        remaining_work = self.task_duration - sum(self.task_done_time)
-        if remaining_work <= 1e-9:
+        if self._get_remaining_work() <= 0:
             return ClusterType.NONE
             
-        # Calculate time constraints
-        elapsed = self.env.elapsed_seconds
-        remaining_time = self.deadline - elapsed
-        time_per_step = self.env.gap_seconds
+        if self.total_regions == 0:
+            self.total_regions = self.env.get_num_regions()
+            self.last_region = self.env.get_current_region()
         
-        # Calculate effective work rates
-        effective_spot_rate = time_per_step / (time_per_step + self.restart_overhead)
-        required_steps_spot = math.ceil(remaining_work / (time_per_step * effective_spot_rate))
-        required_steps_ondemand = math.ceil(remaining_work / time_per_step)
+        current_region = self.env.get_current_region()
         
-        # Calculate minimum steps needed
-        min_time_spot = required_steps_spot * time_per_step
-        min_time_ondemand = required_steps_ondemand * time_per_step
+        if self.last_region != current_region:
+            self.consecutive_spot_failures = 0
+            self.last_region = current_region
         
-        # Safety margin (15% of remaining time)
-        safety_margin = 0.15 * remaining_time
-        
-        # Decision logic
-        if remaining_time < min_time_ondemand + safety_margin:
-            # Critical: must use on-demand to finish on time
-            if self.remaining_restart_overhead <= 0:
-                return ClusterType.ON_DEMAND
-            else:
-                return ClusterType.NONE
-                
-        elif remaining_time < min_time_spot + safety_margin:
-            # Moderate: can use spot but be ready to switch to on-demand
-            if has_spot and self.consecutive_failures < 2:
-                return ClusterType.SPOT
-            elif self.remaining_restart_overhead <= 0:
-                return ClusterType.ON_DEMAND
-            else:
-                return ClusterType.NONE
-                
+        if not has_spot:
+            self.consecutive_spot_failures += 1
         else:
-            # Plenty of time: optimize for cost
-            if has_spot:
-                # Use spot if available
-                if self.consecutive_failures >= 2:
-                    # Too many failures, try another region
-                    if self.current_region_streak > 3:
-                        current = self.env.get_current_region()
-                        next_region = (current + 1) % self.env.get_num_regions()
-                        self.env.switch_region(next_region)
-                        self.current_region_streak = 0
-                        self.consecutive_failures = 0
-                        self.switch_count += 1
-                self.current_region_streak += 1
-                self.consecutive_failures = 0
+            self.consecutive_spot_failures = 0
+        
+        if self._should_use_ondemand():
+            best_region = self._choose_best_region(has_spot)
+            if best_region != current_region:
+                self.env.switch_region(best_region)
+                self.last_region = best_region
+                self.consecutive_spot_failures = 0
+            return ClusterType.ON_DEMAND
+        
+        if has_spot:
+            best_region = self._choose_best_region(has_spot)
+            if best_region != current_region:
+                self.env.switch_region(best_region)
+                self.last_region = best_region
+                self.consecutive_spot_failures = 0
+            return ClusterType.SPOT
+        
+        best_region = self._choose_best_region(has_spot)
+        if best_region != current_region:
+            self.env.switch_region(best_region)
+            self.last_region = best_region
+            self.consecutive_spot_failures = 0
+            
+            current_has_spot = has_spot
+            if self.total_regions > 1:
                 return ClusterType.SPOT
             else:
-                # Spot not available
-                self.consecutive_failures += 1
-                
-                # Consider region switch if spot keeps failing
-                if self.consecutive_failures > 3 and self.current_region_streak > 2:
-                    current = self.env.get_current_region()
-                    next_region = (current + 1) % self.env.get_num_regions()
-                    self.env.switch_region(next_region)
-                    self.current_region_streak = 0
-                    self.consecutive_failures = 0
-                    self.switch_count += 1
-                    return ClusterType.NONE
-                    
-                # If we have pending overhead, wait
-                if self.remaining_restart_overhead > 0:
-                    return ClusterType.NONE
-                    
-                # Small chance to use on-demand if we're making good progress
-                progress_ratio = sum(self.task_done_time) / self.task_duration
-                if progress_ratio > 0.7 and remaining_time > min_time_ondemand * 1.5:
-                    return ClusterType.ON_DEMAND
-                    
-                return ClusterType.NONE
+                return ClusterType.ON_DEMAND if self._should_use_ondemand() else ClusterType.NONE
+        else:
+            if self.consecutive_spot_failures >= self.max_spot_failures:
+                return ClusterType.ON_DEMAND
+            return ClusterType.NONE

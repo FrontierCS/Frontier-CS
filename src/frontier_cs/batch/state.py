@@ -8,12 +8,15 @@ Supports hash-based cache invalidation for solutions and problems.
 import hashlib
 import json
 import csv
+import tempfile
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .pair import Pair
+from ..gen.solution_format import parse_solution_filename
 
 
 def hash_file(path: Path) -> str:
@@ -76,6 +79,7 @@ class PairResult:
 
     pair_id: str  # "solution:problem"
     score: Optional[float] = None
+    score_unbounded: Optional[float] = None  # Unbounded score for algorithmic problems
     status: str = "pending"  # pending, running, success, error, timeout, skipped
     message: Optional[str] = None
     duration_seconds: Optional[float] = None
@@ -85,8 +89,10 @@ class PairResult:
 
     @property
     def is_complete(self) -> bool:
-        """Whether this pair has a valid result (success with score)."""
-        return self.status == "success" and self.score is not None
+        """Whether this pair has been evaluated (regardless of success/failure)."""
+        # A pair is "complete" if it has any terminal status, not just success
+        # This prevents automatic re-runs of errors - use --retry-failed for that
+        return self.status in ("success", "error", "timeout", "skipped")
 
     @property
     def is_success(self) -> bool:
@@ -140,6 +146,7 @@ class EvaluationState:
             state.results[pair_id] = PairResult(
                 pair_id=pair_id,
                 score=result_data.get("score"),
+                score_unbounded=result_data.get("score_unbounded"),
                 status=result_data.get("status", "pending"),
                 message=result_data.get("message"),
                 duration_seconds=result_data.get("duration_seconds"),
@@ -163,6 +170,7 @@ class EvaluationState:
             "results": {
                 pair_id: {
                     "score": r.score,
+                    "score_unbounded": r.score_unbounded,
                     "status": r.status,
                     "message": r.message,
                     "duration_seconds": r.duration_seconds,
@@ -170,13 +178,30 @@ class EvaluationState:
                     "solution_hash": r.solution_hash,
                     "problem_hash": r.problem_hash,
                 }
-                for pair_id, r in self.results.items()
+                for pair_id, r in list(self.results.items())
             },
         }
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+
+        # Atomic write: write to temp file, then rename
+        # This prevents corruption from concurrent writes or crashes
+        fd, tmp_path = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=".state_tmp_",
+            suffix=".json"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, path)  # Atomic on POSIX
+        except:
+            # Clean up temp file on error
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def get_pending_pairs(
         self,
@@ -252,11 +277,13 @@ class EvaluationState:
         duration_seconds: Optional[float] = None,
         solution_hash: Optional[str] = None,
         problem_hash: Optional[str] = None,
+        score_unbounded: Optional[float] = None,
     ) -> None:
         """Record the result of evaluating a pair."""
         self.results[pair.id] = PairResult(
             pair_id=pair.id,
             score=score,
+            score_unbounded=score_unbounded,
             status=status,
             message=message,
             duration_seconds=duration_seconds,
@@ -287,7 +314,7 @@ class EvaluationState:
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "solution", "problem", "score", "status", "message",
+                "solution", "problem", "score", "score_unbounded", "status", "message",
                 "duration_seconds", "timestamp", "solution_hash", "problem_hash"
             ])
 
@@ -296,10 +323,11 @@ class EvaluationState:
                 writer.writerow([
                     solution,
                     problem,
-                    result.score if result.score is not None else "",
+                    f"{result.score:.3f}" if result.score is not None else "",
+                    f"{result.score_unbounded:.3f}" if result.score_unbounded is not None else "",
                     result.status,
                     result.message or "",
-                    result.duration_seconds or "",
+                    f"{result.duration_seconds:.3f}" if result.duration_seconds else "",
                     result.timestamp or "",
                     result.solution_hash or "",
                     result.problem_hash or "",
@@ -366,11 +394,29 @@ class EvaluationState:
         return len(skipped)
 
     def get_failed_pairs(self) -> List[Pair]:
-        """Get list of failed pairs."""
+        """
+        Get list of pairs that should be retried.
+
+        Includes both explicit failures (error/timeout) AND zero-score successes.
+
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        !!! DO NOT CHANGE THIS LOGIC - IT IS INTENTIONAL !!!
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        We cannot reliably distinguish between:
+        - A solution that legitimately scores 0
+        - An evaluator bug that prints "0" before exit(1)
+        - Infrastructure issues that cause 0 output
+
+        Retrying zero-score results is the correct approach because:
+        1. A truly zero-score solution will just score 0 again (no harm)
+        2. A flaky failure will get a chance to succeed
+        3. The cost of re-running is low compared to missing valid scores
+        """
         return [
             Pair(solution=pair_id.split(":")[0], problem=pair_id.split(":")[1])
             for pair_id, r in self.results.items()
-            if r.status in ("error", "timeout")
+            if r.status in ("error", "timeout") or (r.is_success and r.score == 0)
         ]
 
     def get_successful_pairs(self) -> List[Pair]:
@@ -381,13 +427,29 @@ class EvaluationState:
             if r.is_success
         ]
 
-    def aggregate_by_model(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by model (solution prefix before first _)."""
+    def aggregate_by_model(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by model (solution prefix before first _).
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_model: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None:
+                problem = pair_id.split(":")[1]
+                if problem not in valid_problems:
+                    continue
+
             solution = pair_id.split(":")[0]
-            # Extract model prefix (e.g., "gpt5_flash_attn" -> "gpt5")
-            model = solution.split("_")[0] if "_" in solution else solution
+            # Extract model from nested path (e.g., "llm_router/gpt5_1.py" -> "gpt5")
+            # Solution format: {problem}/{model}.ext or {problem}/{model}_{variant}.ext
+            filename = Path(solution).name
+            parsed = parse_solution_filename(filename)
+            model = parsed[0] if parsed else filename.rsplit(".", 1)[0]
             if model not in by_model:
                 by_model[model] = []
             by_model[model].append(result)
@@ -396,6 +458,7 @@ class EvaluationState:
         for model, results in by_model.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[model] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -403,14 +466,27 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
-    def aggregate_by_problem(self) -> Dict[str, Dict[str, any]]:
-        """Aggregate results by problem."""
+    def aggregate_by_problem(
+        self, valid_problems: Optional[Set[str]] = None
+    ) -> Dict[str, Dict[str, any]]:
+        """Aggregate results by problem.
+
+        Args:
+            valid_problems: If provided, only include results for these problems.
+                           Orphaned results (problem no longer exists) are skipped.
+        """
         by_problem: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
             problem = pair_id.split(":")[1]
+            # Skip orphaned results if valid_problems is provided
+            if valid_problems is not None and problem not in valid_problems:
+                continue
             if problem not in by_problem:
                 by_problem[problem] = []
             by_problem[problem].append(result)
@@ -419,6 +495,7 @@ class EvaluationState:
         for problem, results in by_problem.items():
             successful = [r for r in results if r.is_success]
             scores = [r.score for r in successful if r.score is not None]
+            unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[problem] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -426,30 +503,46 @@ class EvaluationState:
                 "avg_score": sum(scores) / len(scores) if scores else None,
                 "min_score": min(scores) if scores else None,
                 "max_score": max(scores) if scores else None,
+                "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
+                "min_score_unbounded": min(unbounded) if unbounded else None,
+                "max_score_unbounded": max(unbounded) if unbounded else None,
             }
         return aggregated
 
-    def export_aggregated_csv(self, path: Path, by: str = "model") -> None:
-        """Export aggregated results to CSV (by 'model' or 'problem')."""
+    def export_aggregated_csv(
+        self, path: Path, by: str = "model", valid_problems: Optional[Set[str]] = None
+    ) -> None:
+        """Export aggregated results to CSV (by 'model' or 'problem').
+
+        Args:
+            path: Output CSV path
+            by: Aggregation key - 'model' or 'problem'
+            valid_problems: If provided, only include results for these problems.
+                           Used to filter out orphaned results (results for problems
+                           that have been restructured or removed from the filesystem).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if by == "model":
-            data = self.aggregate_by_model()
+            data = self.aggregate_by_model(valid_problems)
             key_name = "model"
         else:
-            data = self.aggregate_by_problem()
+            data = self.aggregate_by_problem(valid_problems)
             key_name = "problem"
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score"])
+            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score", "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"])
             for key, stats in sorted(data.items()):
                 writer.writerow([
                     key,
                     stats["total"],
                     stats["successful"],
                     stats["failed"],
-                    f"{stats['avg_score']:.4f}" if stats["avg_score"] is not None else "",
-                    stats["min_score"] if stats["min_score"] is not None else "",
-                    stats["max_score"] if stats["max_score"] is not None else "",
+                    f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
+                    f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
+                    f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
+                    f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
+                    f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
+                    f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
                 ])

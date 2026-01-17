@@ -1,23 +1,18 @@
 import json
 from argparse import Namespace
-import csv
-import bisect
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
 from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """
-    A multi-region scheduling strategy that uses future spot trace information
-    to make cost-effective decisions while ensuring the deadline is met.
-    """
+    """Your multi-region scheduling strategy."""
 
-    NAME = "lookahead_scheduler"
+    NAME = "adaptive_risk_averse_strategy"  # REQUIRED: unique identifier
 
     def solve(self, spec_path: str) -> "Solution":
         """
-        Initialize the solution from spec_path config and pre-load trace data.
+        Initialize the solution from spec_path config.
         """
         with open(spec_path) as f:
             config = json.load(f)
@@ -30,150 +25,105 @@ class Solution(MultiRegionStrategy):
         )
         super().__init__(args)
 
-        self.trace_files = config["trace_files"]
-        self.raw_spot_availability = []
-        for trace_file in self.trace_files:
-            region_avail = {}
-            try:
-                with open(trace_file, 'r', encoding='utf-8') as f:
-                    reader = csv.reader(f)
-                    try:
-                        first_row = next(reader)
-                        if any(c.isalpha() for c in first_row[0]):
-                             pass
-                        else:
-                            ts, avail = float(first_row[0]), bool(int(first_row[1]))
-                            region_avail[ts] = avail
-                    except (StopIteration, IndexError):
-                        pass
-
-                    for row in reader:
-                        try:
-                            ts, avail = float(row[0]), bool(int(row[1]))
-                            region_avail[ts] = avail
-                        except (ValueError, IndexError):
-                            continue
-            except FileNotFoundError:
-                pass
-            self.raw_spot_availability.append(region_avail)
+        # Custom initialization
+        self.num_regions = self.env.get_num_regions()
         
-        self.setup_done = False
+        # A small number of samples before we trust the availability ratio
+        self.min_samples_for_ratio = 3
+        
+        # Stats for each region: number of times seen, and number of times spot was available
+        self.region_stats = [{'seen': 0, 'available': 0} for _ in range(self.num_regions)]
+        
+        # Track the step number of the last visit to each region for LRU tie-breaking
+        self.last_visit_step = [-1] * self.num_regions
+        self.step_counter = 0
+
+        # Safety buffer factor for determining the critical threshold.
+        # We switch to ON_DEMAND if slack is less than this factor times the restart overhead.
+        self.safety_buffer_factor = 2.0
+
         return self
-
-    def _one_time_setup(self):
-        """
-        Performs one-time setup on the first call to _step.
-        - Discretizes spot availability from timestamps to time steps.
-        - Pre-computes a sorted list of spot window start times for each region
-          to enable fast lookups.
-        """
-        num_regions = self.env.get_num_regions()
-        gap = self.env.gap_seconds
-        
-        max_steps = int(self.deadline / gap) + 10 
-
-        self.spot_avail_steps = []
-        for r in range(num_regions):
-            avail_steps = [False] * max_steps
-            if r < len(self.raw_spot_availability):
-                for ts, avail in self.raw_spot_availability[r].items():
-                    step = int(round(ts / gap))
-                    if step < max_steps:
-                        avail_steps[step] = avail
-            self.spot_avail_steps.append(avail_steps)
-
-        self.spot_window_starts = []
-        for r_avail in self.spot_avail_steps:
-            starts = []
-            is_down = True
-            for i, is_up in enumerate(r_avail):
-                if is_up and is_down:
-                    starts.append(i)
-                is_down = not is_up
-            self.spot_window_starts.append(starts)
-
-        self.setup_done = True
-
-    def _find_next_spot_step(self, r: int, current_step: int) -> int or None:
-        """Finds the next time step with spot availability using binary search."""
-        starts = self.spot_window_starts[r]
-        idx = bisect.bisect_left(starts, current_step)
-        if idx < len(starts):
-            return starts[idx]
-        return None
 
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
-        Decide next action based on current state and future spot availability.
+        Decide next action based on current state.
         """
-        if not self.setup_done:
-            self._one_time_setup()
+        self.step_counter += 1
+        current_region = self.env.get_current_region()
 
-        remaining_work = self.task_duration - sum(self.task_done_time)
-        if remaining_work <= 0:
+        # Update stats for the current region based on the `has_spot` info.
+        self.region_stats[current_region]['seen'] += 1
+        if has_spot:
+            self.region_stats[current_region]['available'] += 1
+        self.last_visit_step[current_region] = self.step_counter
+
+        # 1. Calculate current work and time metrics
+        work_done = sum(self.task_done_time)
+        work_rem = self.task_duration - work_done
+        
+        # If the task is finished, do nothing.
+        if work_rem <= 0:
             return ClusterType.NONE
 
-        time_left = self.deadline - self.env.elapsed_seconds
+        time_rem = self.deadline - self.env.elapsed_seconds
+        effective_work_rem = work_rem + self.remaining_restart_overhead
         
-        # 1. Panic Mode: If deadline is at risk, use On-Demand.
-        time_needed_if_od_now = remaining_work
-        if last_cluster_type == ClusterType.ON_DEMAND:
-            time_needed_if_od_now += self.remaining_restart_overhead
+        # Absolute deadline failure condition: even non-stop on-demand is not enough.
+        if time_rem < effective_work_rem:
+            return ClusterType.ON_DEMAND
+
+        # 2. Check for CRITICAL condition: switch to On-Demand if slack is low.
+        critical_threshold = self.safety_buffer_factor * self.restart_overhead
+        slack = time_rem - effective_work_rem
+        
+        if slack <= critical_threshold:
+            # Not enough slack to risk any more interruptions. Use guaranteed On-Demand.
+            return ClusterType.ON_DEMAND
+
+        # 3. SPOT-SEEKING mode: not critical, try to use Spot.
+        if has_spot:
+            # Best case: Spot is available and we have enough slack.
+            return ClusterType.SPOT
         else:
-            time_needed_if_od_now += self.restart_overhead
+            # Spot is not available in the current region. Decide whether to switch.
+            if self.num_regions <= 1:
+                # No other regions to switch to. Must use On-Demand to make progress.
+                return ClusterType.ON_DEMAND
 
-        if time_left <= time_needed_if_od_now:
-            return ClusterType.ON_DEMAND
+            # Calculate if switching is safe. A switch costs one restart_overhead.
+            projected_effective_work_after_switch = work_rem + self.restart_overhead
+            projected_slack_after_switch = time_rem - projected_effective_work_after_switch
 
-        # 2. Opportunistic Mode: Find the best spot opportunity.
-        current_step = int(round(self.env.elapsed_seconds / self.env.gap_seconds))
-        r_current = self.env.get_current_region()
-        
-        best_option = {'r': -1, 'cost': float('inf'), 'start_step': -1}
+            if projected_slack_after_switch > critical_threshold:
+                # It's safe to switch. Find the best region to switch to.
+                candidate_regions = []
+                for i in range(self.num_regions):
+                    if i == current_region:
+                        continue
+                    
+                    stats = self.region_stats[i]
+                    time_since_last_visit = self.step_counter - self.last_visit_step[i]
 
-        for r in range(self.env.get_num_regions()):
-            next_spot_step = self._find_next_spot_step(r, current_step)
-            if next_spot_step is None:
-                continue
-
-            wait_steps = next_spot_step - current_step
-            wait_time = wait_steps * self.env.gap_seconds
-
-            overhead = self.restart_overhead
-            is_continuing_spot = (
-                r == r_current and
-                last_cluster_type == ClusterType.SPOT and
-                wait_steps == 0 and
-                self.remaining_restart_overhead == 0
-            )
-            if is_continuing_spot:
-                overhead = 0
-            
-            total_time_cost = wait_time + overhead
-
-            if total_time_cost < best_option['cost']:
-                best_option = {
-                    'r': r,
-                    'cost': total_time_cost,
-                    'start_step': next_spot_step
-                }
-        
-        min_spot_time_cost = best_option['cost']
-
-        if min_spot_time_cost == float('inf'):
-            return ClusterType.ON_DEMAND
-
-        # 3. Decision: Check if the best spot plan is viable.
-        if time_left > remaining_work + min_spot_time_cost:
-            r_best = best_option['r']
-            
-            if r_best != r_current:
-                self.env.switch_region(r_best)
+                    if stats['seen'] < self.min_samples_for_ratio:
+                        # Prioritize unexplored regions. Break ties with LRU (longer since last visit is better).
+                        # Score is a tuple for lexicographical comparison. A large number represents "unexplored".
+                        score = (1e9, time_since_last_visit)
+                    else:
+                        ratio = stats['available'] / stats['seen']
+                        # Prioritize high availability ratio. Break ties with LRU.
+                        score = (ratio, time_since_last_visit)
+                    
+                    candidate_regions.append((score, i))
+                
+                # Sort candidates by score (descending)
+                candidate_regions.sort(key=lambda x: x[0], reverse=True)
+                best_region = candidate_regions[0][1]
+                
+                self.env.switch_region(best_region)
+                # After switching, we don't know the new region's spot availability.
+                # So we wait one step (NONE) and decide in the next _step call.
                 return ClusterType.NONE
             else:
-                if current_step < best_option['start_step']:
-                    return ClusterType.NONE
-                else:
-                    return ClusterType.SPOT
-        else:
-            return ClusterType.ON_DEMAND
+                # Not safe to switch (would leave us with too little slack).
+                # Must use On-Demand in the current region to make progress.
+                return ClusterType.ON_DEMAND

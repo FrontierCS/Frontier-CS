@@ -1,5 +1,4 @@
 import json
-import math
 from argparse import Namespace
 
 from sky_spot.strategies.multi_strategy import MultiRegionStrategy
@@ -7,9 +6,9 @@ from sky_spot.utils import ClusterType
 
 
 class Solution(MultiRegionStrategy):
-    """Cost-aware multi-region scheduling strategy."""
+    """Your multi-region scheduling strategy."""
 
-    NAME = "CantBeLateStrategy"
+    NAME = "solution_strategy"
 
     def solve(self, spec_path: str) -> "Solution":
         """
@@ -30,49 +29,42 @@ class Solution(MultiRegionStrategy):
     def _step(self, last_cluster_type: ClusterType, has_spot: bool) -> ClusterType:
         """
         Decide next action based on current state.
-        Prioritize Spot instances when slack permits.
-        Switch regions to find Spot availability if unavailable.
-        Force On-Demand when close to deadline.
         """
-        # Gather state
+        # Gather environment state
+        current_region = self.env.get_current_region()
+        num_regions = self.env.get_num_regions()
         elapsed = self.env.elapsed_seconds
-        done_work = sum(self.task_done_time)
-        remaining_work = self.task_duration - done_work
-        remaining_time = self.deadline - elapsed
         gap = self.env.gap_seconds
-        overhead = self.restart_overhead
-
-        # If task is logically complete, stop (though env usually handles this)
-        if remaining_work <= 0:
+        
+        work_done = sum(self.task_done_time)
+        work_remaining = self.task_duration - work_done
+        
+        # If task is completed
+        if work_remaining <= 0:
             return ClusterType.NONE
 
-        # Safety buffer calculation
-        # We need to guarantee completion on On-Demand even if we incur a restart overhead immediately.
-        # We add 2 * gap_seconds as a safety margin to account for step quantization and decision boundaries.
-        # If remaining_time falls below this threshold, we enter "Critical Mode".
-        safety_threshold = remaining_work + overhead + (2.0 * gap)
-
-        if remaining_time < safety_threshold:
-            # Critical Mode: Not enough slack to risk Spot preemption or searching.
-            # Use On-Demand to guarantee completion before deadline.
-            # We do not switch regions here to avoid unnecessary overhead delay.
+        time_remaining = self.deadline - elapsed
+        
+        # Panic Threshold Calculation
+        # We must switch to On-Demand if we are running out of time.
+        # Time required to finish on On-Demand = work_remaining + restart_overhead (if restarting/switching).
+        # If we choose to search/wait this step (returning NONE), we consume 'gap' seconds.
+        # We must ensure that: time_remaining - gap >= work_remaining + restart_overhead
+        # We add a safety buffer (300s) to be safe.
+        
+        safety_buffer = 300.0
+        panic_threshold = work_remaining + self.restart_overhead + gap + safety_buffer
+        
+        if time_remaining < panic_threshold:
+            # Not enough slack to search or rely on Spot. Force On-Demand.
             return ClusterType.ON_DEMAND
-
-        # Economy Mode: We have sufficient slack to prefer Spot instances.
+            
+        # Economy Strategy: Prefer Spot
         if has_spot:
-            # Spot is available in the current region. Use it.
             return ClusterType.SPOT
         else:
-            # Spot is not available in the current region.
-            # Strategy: Switch to the next region and pause (NONE) for one step.
-            # This "polls" the next region for Spot availability without incurring On-Demand costs.
-            # Since we have slack, trading time (one step) for potential cost savings is optimal.
-            
-            current_region = self.env.get_current_region()
-            num_regions = self.env.get_num_regions()
-            
-            # Round-robin region switching
+            # Spot unavailable in current region.
+            # Switch to next region and wait (NONE) to check availability in next step.
             next_region = (current_region + 1) % num_regions
             self.env.switch_region(next_region)
-            
             return ClusterType.NONE
