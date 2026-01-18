@@ -44,7 +44,7 @@ ensure_repo() {
 
     if [[ -d "$dir/.git" ]]; then
         echo "Updating $name: $dir"
-        git -C "$dir" pull --ff-only 2>/dev/null || echo "  (pull failed, using existing)"
+        git -C "$dir" pull --ff-only 2>&1 || echo "  (pull failed, using existing)"
     else
         echo "Cloning $name to $dir"
         git clone --depth 1 "$url" "$dir"
