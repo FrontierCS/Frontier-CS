@@ -73,7 +73,7 @@ Scoring:
 Your score is calculated based on the number of (&,|) $m$, and $m_0$(number of (&,|) by std):
 if $m \leq m_0$, you receive full score (1.0).
 if $m>2 * m_0$, you receive 0 score.
-otherwise Score = $(m - m_0) / (m_0)$, linearly decreasing from 1.0 to 0.0.
+otherwise Score = $(2 * m_0 - m) / (m_0)$, linearly decreasing from 1.0 to 0.0.
 
 Time limit:
 2 seconds
