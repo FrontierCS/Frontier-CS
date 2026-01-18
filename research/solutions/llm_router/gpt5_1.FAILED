@@ -1,5 +1,0 @@
-{
-  "error": "llm_interface call failed after retries",
-  "model": "gpt-5",
-  "timestamp": "2026-01-14T08:38:09.743403"
-}

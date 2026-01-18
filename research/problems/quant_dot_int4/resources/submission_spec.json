@@ -1,0 +1,15 @@
+{
+  "problem_name": "quant_dot_int4",
+  "description": "Triton kernel optimization problem for int4-packed quantized matmul (Puzzle 12 adaptation)",
+  "requirements": {
+    "cuda_backend": true,
+    "gpu_required": true,
+    "triton_version": ">=2.1.0",
+    "torch_version": ">=2.0.0"
+  },
+  "evaluation": {
+    "timeout_seconds": 300,
+    "memory_limit_mb": 8192,
+    "gpu_memory_limit_mb": 4096
+  }
+}

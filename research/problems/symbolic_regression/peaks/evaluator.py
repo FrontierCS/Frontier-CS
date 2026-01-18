@@ -44,6 +44,7 @@ def load_solution_module(solution_path: Path) -> ModuleType:
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load module spec from {solution_path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # Register before exec for self-referential imports
     spec.loader.exec_module(module)
     if not hasattr(module, "Solution"):
         raise AttributeError("Submitted solution module must define a Solution class")

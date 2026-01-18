@@ -2,43 +2,43 @@ name: Update Problem Count
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'research/**'
       - 'algorithmic/problems/**'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   update-count:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    
-    - name: Update problem count in README
-      run: |
-        python scripts/update_problem_count.py
-    
-    - name: Check for changes
-      id: git-check
-      run: |
-        git diff --exit-code README.md || echo "changed=true" >> $GITHUB_OUTPUT
-    
-    - name: Commit and push if changed
-      if: steps.git-check.outputs.changed == 'true'
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add README.md
-        git commit -m "chore: update problem count [skip ci]"
-        git push
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Update problem count in README
+        run: python scripts/update_problem_count.py
+
+      - name: Check solution coverage and export problems list
+        continue-on-error: true
+        run: python research/scripts/check_solutions.py --no-color
+
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md research/scripts/problems.txt
+          git diff --staged --quiet || git commit -m "chore: update problem count and problems list [skip ci]"
+          git push

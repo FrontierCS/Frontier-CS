@@ -105,6 +105,8 @@ research/problems/
 | `evaluator.py`         | Core evaluation logic                                   |
 | `resources/`           | Baseline code, benchmark, test data, pyproject.toml     |
 
+**Note:** `resources/`, `common/`, and `__pycache__/` directories are excluded from problem detection. A valid problem directory must contain `evaluator.py` or `evaluate.py`.
+
 ### config.yaml Example
 
 ```yaml

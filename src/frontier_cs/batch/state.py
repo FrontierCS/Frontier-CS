@@ -457,7 +457,8 @@ class EvaluationState:
         aggregated = {}
         for model, results in by_model.items():
             successful = [r for r in results if r.is_success]
-            scores = [r.score for r in successful if r.score is not None]
+            # Clamp bounded scores to 0-100 (some evaluators may return extreme values)
+            scores = [max(0, min(100, r.score)) for r in successful if r.score is not None]
             unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[model] = {
                 "total": len(results),
@@ -494,7 +495,8 @@ class EvaluationState:
         aggregated = {}
         for problem, results in by_problem.items():
             successful = [r for r in results if r.is_success]
-            scores = [r.score for r in successful if r.score is not None]
+            # Clamp bounded scores to 0-100 (some evaluators may return extreme values)
+            scores = [max(0, min(100, r.score)) for r in successful if r.score is not None]
             unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
             aggregated[problem] = {
                 "total": len(results),

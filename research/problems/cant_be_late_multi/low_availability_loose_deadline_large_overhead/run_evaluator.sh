@@ -11,12 +11,15 @@ PYBIN="python3"
 SOLUTION_PATH="$EXEC_ROOT/solution_env/solution.py"
 SPEC_PATH="$SCRIPT_DIR/resources/submission_spec.json"
 OUTPUT_JSON=$(CBL_LOG_LEVEL=WARNING "$PYBIN" "$SCRIPT_DIR/evaluator.py" --solution "$SOLUTION_PATH" --spec "$SPEC_PATH")
-SCORE=$(python3 - <<'PY' "$OUTPUT_JSON"
+SCORES=$(python3 - <<'PY' "$OUTPUT_JSON"
 import json, sys
 payload = json.loads(sys.argv[1])
-print(payload.get("combined_score", payload.get("score", 0)))
+raw = payload.get("combined_score", payload.get("score", 0))
+bounded = max(0, min(100, raw))  # Clamp to 0-100
+unbounded = raw
+print(f"{bounded} {unbounded}")
 PY
 )
 
 echo "$OUTPUT_JSON" > "$EXEC_ROOT/evaluator_output.json"
-echo "$SCORE"
+echo "$SCORES"

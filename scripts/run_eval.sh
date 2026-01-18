@@ -44,7 +44,7 @@ ensure_repo() {
 
     if [[ -d "$dir/.git" ]]; then
         echo "Updating $name: $dir"
-        git -C "$dir" pull --ff-only 2>/dev/null || echo "  (pull failed, using existing)"
+        git -C "$dir" pull --ff-only 2>&1 || echo "  (pull failed, using existing)"
     else
         echo "Cloning $name to $dir"
         git clone --depth 1 "$url" "$dir"
@@ -266,7 +266,7 @@ push_results() {
     if [[ "$track" == "algorithmic" ]]; then
         git add algorithmic/
     elif [[ "$track" == "research" ]]; then
-        git add batch/
+        git add research/
     else
         git add .
     fi
@@ -339,11 +339,11 @@ if [[ -z "$RESULTS_REPO" ]] && $AUTO_CLONE; then
     # Check if results repo exists and has uncommitted changes
     if [[ -d "$RESULTS_REPO/.git" ]]; then
         # Filter changes by track if specified
-        # algorithmic -> algorithmic/, research -> batch/
+        # algorithmic -> algorithmic/, research -> research/
         if [[ "$TRACK" == "algorithmic" ]]; then
             TRACK_FILTER="algorithmic/"
         elif [[ "$TRACK" == "research" ]]; then
-            TRACK_FILTER="batch/"
+            TRACK_FILTER="research/"
         else
             TRACK_FILTER=""  # No filter for --check-overlap or unspecified track
         fi
@@ -439,7 +439,7 @@ if [[ "$TRACK" == "algorithmic" ]]; then
     EXTRA_ARGS="--algorithmic"
 else
     SOLUTIONS_DIR="$PUBLIC_DIR/research/solutions"
-    RESULTS_DIR="$RESULTS_REPO/batch"
+    RESULTS_DIR="$RESULTS_REPO/research/batch"
     PROBLEMS_DIR="$INTERNAL_DIR/research/problems"
     EXTRA_ARGS=""
 fi
@@ -489,7 +489,7 @@ if [[ -d "$RESULTS_REPO/.git" ]]; then
     if [[ "$TRACK" == "algorithmic" ]]; then
         CHANGES=$(git -C "$RESULTS_REPO" status --porcelain algorithmic/ 2>/dev/null | head -1)
     else
-        CHANGES=$(git -C "$RESULTS_REPO" status --porcelain batch/ 2>/dev/null | head -1)
+        CHANGES=$(git -C "$RESULTS_REPO" status --porcelain research/ 2>/dev/null | head -1)
     fi
 
     if [[ -n "$CHANGES" ]]; then

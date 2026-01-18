@@ -31,6 +31,7 @@ def load_solution_module(solution_path: Path) -> ModuleType:
     if spec is None or spec.loader is None:
         raise ImportError(f"Failed to load spec for {solution_path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # Register before exec for self-referential imports
     spec.loader.exec_module(module)
     return module
 
@@ -79,25 +80,16 @@ def load_qknorm_from_artifact(artifact_path: Path) -> Any:
                 temp_file = f.name
             
             # Import the module
-            import importlib.util
             spec = importlib.util.spec_from_file_location("temp_qknorm_module", temp_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
             if not hasattr(module, "qknorm"):
                 raise ValueError("Code must define a 'qknorm' function")
-            
-            # Clean up temporary file
-            os.unlink(temp_file)
-            
+
+            # Don't delete temp file - Triton JIT needs source file at compile time
             return module.qknorm
         except Exception as e:
-            # Clean up temporary file if it exists
-            try:
-                if 'temp_file' in locals():
-                    os.unlink(temp_file)
-            except:
-                pass
             raise
     
     elif "program_path" in artifact:

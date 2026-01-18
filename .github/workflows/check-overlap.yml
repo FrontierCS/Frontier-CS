@@ -1,0 +1,26 @@
+name: Check Internal Superset
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'research/problems/**'
+      - 'algorithmic/problems/**'
+  workflow_dispatch:
+
+jobs:
+  check-overlap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout internal repository
+        uses: actions/checkout@v4
+        with:
+          repository: FrontierCS/Frontier-CS-internal
+          token: ${{ secrets.INTERNAL_REPO_TOKEN }}
+          path: internal
+
+      - name: Check internal ⊇ public
+        continue-on-error: true
+        run: ./scripts/run_eval.sh --check-overlap --internal-dir internal

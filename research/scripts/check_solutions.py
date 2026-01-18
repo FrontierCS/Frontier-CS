@@ -2,8 +2,21 @@
 """
 Check solution coverage for research track.
 
-Scans research/solutions/ for flat solution files ({problem}.{model}.py)
-and compares against expected models × discovered problems × variants.
+This script compares expected vs actual solutions to show generation progress:
+
+1. Computes EXPECTED solutions = models × problems × variants
+   - models: from models.txt
+   - problems: auto-discovered from research/problems/ (leaf dirs with readme)
+   - variants: from indices.txt (e.g., [0, 1, 2] for 3 variants per model)
+
+2. Scans ACTUAL solutions in research/solutions/{problem}/{model}.py
+
+3. Reports coverage:
+   - Generated: expected AND exists
+   - Missing: expected but NOT exists
+   - Extra: exists but NOT expected
+   - Empty: file exists but content is empty
+   - Failed: .FAILED marker files with generation error info (JSON)
 
 Usage:
     python check_solutions.py
@@ -11,6 +24,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -20,11 +34,16 @@ from typing import Dict, List, Set
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from frontier_cs.models import get_model_prefix
-from frontier_cs.gen.solution_format import parse_solution_filename, format_solution_filename
+from frontier_cs.gen.solution_format import (
+    parse_solution_filename,
+    format_solution_filename,
+    FAILED_EXTENSION,
+)
 
 
 class Colors:
     """ANSI color codes."""
+
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -50,39 +69,49 @@ class Colors:
 def bold(text: str) -> str:
     return Colors.c(text, Colors.BOLD)
 
+
 def dim(text: str) -> str:
     return Colors.c(text, Colors.DIM)
+
 
 def red(text: str) -> str:
     return Colors.c(text, Colors.RED)
 
+
 def green(text: str) -> str:
     return Colors.c(text, Colors.GREEN)
+
 
 def yellow(text: str) -> str:
     return Colors.c(text, Colors.YELLOW)
 
+
 def blue(text: str) -> str:
     return Colors.c(text, Colors.BLUE)
+
 
 def cyan(text: str) -> str:
     return Colors.c(text, Colors.CYAN)
 
+
 def warning(text: str) -> str:
     return Colors.c(f"⚠ {text}", Colors.YELLOW)
+
 
 def error(text: str) -> str:
     return Colors.c(f"✗ {text}", Colors.RED)
 
+
 def success(text: str) -> str:
     return Colors.c(f"✓ {text}", Colors.GREEN)
+
 
 def info(text: str) -> str:
     return Colors.c(f"ℹ {text}", Colors.CYAN)
 
 
 # Directories to exclude when auto-discovering problems
-EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
+EXCLUDE_DIRS = {"common", "resources", "__pycache__", ".venv"}
 
 
 def discover_problems(problems_dir: Path) -> List[str]:
@@ -104,7 +133,7 @@ def discover_problems(problems_dir: Path) -> List[str]:
             pass
         return False
 
-    for p in problems_dir.rglob('*'):
+    for p in problems_dir.rglob("*"):
         if not p.is_dir():
             continue
         if is_excluded(p):
@@ -112,9 +141,9 @@ def discover_problems(problems_dir: Path) -> List[str]:
         # Check if it's a leaf directory (problem) - has readme but no subdirs
         has_readme = (p / "readme").exists() or (p / "README.md").exists()
         if has_readme and not has_problem_subdirs(p):
-            # Convert path to problem name (underscore-separated)
+            # Convert path to problem name (slash-separated to match solutions structure)
             rel_path = p.relative_to(problems_dir)
-            problem_name = "_".join(rel_path.parts)
+            problem_name = str(rel_path)
             result.append(problem_name)
 
     return sorted(result)
@@ -166,32 +195,42 @@ def compute_expected(
     models: List[str],
     variants: List[int],
 ) -> Set[str]:
-    """Compute expected solution filenames."""
+    """Compute expected solution keys in format: {problem}/{model}.py"""
     expected: Set[str] = set()
     for problem in problems:
         for model in models:
             model_prefix = get_model_prefix(model)
             for variant_idx in variants:
-                suffix = "" if variant_idx == 0 else f"_{variant_idx}"
-                model_with_variant = f"{model_prefix}{suffix}"
-                filename = format_solution_filename(problem, model_with_variant, "py")
-                expected.add(filename)
+                filename = format_solution_filename(model_prefix, "py", variant_idx)
+                # Key format: {problem}/{filename}
+                expected.add(f"{problem}/{filename}")
     return expected
 
 
 def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
-    """Scan solutions directory for flat solution files."""
+    """Scan solutions directory for nested solution files.
+
+    Structure: solutions/{problem...}/{model}.py (problem can be nested like a/b/c)
+    Returns dict keyed by "{problem}/{model}.{ext}" for comparison with expected set.
+    """
     solutions: Dict[str, Dict] = {}
     if not solutions_dir.is_dir():
         return solutions
 
-    for sol_file in solutions_dir.iterdir():
-        if not sol_file.is_file() or sol_file.name.startswith("."):
+    # Find all solution files recursively
+    for sol_file in solutions_dir.rglob("*.py"):
+        if sol_file.name.startswith("."):
+            continue
+        # Skip _deleted directory
+        if "_deleted" in sol_file.parts:
             continue
 
         parsed = parse_solution_filename(sol_file.name)
         if parsed:
-            problem, model, ext = parsed
+            model, variant, ext = parsed
+            # Problem is the relative path from solutions_dir to the parent directory
+            problem = str(sol_file.parent.relative_to(solutions_dir))
+
             # Check if file is empty
             try:
                 content = sol_file.read_text(encoding="utf-8").strip()
@@ -199,9 +238,12 @@ def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
             except Exception:
                 is_empty = True
 
-            solutions[sol_file.name] = {
+            # Key format: {problem}/{model}.{ext} to match expected set
+            key = f"{problem}/{sol_file.name}"
+            solutions[key] = {
                 "problem": problem,
                 "model": model,
+                "variant": variant,
                 "ext": ext,
                 "path": sol_file,
                 "is_empty": is_empty,
@@ -210,10 +252,57 @@ def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
     return solutions
 
 
+def scan_failed_solutions(solutions_dir: Path) -> Dict[str, Dict]:
+    """Scan solutions directory for .FAILED marker files."""
+    failed: Dict[str, Dict] = {}
+    if not solutions_dir.is_dir():
+        return failed
+
+    # Find all .FAILED files recursively
+    for failed_file in solutions_dir.rglob(f"*.{FAILED_EXTENSION}"):
+        if failed_file.name.startswith("."):
+            continue
+        # Skip _deleted directory
+        if "_deleted" in failed_file.parts:
+            continue
+
+        # Problem is the relative path from solutions_dir to the parent directory
+        problem = str(failed_file.parent.relative_to(solutions_dir))
+
+        # Parse model and variant from filename (e.g., gpt5_1.FAILED -> model=gpt5, variant=1)
+        # Treat .FAILED as extension for parsing
+        fake_filename = failed_file.stem + ".py"  # gpt5_1.FAILED -> gpt5_1.py
+        parsed = parse_solution_filename(fake_filename)
+        if parsed:
+            model, variant, _ = parsed
+        else:
+            model = failed_file.stem
+            variant = 0
+
+        # Read JSON content for error info
+        error_msg = None
+        try:
+            content = failed_file.read_text(encoding="utf-8").strip()
+            if content:
+                data = json.loads(content)
+                error_msg = data.get("error", "Unknown error")
+        except (json.JSONDecodeError, Exception):
+            error_msg = "Failed to parse error info"
+
+        failed[f"{problem}/{failed_file.name}"] = {
+            "problem": problem,
+            "model": model,
+            "variant": variant,
+            "path": failed_file,
+            "error": error_msg,
+        }
+
+    return failed
+
+
 def main():
     base_dir = Path(__file__).parent  # research/scripts/
     research_dir = base_dir.parent  # research/
-    repo_root = research_dir.parent  # Root of repository
 
     parser = argparse.ArgumentParser(
         description="Check solution coverage (Expected vs Actual)",
@@ -260,19 +349,31 @@ def main():
 
     # Read config files
     models = read_models_list(args.models_file) if args.models_file.exists() else []
-    variants = read_variant_indices(args.indices_file) if args.indices_file.exists() else [0]
+    variants = (
+        read_variant_indices(args.indices_file) if args.indices_file.exists() else [0]
+    )
 
     if not models:
         print(warning(f"No models found in {args.models_file}"))
 
     # Compute expected and actual
-    expected = compute_expected(problems, models, variants) if problems and models else set()
+    expected = (
+        compute_expected(problems, models, variants) if problems and models else set()
+    )
     actual = scan_solutions(args.solutions_dir)
     actual_set = set(actual.keys())
 
+    # Failed solutions (.FAILED marker files)
+    failed_solutions = scan_failed_solutions(args.solutions_dir)
+    # Convert failed keys to match expected format: {problem}/{model}.FAILED -> {problem}/{model}.py
+    failed_as_py = {
+        key.replace(f".{FAILED_EXTENSION}", ".py")
+        for key in failed_solutions.keys()
+    }
+
     # Analyze
     generated = expected & actual_set  # Expected and exists
-    missing = expected - actual_set  # Expected but not generated
+    missing = expected - actual_set - failed_as_py  # Expected but not generated (exclude failed)
     extra = actual_set - expected  # Exists but not expected
 
     # Empty solutions
@@ -291,7 +392,9 @@ def main():
         # Show first few problems
         shown = problems[:5]
         more = len(problems) - len(shown)
-        print(f"    {dim(', '.join(shown))}{dim(f', ... +{more} more') if more > 0 else ''}")
+        print(
+            f"    {dim(', '.join(shown))}{dim(f', ... +{more} more') if more > 0 else ''}"
+        )
     print(f"  Models: {bold(str(len(models)))}")
     if models:
         print(f"    {dim(', '.join(models))}")
@@ -303,9 +406,12 @@ def main():
     total_missing = len(missing)
     total_extra = len(extra)
 
+    total_failed = len(failed_solutions)
+
     print(f"  Expected (models × problems × variants): {bold(str(total_expected))}")
     print(f"  Generated (expected & exists): {green(bold(str(total_generated)))}")
     print(f"  Missing (expected but not generated): {yellow(bold(str(total_missing)))}")
+    print(f"  Failed (generation errors): {red(bold(str(total_failed)))}")
     print(f"  Extra (exists but not expected): {blue(bold(str(total_extra)))}")
     print()
 
@@ -323,16 +429,17 @@ def main():
     # Missing by model
     if missing:
         print(warning(f"{total_missing} solutions not yet generated:"))
-        by_model: Dict[str, int] = defaultdict(int)
-        for name in missing:
-            parsed = parse_solution_filename(name)
-            if parsed:
-                _, model, _ = parsed
-                # Extract base model (strip variant suffix)
-                base_model = model.rsplit("_", 1)[0] if "_" in model and model.rsplit("_", 1)[1].isdigit() else model
-                by_model[base_model] += 1
-        for model in sorted(by_model.keys()):
-            print(f"    {model}: {by_model[model]} missing")
+        missing_by_model: Dict[str, int] = defaultdict(int)
+        for key in missing:
+            # Key format: {problem}/{model}.py
+            if "/" in key:
+                filename = key.split("/")[-1]
+                parsed = parse_solution_filename(filename)
+                if parsed:
+                    model, _, _ = parsed
+                    missing_by_model[model] += 1
+        for model in sorted(missing_by_model.keys()):
+            print(f"    {model}: {missing_by_model[model]} missing")
         print()
 
     # Extra solutions
@@ -346,6 +453,26 @@ def main():
             print(f"    {dim(f'... and {len(extra) - 10} more')}")
         print()
 
+    # Failed solutions
+    if failed_solutions:
+        print(error(f"{total_failed} solutions failed to generate:"))
+        # Group by model
+        failed_by_model: Dict[str, List[Dict]] = defaultdict(list)
+        for name, info_obj in failed_solutions.items():
+            failed_by_model[info_obj["model"]].append(info_obj)
+
+        for model in sorted(failed_by_model.keys()):
+            failures = failed_by_model[model]
+            print(f"    {red(model)}: {len(failures)} failed")
+            # Show first few errors for this model
+            for f in failures[:3]:
+                variant_str = f"(variant {f['variant']})" if f.get("variant", 0) > 0 else ""
+                err_preview = f["error"][:50] + "..." if f["error"] and len(f["error"]) > 50 else f["error"]
+                print(f"      {dim(f['problem'])} {dim(variant_str)}: {dim(err_preview or 'No error info')}")
+            if len(failures) > 3:
+                print(f"      {dim(f'... and {len(failures) - 3} more')}")
+        print()
+
     # Empty solutions
     if empty_solutions:
         print(warning(f"{len(empty_solutions)} solutions with empty content:"))
@@ -357,17 +484,30 @@ def main():
 
     # Summary
     print(dim("─" * 40))
-    has_issues = len(empty_solutions) > 0
+    has_issues = len(empty_solutions) > 0 or total_failed > 0
     all_good = total_missing == 0 and not has_issues
 
     if all_good:
         print(success("All expected solutions are generated"))
     else:
         if total_missing > 0:
-            print(f"  Run {bold('generate_solutions.py')} to generate missing solutions")
+            print(
+                f"  Run {bold('generate_solutions.py')} to generate missing solutions"
+            )
+        if total_failed > 0:
+            print(
+                f"  Run {bold('generate_solutions.py --only-failed')} to retry {total_failed} failed"
+            )
         if empty_solutions:
-            print(f"  Fix {bold(str(len(empty_solutions)))} solutions with empty content")
+            print(
+                f"  Fix {bold(str(len(empty_solutions)))} solutions with empty content"
+            )
     print(dim("─" * 40))
+
+    # Export problems list
+    problems_file = base_dir / "problems.txt"
+    problems_file.write_text("\n".join(problems) + "\n", encoding="utf-8")
+    print(f"\n  Exported {len(problems)} problems to {dim(str(problems_file))}")
 
     # Exit code
     return 1 if (has_issues or total_missing > 0) else 0
