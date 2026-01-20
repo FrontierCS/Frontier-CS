@@ -11,4 +11,4 @@ memory: 256m
 # The subtasks section works the same way
 subtasks:
   - score: 100
-    n_cases: 1 # Looks for 1.in, 2.in, ... 5.in
+    n_cases: 3 # Looks for 1.in, 2.in, ... 5.in
