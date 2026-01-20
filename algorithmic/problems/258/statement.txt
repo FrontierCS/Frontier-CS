@@ -1,0 +1,80 @@
+Problem: F2. The Hidden Pair (Hard Version)
+
+Time limit: 2 seconds
+
+Memory limit: 256 MB
+
+This is an interactive problem.
+
+You are given a tree consisting of n nodes numbered with integers from 1 to n. Ayush and Ashish chose two secret distinct nodes in the tree. You need to find out both the nodes.
+
+You can make the following query:
+Provide a list of nodes and you will receive a node from that list whose sum of distances to both the hidden nodes is minimal (if there are multiple such nodes in the list, you will receive any one of them). You will also get the sum of distances of that node to the hidden nodes.
+
+Recall that a tree is a connected graph without cycles. The distance between two nodes is defined as the number of edges in the simple path between them.
+
+More formally, let's define two hidden nodes as s and f. In one query you can provide the set of nodes {a_1, a_2, ..., a_c} of the tree. As a result, you will get two numbers a_i and dist(a_i, s) + dist(a_i, f). The node a_i is any node from the provided set, for which the number dist(a_i, s) + dist(a_i, f) is minimal.
+
+Input
+
+The first line contains a single integer t (1 <= t <= 10) -- the number of test cases.
+
+The first line of each test case consists of a single integer n (2 <= n <= 1000) -- the number of nodes in the tree.
+The next n - 1 lines consist of two integers u, v (1 <= u, v <= n, u != v) -- the edges of the tree.
+
+Interaction Protocol
+
+To ask a query print a single line:
+In the beginning print "? c" (without quotes) where c (1 <= c <= n) denotes the number of nodes being queried, followed by c distinct integers in the range [1, n] -- the indices of nodes from the list.
+
+For each query, you will receive two integers x, d -- the node (among the queried nodes) with the minimum sum of distances to the hidden nodes and the sum of distances from that node to the hidden nodes.
+
+If the subset of nodes queried is invalid or you exceeded the number of queries then you will get x = d = -1. In this case, you should terminate the program immediately.
+
+When you have guessed the hidden nodes, print a single line "!" (without quotes), followed by two integers in the range [1, n] -- the hidden nodes. You can output the hidden nodes in any order.
+
+After this, you should read a string. If you guess the nodes correctly, you will receive the string "Correct". In this case, you should continue solving the remaining test cases or terminate the program, if all test cases were solved. Otherwise, you will receive the string "Incorrect". In this case, you should terminate the program immediately.
+
+After printing a query do not forget to output the end of the line and flush the output.
+Otherwise, you will get Idleness limit exceeded. To do this, use:
+- fflush(stdout) or cout.flush() in C++;
+- System.out.flush() in Java;
+- flush(output) in Pascal;
+- stdout.flush() in Python;
+- see the documentation for other languages.
+
+Scoring
+
+Your score is calculated independently for each test case and then averaged.
+For a test case with n nodes, let Q be the number of queries you used.
+
+We define two limits based on n:
+- Base Limit (K_base): ceil(log2(n)) + 1
+- Zero Limit (K_zero): n + 1
+
+The score for each test case is calculated using the following quadratic formula:
+Score = 100 * ((K_zero - Q) / (K_zero - K_base))^2
+
+Specifically:
+- Base Score (100 pts): If Q <= K_base, you receive at least 100 points.
+- Partial Score: If K_base < Q < K_zero, your score decreases quadratically.
+- Zero Score: If Q >= K_zero, you receive 0 points.
+- Bonus Score: If you use fewer queries than K_base, your score will exceed 100 points following the same curve.
+
+Example Input:
+1
+3
+1 2
+1 3
+1 1
+2 3
+3 1
+3 1
+Correct
+
+Example Output:
+? 1 1
+? 1 2
+? 1 3
+? 2 2 3
+! 1 3
