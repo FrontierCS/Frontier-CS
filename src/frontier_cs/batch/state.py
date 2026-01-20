@@ -435,24 +435,51 @@ class EvaluationState:
         Args:
             valid_problems: If provided, only include results for these problems.
                            Orphaned results (problem no longer exists) are skipped.
+
+        Returns metrics including:
+            - total, successful, failed: raw counts
+            - avg_score, min_score, max_score: simple aggregates
+            - score_at_1: average of base variant (variant=0) scores across problems
+            - avg_at_5: average of per-problem mean scores (across 5 variants)
+            - score_at_5: average of per-problem max scores (across 5 variants)
+            - pass_at_1: fraction of problems where base variant scores > 0
+            - pass_at_5: fraction of problems where any variant scores > 0
         """
+        # First pass: group by (model, problem, variant)
+        # Structure: {model: {problem: {variant: score}}}
+        by_model_problem: Dict[str, Dict[str, Dict[int, float]]] = {}
         by_model: Dict[str, List[PairResult]] = {}
+
         for pair_id, result in self.results.items():
+            problem = pair_id.split(":")[1]
             # Skip orphaned results if valid_problems is provided
-            if valid_problems is not None:
-                problem = pair_id.split(":")[1]
-                if problem not in valid_problems:
-                    continue
+            if valid_problems is not None and problem not in valid_problems:
+                continue
 
             solution = pair_id.split(":")[0]
-            # Extract model from nested path (e.g., "llm_router/gpt5_1.py" -> "gpt5")
+            # Extract model and variant from nested path
             # Solution format: {problem}/{model}.ext or {problem}/{model}_{variant}.ext
             filename = Path(solution).name
             parsed = parse_solution_filename(filename)
-            model = parsed[0] if parsed else filename.rsplit(".", 1)[0]
+            if parsed:
+                model, variant, _ = parsed
+            else:
+                model = filename.rsplit(".", 1)[0]
+                variant = 0
+
+            # Collect for simple aggregation
             if model not in by_model:
                 by_model[model] = []
             by_model[model].append(result)
+
+            # Collect for @k metrics (only successful results with scores)
+            if result.is_success and result.score is not None:
+                score = max(0, min(100, result.score))  # Clamp to 0-100
+                if model not in by_model_problem:
+                    by_model_problem[model] = {}
+                if problem not in by_model_problem[model]:
+                    by_model_problem[model][problem] = {}
+                by_model_problem[model][problem][variant] = score
 
         aggregated = {}
         for model, results in by_model.items():
@@ -460,6 +487,34 @@ class EvaluationState:
             # Clamp bounded scores to 0-100 (some evaluators may return extreme values)
             scores = [max(0, min(100, r.score)) for r in successful if r.score is not None]
             unbounded = [r.score_unbounded for r in successful if r.score_unbounded is not None]
+
+            # Compute @k metrics from per-problem variant scores
+            score_at_1_list = []
+            avg_at_5_list = []
+            score_at_5_list = []
+            pass_at_1_count = 0
+            pass_at_5_count = 0
+            total_problems = 0
+
+            if model in by_model_problem:
+                for problem, variant_scores in by_model_problem[model].items():
+                    # Only count problems where we have the base variant (variant=0)
+                    if 0 not in variant_scores:
+                        continue
+                    total_problems += 1
+
+                    score1 = variant_scores.get(0, 0)
+                    all_scores = [variant_scores.get(i, 0) for i in range(5)]
+
+                    score_at_1_list.append(score1)
+                    avg_at_5_list.append(sum(all_scores) / len(all_scores))
+                    score_at_5_list.append(max(all_scores))
+
+                    if score1 > 0:
+                        pass_at_1_count += 1
+                    if max(all_scores) > 0:
+                        pass_at_5_count += 1
+
             aggregated[model] = {
                 "total": len(results),
                 "successful": len(successful),
@@ -470,6 +525,13 @@ class EvaluationState:
                 "avg_score_unbounded": sum(unbounded) / len(unbounded) if unbounded else None,
                 "min_score_unbounded": min(unbounded) if unbounded else None,
                 "max_score_unbounded": max(unbounded) if unbounded else None,
+                # Paper metrics (@k)
+                "score_at_1": sum(score_at_1_list) / len(score_at_1_list) if score_at_1_list else None,
+                "avg_at_5": sum(avg_at_5_list) / len(avg_at_5_list) if avg_at_5_list else None,
+                "score_at_5": sum(score_at_5_list) / len(score_at_5_list) if score_at_5_list else None,
+                "pass_at_1": pass_at_1_count / total_problems if total_problems > 0 else None,
+                "pass_at_5": pass_at_5_count / total_problems if total_problems > 0 else None,
+                "num_problems": total_problems,
             }
         return aggregated
 
@@ -528,23 +590,55 @@ class EvaluationState:
         if by == "model":
             data = self.aggregate_by_model(valid_problems)
             key_name = "model"
+            # Include paper metrics (@k) for model aggregation
+            headers = [
+                key_name, "total", "successful", "failed",
+                "score_at_1", "avg_at_5", "score_at_5", "pass_at_1", "pass_at_5", "num_problems",
+                "avg_score", "min_score", "max_score",
+                "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"
+            ]
         else:
             data = self.aggregate_by_problem(valid_problems)
             key_name = "problem"
+            headers = [
+                key_name, "total", "successful", "failed",
+                "avg_score", "min_score", "max_score",
+                "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"
+            ]
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([key_name, "total", "successful", "failed", "avg_score", "min_score", "max_score", "avg_score_unbounded", "min_score_unbounded", "max_score_unbounded"])
+            writer.writerow(headers)
             for key, stats in sorted(data.items()):
-                writer.writerow([
-                    key,
-                    stats["total"],
-                    stats["successful"],
-                    stats["failed"],
-                    f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
-                    f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
-                    f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
-                    f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
-                    f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
-                    f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
-                ])
+                if by == "model":
+                    writer.writerow([
+                        key,
+                        stats["total"],
+                        stats["successful"],
+                        stats["failed"],
+                        f"{stats['score_at_1']:.2f}" if stats.get("score_at_1") is not None else "",
+                        f"{stats['avg_at_5']:.2f}" if stats.get("avg_at_5") is not None else "",
+                        f"{stats['score_at_5']:.2f}" if stats.get("score_at_5") is not None else "",
+                        f"{stats['pass_at_1']:.4f}" if stats.get("pass_at_1") is not None else "",
+                        f"{stats['pass_at_5']:.4f}" if stats.get("pass_at_5") is not None else "",
+                        stats.get("num_problems", ""),
+                        f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
+                        f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
+                        f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
+                        f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
+                        f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
+                        f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
+                    ])
+                else:
+                    writer.writerow([
+                        key,
+                        stats["total"],
+                        stats["successful"],
+                        stats["failed"],
+                        f"{stats['avg_score']:.3f}" if stats["avg_score"] is not None else "",
+                        f"{stats['min_score']:.3f}" if stats["min_score"] is not None else "",
+                        f"{stats['max_score']:.3f}" if stats["max_score"] is not None else "",
+                        f"{stats['avg_score_unbounded']:.3f}" if stats.get("avg_score_unbounded") is not None else "",
+                        f"{stats['min_score_unbounded']:.3f}" if stats.get("min_score_unbounded") is not None else "",
+                        f"{stats['max_score_unbounded']:.3f}" if stats.get("max_score_unbounded") is not None else "",
+                    ])
