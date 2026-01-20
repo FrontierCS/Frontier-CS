@@ -35,6 +35,7 @@ class DockerRunner(ResearchRunner):
         base_dir: Optional[Path] = None,
         problems_dir: Optional[Path] = None,
         datasets_dir: Optional[Path] = None,
+        timeout: Optional[int] = None,
     ):
         """
         Initialize DockerRunner.
@@ -43,9 +44,11 @@ class DockerRunner(ResearchRunner):
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
             problems_dir: Problems directory (overrides base_dir/research/problems if set)
             datasets_dir: Directory for cached datasets (default: base_dir/research/datasets)
+            timeout: Timeout per evaluation in seconds (default: 1800, overrides problem config)
         """
         super().__init__(base_dir=base_dir, problems_dir=problems_dir)
         self.datasets_dir = datasets_dir or (self.research_dir / "datasets")
+        self.timeout = timeout  # User-specified timeout, overrides problem config if set
         self._has_gpu: Optional[bool] = None
 
     @property
@@ -149,8 +152,11 @@ class DockerRunner(ResearchRunner):
         docker_config = runtime_config.docker
         uv_project = problem_config.dependencies.get("uv_project")
 
-        # Determine timeout from config or default
-        effective_timeout = runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
+        # Determine timeout: user-specified > problem config > default
+        if self.timeout is not None:
+            effective_timeout = self.timeout
+        else:
+            effective_timeout = runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
 
         # Check GPU requirements
         needs_gpu = docker_config.gpu or runtime_config.requires_gpu or runtime_config.resources.has_gpu

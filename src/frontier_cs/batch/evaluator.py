@@ -71,7 +71,7 @@ class BatchEvaluator:
         track: str = "research",
         workers: int = 1,
         clusters: Optional[int] = None,
-        timeout: Optional[int] = 300,  # Default 5 min timeout per evaluation
+        timeout: Optional[int] = 1000,  # Default 1000s timeout per evaluation
         bucket_url: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
@@ -162,6 +162,7 @@ class BatchEvaluator:
                 return DockerRunner(
                     base_dir=self.base_dir,
                     problems_dir=self.problems_dir,
+                    timeout=self.timeout,
                 )
             else:
                 from ..runner.skypilot import SkyPilotRunner

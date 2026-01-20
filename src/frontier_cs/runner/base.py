@@ -44,7 +44,7 @@ class Runner(ABC):
     """Abstract base class for evaluation runners."""
 
     # Default timeout in seconds. Subclasses can override.
-    DEFAULT_TIMEOUT: int = 300  # 5 minutes
+    DEFAULT_TIMEOUT: int = 1000  # ~17 minutes
 
     @abstractmethod
     def evaluate(

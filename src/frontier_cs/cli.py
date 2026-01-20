@@ -193,6 +193,12 @@ Examples:
         type=str,
         help="Solution code as string (alternative to file)",
     )
+    eval_opts.add_argument(
+        "--timeout",
+        type=int,
+        default=1000,
+        help="Timeout per evaluation in seconds (default: 1000)",
+    )
 
     # Output options
     output_group = eval_parser.add_argument_group("Output Options")
@@ -319,6 +325,12 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Bucket URL for result storage (s3://... or gs://...). "
              "Results are written directly to the bucket by each worker and "
              "synced incrementally. Enables reliable resume across runs.",
+    )
+    batch_backend.add_argument(
+        "--timeout",
+        type=int,
+        default=1000,
+        help="Timeout per evaluation in seconds (default: 1000)",
     )
 
     batch_control = batch_parser.add_argument_group("Control Options")
@@ -498,6 +510,7 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Create batch evaluator
     problems_dir = getattr(args, "problems_dir", None)
+    timeout = getattr(args, "timeout", 1000)
     # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)
     batch_kwargs = dict(
         results_dir=args.results_dir,
@@ -506,6 +519,7 @@ def run_batch(args: argparse.Namespace) -> int:
         track=track,
         workers=workers,
         clusters=clusters,
+        timeout=timeout,
         bucket_url=bucket_url,
         keep_cluster=keep_cluster,
         idle_timeout=idle_timeout,
@@ -744,6 +758,7 @@ def run_eval(args: argparse.Namespace) -> int:
     # Create evaluator
     backend = "skypilot" if args.skypilot else "docker"
     idle_timeout = None if args.keep_cluster else getattr(args, 'idle_timeout', 10)
+    timeout = getattr(args, 'timeout', None)
     evaluator = FrontierCSEvaluator(
         backend=backend,
         judge_url=args.judge_url,
@@ -751,6 +766,7 @@ def run_eval(args: argparse.Namespace) -> int:
         region=args.region,
         keep_cluster=getattr(args, 'keep_cluster', False),
         idle_timeout=idle_timeout,
+        timeout=timeout,
     )
 
     # Auto-detect solution file format: {problem}.{model}.py

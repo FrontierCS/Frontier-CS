@@ -43,6 +43,7 @@ class FrontierCSEvaluator:
         region: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
+        timeout: Optional[int] = None,
     ):
         """
         Initialize FrontierCSEvaluator.
@@ -55,6 +56,7 @@ class FrontierCSEvaluator:
             region: Cloud region for SkyPilot
             keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            timeout: Timeout per evaluation in seconds (default: None, uses runner default)
         """
         self.default_backend = backend
         self.base_dir = base_dir
@@ -63,6 +65,7 @@ class FrontierCSEvaluator:
         self.region = region
         self.keep_cluster = keep_cluster
         self.idle_timeout = idle_timeout
+        self.timeout = timeout
 
         # Lazy-initialized runners
         self._algorithmic_runner: Optional[AlgorithmicRunner] = None
@@ -95,7 +98,7 @@ class FrontierCSEvaluator:
     def docker_runner(self) -> DockerRunner:
         """Get or create the Docker runner."""
         if self._docker_runner is None:
-            self._docker_runner = DockerRunner(base_dir=self.base_dir)
+            self._docker_runner = DockerRunner(base_dir=self.base_dir, timeout=self.timeout)
         return self._docker_runner
 
     @property
