@@ -41,8 +41,8 @@ int main(int argc, char* argv[]) {
         // K_base: Limit for full score (and starting point for bonus)
         // K_zero: Limit for zero score
         
-        double k_base = (double)(n);
-        double k_zero = (double)(3 * n);
+        double k_base = (double)(n / 2);
+        double k_zero = (double)(2 * n);
 
         // Parse magnet types
         vector<int> vals(n + 1);

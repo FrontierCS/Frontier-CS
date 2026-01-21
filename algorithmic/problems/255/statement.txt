@@ -64,20 +64,7 @@ otherwise you should immediately continue to deal with the next test case.
 
 Scoring
 
-Your score is calculated independently for each test case and then averaged across all test cases.
-
-For a specific test case with n magnets, let Q be the number of queries you used. We define two dynamic thresholds based on n:
-- K_base = n
-- K_zero = 3 * n
-
-The score ratio for this test case is calculated using the following quadratic formula:
-Ratio = max(0, ((K_zero - Q) / (K_zero - K_base))^2)
-
-Specifically:
-- Base Score (100 pts): If you use Q <= K_base queries, you will receive at least 100% score for this test case.
-- Partial Score: If you use between K_base and K_zero queries, your score will decrease quadratically.
-- Zero Score: If you use Q >= K_zero queries, you will receive 0 points for this test case.
-- Bonus Score: This problem supports unbounded scoring. If your solution uses fewer than K_base queries, your score will follow the same curve and exceed 100% for that test case.
+Your score is calculated independently for each test case and then averaged across all test cases. In each test case, the fewer queries you made, the higher score you have.
 
 Example Input:
 1

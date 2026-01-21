@@ -46,20 +46,7 @@ Otherwise, you will get Idleness limit exceeded. To do this, use:
 Scoring
 
 Your score is calculated independently for each test case and then averaged.
-For a test case with n nodes, let Q be the number of queries you used.
-
-We define two limits based on n:
-- Base Limit (K_base): ceil(log2(n)) + 1
-- Zero Limit (K_zero): n + 1
-
-The score for each test case is calculated using the following quadratic formula:
-Score = 100 * ((K_zero - Q) / (K_zero - K_base))^2
-
-Specifically:
-- Base Score (100 pts): If Q <= K_base, you receive at least 100 points.
-- Partial Score: If K_base < Q < K_zero, your score decreases quadratically.
-- Zero Score: If Q >= K_zero, you receive 0 points.
-- Bonus Score: If you use fewer queries than K_base, your score will exceed 100 points following the same curve.
+For a test case with n nodes, let Q be the number of queries you used. The smaller Q is, the high score you get in the test case.
 
 Example Input:
 1
