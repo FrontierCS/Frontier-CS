@@ -19,7 +19,7 @@ Evolving Challenges for Evolving Intelligence
     <img src="https://img.shields.io/badge/Hugging_Face-🤗%20Datasets-orange" alt="Hugging Face">
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-66-blue" alt="Research Problems">
-  <img src="https://img.shields.io/badge/Algorithmic_Problems-171-green" alt="Algorithmic Problems">
+  <img src="https://img.shields.io/badge/Algorithmic_Problems-172-green" alt="Algorithmic Problems">
 </p>
 
 ## What is Frontier-CS?
