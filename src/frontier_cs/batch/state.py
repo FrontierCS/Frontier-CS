@@ -307,9 +307,52 @@ class EvaluationState:
         """Number of failed evaluations."""
         return sum(1 for r in self.results.values() if r.status in ("error", "timeout"))
 
+    def _get_redundant_failed_pairs(self) -> Set[str]:
+        """
+        Get set of pair_ids for .FAILED files that have a corresponding normal solution.
+
+        When both model.cpp and model.FAILED exist for the same (problem, model, variant),
+        the .FAILED should be ignored. But if only .FAILED exists, it should be counted
+        as a failed evaluation.
+
+        Returns:
+            Set of pair_ids that should be skipped (redundant .FAILED files)
+        """
+        # Build set of (problem, model, variant) for normal (non-FAILED) solutions
+        normal_keys: Set[Tuple[str, str, int]] = set()
+        failed_pairs: Dict[Tuple[str, str, int], str] = {}  # key -> pair_id
+
+        for pair_id in self.results.keys():
+            solution = pair_id.split(":")[0]
+            problem = pair_id.split(":")[1]
+            filename = Path(solution).name
+
+            parsed = parse_solution_filename(filename)
+            if parsed:
+                model, variant, ext = parsed
+                key = (problem, model, variant)
+
+                if ext == "FAILED":
+                    failed_pairs[key] = pair_id
+                else:
+                    normal_keys.add(key)
+
+        # Return pair_ids of FAILED files that have a normal counterpart
+        redundant = set()
+        for key, pair_id in failed_pairs.items():
+            if key in normal_keys:
+                redundant.add(pair_id)
+
+        return redundant
+
     def export_csv(self, path: Path) -> None:
-        """Export results to a CSV file."""
+        """Export results to a CSV file.
+
+        Skips .FAILED files when a normal solution exists for the same (problem, model, variant).
+        Includes .FAILED files that have no normal counterpart (real generation failures).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
+        redundant_failed = self._get_redundant_failed_pairs()
 
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -320,6 +363,11 @@ class EvaluationState:
 
             for pair_id, result in sorted(self.results.items()):
                 solution, problem = pair_id.split(":", 1)
+
+                # Skip redundant .FAILED files (ones that have a normal solution)
+                if pair_id in redundant_failed:
+                    continue
+
                 writer.writerow([
                     solution,
                     problem,
@@ -445,6 +493,9 @@ class EvaluationState:
             - pass_at_1: fraction of problems where base variant scores > 0
             - pass_at_5: fraction of problems where any variant scores > 0
         """
+        # Get redundant .FAILED files (ones that have a normal solution)
+        redundant_failed = self._get_redundant_failed_pairs()
+
         # First pass: group by (model, problem, variant)
         # Structure: {model: {problem: {variant: score}}}
         by_model_problem: Dict[str, Dict[str, Dict[int, float]]] = {}
@@ -456,7 +507,12 @@ class EvaluationState:
             if valid_problems is not None and problem not in valid_problems:
                 continue
 
+            # Skip redundant .FAILED files (ones that have a normal solution)
+            if pair_id in redundant_failed:
+                continue
+
             solution = pair_id.split(":")[0]
+
             # Extract model and variant from nested path
             # Solution format: {problem}/{model}.ext or {problem}/{model}_{variant}.ext
             filename = Path(solution).name
@@ -544,9 +600,18 @@ class EvaluationState:
             valid_problems: If provided, only include results for these problems.
                            Orphaned results (problem no longer exists) are skipped.
         """
+        # Get redundant .FAILED files (ones that have a normal solution)
+        redundant_failed = self._get_redundant_failed_pairs()
+
         by_problem: Dict[str, List[PairResult]] = {}
         for pair_id, result in self.results.items():
+            # Skip redundant .FAILED files (ones that have a normal solution)
+            if pair_id in redundant_failed:
+                continue
+
+            solution = pair_id.split(":")[0]
             problem = pair_id.split(":")[1]
+
             # Skip orphaned results if valid_problems is provided
             if valid_problems is not None and problem not in valid_problems:
                 continue

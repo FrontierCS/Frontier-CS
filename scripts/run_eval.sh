@@ -32,8 +32,8 @@ DEFAULT_INTERNAL_DIR="$(dirname "$PUBLIC_DIR")/Frontier-CS-internal"
 DEFAULT_RESULTS_REPO="$(dirname "$PUBLIC_DIR")/Frontier-CS-Result"
 
 # Repo URLs
-INTERNAL_REPO_URL="git@github.com:FrontierCS/Frontier-CS-internal.git"
-RESULTS_REPO_URL="git@github.com:FrontierCS/Frontier-CS-Result.git"
+INTERNAL_REPO_URL="https://github.com/FrontierCS/Frontier-CS-internal.git"
+RESULTS_REPO_URL="https://github.com/FrontierCS/Frontier-CS-Result.git"
 
 # Clone or update a repo
 ensure_repo() {

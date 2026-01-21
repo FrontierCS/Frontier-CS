@@ -132,6 +132,10 @@ def parse_solution_path(
 def scan_solutions_dir(solutions_dir: Path) -> list[Tuple[Path, str, str, int]]:
     """Scan a solutions directory for solution files (nested structure).
 
+    When both a normal solution file (e.g., model.cpp) and a failed marker
+    (e.g., model.FAILED) exist for the same (problem, model, variant),
+    only the normal solution is returned.
+
     Args:
         solutions_dir: Directory to scan
 
@@ -142,14 +146,33 @@ def scan_solutions_dir(solutions_dir: Path) -> list[Tuple[Path, str, str, int]]:
     if not solutions_dir.is_dir():
         return results
 
-    # Recursively find all solution files
+    # First pass: collect all solution files grouped by (problem, model, variant)
+    # Key: (problem, model, variant) -> list of (path, ext)
+    from collections import defaultdict
+    grouped: dict[Tuple[str, str, int], list[Tuple[Path, str]]] = defaultdict(list)
+
     for path in solutions_dir.rglob("*"):
         if not path.is_file() or path.name.startswith("."):
             continue
 
         parsed = parse_solution_path(path, solutions_dir)
         if parsed:
-            problem, model, variant, _ = parsed
-            results.append((path, problem, model, variant))
+            problem, model, variant, ext = parsed
+            grouped[(problem, model, variant)].append((path, ext))
+
+    # Second pass: for each group, prefer non-FAILED files
+    for (problem, model, variant), files in grouped.items():
+        # Separate FAILED from normal files
+        normal_files = [(p, e) for p, e in files if e != FAILED_EXTENSION]
+        failed_files = [(p, e) for p, e in files if e == FAILED_EXTENSION]
+
+        if normal_files:
+            # Use normal file(s), ignore FAILED
+            for path, _ in normal_files:
+                results.append((path, problem, model, variant))
+        else:
+            # Only FAILED file exists - include it so evaluator can report the error
+            for path, _ in failed_files:
+                results.append((path, problem, model, variant))
 
     return results
