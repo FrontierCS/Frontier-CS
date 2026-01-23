@@ -39,6 +39,9 @@ imagenet_pareto/200k
 imagenet_pareto/2_5m
 imagenet_pareto/500k
 imagenet_pareto/5m
+llm_reward_designer/acrobot
+llm_reward_designer/cartpole
+llm_reward_designer/lunar_lander
 llm_router
 llm_sql/large
 llm_sql/small
