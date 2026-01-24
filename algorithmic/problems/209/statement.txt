@@ -10,7 +10,7 @@ There is a perfect binary tree G with n nodes, numbered 1 to n. The root of the 
 The interactor maintains two hidden arrays:
 
 1. A permutation p of length n, containing integers from 1 to n.
-2. A weight array f of length n, where each element f_v corresponds to the weight of tree node v. All weights are non-negative integers not exceeding 10^9.
+2. A weight array f of length n, where each element f_v corresponds to the weight of tree node v. All weights are positive integers not exceeding 10^9.
 
 Your task is to determine the sum of all weights in the tree.
 
@@ -40,9 +40,10 @@ Constraints
 
 * 2 <= h <= 18
 * n = 2^h - 1
-* 0 <= f_v <= 10^9
-* The interactor is not adaptive (p and f are fixed at the start).
+* 1 <= f_v <= 10^9 (weights are positive integers)
 * 1 <= d <= 10^9 (Note: d must be at least 1).
+* For each integer u, you may query it at most 5 times.
+* The interactor may be adaptive: it may dynamically adjust the hidden permutation p and weights f, as long as the adjustments do not contradict any previously returned query results.
 
 Scoring
 

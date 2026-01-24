@@ -318,12 +318,35 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    long long penalty = 1;
-    for (int i = 0; i < wrong_answers; i++) penalty *= 4;
-    long long cost = total_queries + (penalty - 1);
-
     const long long BEST_COST = 15000;
     const long long WORST_COST = 100000;
+    
+    // Compute penalty = 4^wrong_answers - 1, with overflow protection
+    // If 4^wrong_answers > WORST_COST, cost is already >= WORST_COST (0 score)
+    long long penalty = 0;
+    if (wrong_answers == 0) {
+        penalty = 0;  // 4^0 - 1 = 0
+    } else {
+        long long power = 1;
+        bool overflow = false;
+        for (int i = 0; i < wrong_answers && !overflow; i++) {
+            if (power > WORST_COST / 4) {
+                overflow = true;
+            } else {
+                power *= 4;
+            }
+        }
+        if (overflow || power > WORST_COST) {
+            penalty = WORST_COST + 1;  // Ensure cost >= WORST_COST
+        } else {
+            penalty = power - 1;
+        }
+    }
+    
+    long long cost = total_queries + penalty;
+    if (cost < 0 || cost > 2 * WORST_COST) {
+        cost = WORST_COST + 1;  // Safety check for any overflow
+    }
 
     double score_ratio = max(0.0, min(1.0, (double)(WORST_COST - cost) / (double)(WORST_COST - BEST_COST)));
     double unbounded_ratio = max(0.0, (double)(WORST_COST - cost) / (double)(WORST_COST - BEST_COST));
