@@ -11,4 +11,4 @@ memory: 512m
 # The subtasks section
 subtasks:
   - score: 100
-    n_cases: 4  # Test cases: 1.in, 2.in, ..., 10.in in testdata/
+    n_cases: 5  # Test cases: 1.in, 2.in, ..., 10.in in testdata/

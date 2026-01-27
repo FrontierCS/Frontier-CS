@@ -5,9 +5,9 @@
 
 using namespace std;
 
-const int N = 5002021;
+const int N = 202021;
 bool vis[N * 50];
-int n, m, L, R, Sx, Sy, qn, q[N], x[N], y[N], vis1[N];
+int n, m, L, R, Sx, Sy, qn, q[N], x[N], y[N], vis1[N],stk[N];
 
 int _abs(int x) {
     return (x < 0) ? (-x) : x;
@@ -101,20 +101,31 @@ int main(int argc, char* argv[]) {
     
     // Check row completion constraint
     memset(vis1, 0, sizeof(vis1));
+    int top=0;
     for (int i = 1; i <= cnt; i++) {
         if (y[i] < L || y[i] > R) continue;
         if (vis1[x[i]]) continue;
         vis1[x[i]] = 1;
+        stk[++top]=x[i];
         // When first entering row x[i]'s required area, must complete all required cells in that row
         for (int j = L; j <= R; j++) {
             int idx = j - L + i;
             if (idx > cnt) break;
-            if ((y[idx] < L || y[idx] > R) && x[idx] == x[i]) {
+            if(x[idx] != x[i])
+            	quitf(_wa, "Row %d: after entering required area, cannot leave before completing all required cells", x[i]);
+            if (y[idx] < L || y[idx] > R) {
                 quitf(_wa, "Row %d: after entering required area, cannot leave before completing all required cells", x[i]);
             }
         }
     }
     
+    if(top!=n)
+    	quitf(_wa, "Required cell is not visited");
+    int nw=1;
+    for(int i=1;i<=qn;i++){
+    	while(nw<=top && q[i]!=stk[nw])++nw;
+    	if(stk[nw]!=q[i])quitf(_wa, "Your clearance sequence does not contain the required subsequence");
+    }
     // Calculate score (0-10 points)
     double points = 0;
     if (cnt <= mxstp) {
