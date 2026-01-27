@@ -1,0 +1,17 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    int N, K;
+    if(!(cin >> N >> K)) return 0;
+    for (int i = 0; i < 10; ++i) {
+        int a; cin >> a;
+    }
+    for (int i = 0; i < N; ++i) {
+        int x, y; cin >> x >> y;
+    }
+    cout << 0 << "\n";
+    return 0;
+}

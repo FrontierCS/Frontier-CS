@@ -250,9 +250,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         problem_id: str,
         solution_code: str,
         *,
-        timeout: Optional[int] = None,
         lang: str = "cpp",
-        unbounded: bool = False,
     ) -> EvaluationResult:
         """
         Evaluate a solution using cloud-based go-judge.
@@ -274,9 +272,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         return super().evaluate(
             problem_id,
             solution_code,
-            timeout=timeout,
             lang=lang,
-            unbounded=unbounded,
         )
 
     def evaluate_file(
@@ -284,9 +280,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         problem_id: str,
         solution_path: Path,
         *,
-        timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
-        unbounded: bool = True,
     ) -> EvaluationResult:
         """Evaluate a solution file using cloud-based go-judge."""
         if not solution_path.exists():
@@ -312,7 +306,7 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
 
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
-        return self.evaluate(problem_id, code, timeout=timeout, lang=lang, unbounded=unbounded)
+        return self.evaluate(problem_id, code, lang=lang)
 
     def stop_cluster(self) -> bool:
         """Stop the algo-judge cluster."""

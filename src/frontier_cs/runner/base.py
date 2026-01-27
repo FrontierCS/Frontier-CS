@@ -44,15 +44,13 @@ class Runner(ABC):
     """Abstract base class for evaluation runners."""
 
     # Default timeout in seconds. Subclasses can override.
-    DEFAULT_TIMEOUT: int = 300  # 5 minutes
+    DEFAULT_TIMEOUT: int = 1000  # ~17 minutes
 
     @abstractmethod
     def evaluate(
         self,
         problem_id: str,
         solution_code: str,
-        *,
-        timeout: Optional[int] = None,
     ) -> EvaluationResult:
         """
         Evaluate a solution for a given problem.
@@ -60,7 +58,6 @@ class Runner(ABC):
         Args:
             problem_id: Problem identifier (e.g., "flash_attn", "gemm_optimization/squares")
             solution_code: Solution source code
-            timeout: Optional timeout in seconds
 
         Returns:
             EvaluationResult with score and status
@@ -73,7 +70,6 @@ class Runner(ABC):
         problem_id: str,
         solution_path: Path,
         *,
-        timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """
@@ -82,7 +78,6 @@ class Runner(ABC):
         Args:
             problem_id: Problem identifier
             solution_path: Path to solution file
-            timeout: Optional timeout in seconds
             solution_id: Optional solution identifier (for result tracking)
 
         Returns:

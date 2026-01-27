@@ -15,8 +15,7 @@ set -e
 # Defaults
 TRACK=""
 INTERNAL_DIR=""
-WORKERS=4
-CLUSTERS=4
+PARALLELISM=10
 SKYPILOT=false
 RESULTS_REPO=""
 CHECK_OVERLAP=false
@@ -33,8 +32,8 @@ DEFAULT_INTERNAL_DIR="$(dirname "$PUBLIC_DIR")/Frontier-CS-internal"
 DEFAULT_RESULTS_REPO="$(dirname "$PUBLIC_DIR")/Frontier-CS-Result"
 
 # Repo URLs
-INTERNAL_REPO_URL="git@github.com:FrontierCS/Frontier-CS-internal.git"
-RESULTS_REPO_URL="git@github.com:FrontierCS/Frontier-CS-Result.git"
+INTERNAL_REPO_URL="https://github.com/FrontierCS/Frontier-CS-internal.git"
+RESULTS_REPO_URL="https://github.com/FrontierCS/Frontier-CS-Result.git"
 
 # Clone or update a repo
 ensure_repo() {
@@ -60,11 +59,11 @@ Default locations: ../Frontier-CS-internal and ../Frontier-CS-Result
 
 Options:
     --track TYPE          Track to evaluate: research or algorithmic (required)
+                          research: uses SkyPilot (GPU required)
+                          algorithmic: uses Docker
     --internal-dir DIR    Path to internal repo (default: auto-clone)
     --results-repo DIR    Path to results repo for incremental state (default: auto-clone)
-    --workers N           Number of parallel workers (default: 4)
-    --clusters N          Number of SkyPilot clusters (default: 4)
-    --skypilot            Use SkyPilot backend
+    -j N                  Parallelism: clusters for research, workers for algorithmic (default: 10)
     --push                Auto-push results to remote (for CI)
     --no-push             Skip pushing results (for local testing)
     --check-overlap       Only check internal ⊇ public
@@ -72,14 +71,14 @@ Options:
     -h, --help            Show this help
 
 Examples:
-    # Run algorithmic (auto-clones repos)
-    ./scripts/run_eval.sh --track algorithmic --workers 10
+    # Run research (SkyPilot, 10 clusters)
+    ./scripts/run_eval.sh --track research
 
-    # Run research with SkyPilot
-    ./scripts/run_eval.sh --track research --skypilot
+    # Run algorithmic (Docker, 10 workers)
+    ./scripts/run_eval.sh --track algorithmic
 
-    # Use custom paths
-    ./scripts/run_eval.sh --track research --internal-dir /path/to/internal
+    # Custom parallelism
+    ./scripts/run_eval.sh --track research -j 20
 
     # Check internal ⊇ public
     ./scripts/run_eval.sh --check-overlap
@@ -98,17 +97,9 @@ while [[ $# -gt 0 ]]; do
             INTERNAL_DIR="$2"
             shift 2
             ;;
-        --workers)
-            WORKERS="$2"
+        -j)
+            PARALLELISM="$2"
             shift 2
-            ;;
-        --clusters)
-            CLUSTERS="$2"
-            shift 2
-            ;;
-        --skypilot)
-            SKYPILOT=true
-            shift
             ;;
         --results-repo)
             RESULTS_REPO="$2"
@@ -410,6 +401,11 @@ if [[ "$TRACK" != "research" ]] && [[ "$TRACK" != "algorithmic" ]]; then
     exit 1
 fi
 
+# Research track always uses SkyPilot
+if [[ "$TRACK" == "research" ]]; then
+    SKYPILOT=true
+fi
+
 # Validate internal dir
 if [[ -z "$INTERNAL_DIR" ]] || [[ ! -d "$INTERNAL_DIR" ]]; then
     echo "ERROR: Internal directory not found: $INTERNAL_DIR"
@@ -456,7 +452,6 @@ mkdir -p "$RESULTS_DIR"
 CMD="uv run frontier-eval batch"
 CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
 CMD="$CMD --results-dir $RESULTS_DIR"
-CMD="$CMD --workers $WORKERS"
 CMD="$CMD $EXTRA_ARGS"
 
 # For algorithmic track, use internal's problems (more test cases)
@@ -465,7 +460,9 @@ if [[ -n "$PROBLEMS_DIR" ]]; then
 fi
 
 if $SKYPILOT; then
-    CMD="$CMD --skypilot --clusters $CLUSTERS"
+    CMD="$CMD --skypilot --workers $PARALLELISM --clusters $PARALLELISM"
+else
+    CMD="$CMD --workers $PARALLELISM"
 fi
 
 echo ""

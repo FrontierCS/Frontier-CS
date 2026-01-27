@@ -43,6 +43,7 @@ class FrontierCSEvaluator:
         region: Optional[str] = None,
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
+        timeout: Optional[int] = None,
     ):
         """
         Initialize FrontierCSEvaluator.
@@ -55,6 +56,7 @@ class FrontierCSEvaluator:
             region: Cloud region for SkyPilot
             keep_cluster: Keep SkyPilot cluster running after evaluation (disables autostop)
             idle_timeout: Minutes of idleness before autostop (default: 10, None to disable)
+            timeout: Timeout per evaluation in seconds (default: None, uses runner default)
         """
         self.default_backend = backend
         self.base_dir = base_dir
@@ -63,6 +65,7 @@ class FrontierCSEvaluator:
         self.region = region
         self.keep_cluster = keep_cluster
         self.idle_timeout = idle_timeout
+        self.timeout = timeout
 
         # Lazy-initialized runners
         self._algorithmic_runner: Optional[AlgorithmicRunner] = None
@@ -95,7 +98,7 @@ class FrontierCSEvaluator:
     def docker_runner(self) -> DockerRunner:
         """Get or create the Docker runner."""
         if self._docker_runner is None:
-            self._docker_runner = DockerRunner(base_dir=self.base_dir)
+            self._docker_runner = DockerRunner(base_dir=self.base_dir, timeout=self.timeout)
         return self._docker_runner
 
     @property
@@ -132,8 +135,6 @@ class FrontierCSEvaluator:
         code: str,
         *,
         backend: Optional[BackendType] = None,
-        timeout: Optional[int] = None,
-        unbounded: bool = False,
     ) -> EvaluationResult:
         """
         Evaluate a solution for a single problem.
@@ -143,17 +144,12 @@ class FrontierCSEvaluator:
             problem_id: Problem identifier (int for algorithmic, str for research)
             code: Solution code (C++ for algorithmic, Python for research)
             backend: Backend to use ("docker" or "skypilot"), defaults to init value
-            timeout: Optional timeout in seconds
-            unbounded: For algorithmic problems, use unbounded score (no clipping)
 
         Returns:
             EvaluationResult with score and status
         """
         runner = self._get_runner(track, backend)
-        # Pass unbounded to runner if it's algorithmic
-        if track == "algorithmic" and hasattr(runner, 'evaluate'):
-            return runner.evaluate(str(problem_id), code, timeout=timeout, unbounded=unbounded)
-        return runner.evaluate(str(problem_id), code, timeout=timeout)
+        return runner.evaluate(str(problem_id), code)
 
     def evaluate_file(
         self,
@@ -162,7 +158,6 @@ class FrontierCSEvaluator:
         solution_path: Path,
         *,
         backend: Optional[BackendType] = None,
-        timeout: Optional[int] = None,
     ) -> EvaluationResult:
         """
         Evaluate a solution file for a single problem.
@@ -172,13 +167,12 @@ class FrontierCSEvaluator:
             problem_id: Problem identifier
             solution_path: Path to solution file
             backend: Backend to use
-            timeout: Optional timeout in seconds
 
         Returns:
             EvaluationResult with score and status
         """
         runner = self._get_runner(track, backend)
-        return runner.evaluate_file(str(problem_id), solution_path, timeout=timeout)
+        return runner.evaluate_file(str(problem_id), solution_path)
 
     def list_problems(self, track: TrackType) -> List[str]:
         """
@@ -286,7 +280,6 @@ def evaluate(
     code: str,
     *,
     backend: BackendType = "docker",
-    timeout: Optional[int] = None,
 ) -> EvaluationResult:
     """
     Quick evaluation function.
@@ -297,4 +290,4 @@ def evaluate(
         print(f"Score: {result.score}")
     """
     evaluator = FrontierCSEvaluator(backend=backend)
-    return evaluator.evaluate(track, problem_id, code, timeout=timeout)
+    return evaluator.evaluate(track, problem_id, code)

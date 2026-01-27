@@ -157,9 +157,7 @@ class AlgorithmicRunner(Runner):
         problem_id: str,
         solution_code: str,
         *,
-        timeout: Optional[int] = None,
         lang: str = "cpp",
-        unbounded: bool = False,
     ) -> EvaluationResult:
         """
         Evaluate a solution for an algorithmic problem.
@@ -167,10 +165,7 @@ class AlgorithmicRunner(Runner):
         Args:
             problem_id: Problem ID (numeric string or int)
             solution_code: C++ solution code
-            timeout: Optional timeout in seconds
             lang: Programming language (default: cpp)
-            unbounded: Deprecated for storage. Both bounded and unbounded scores
-                       are always stored (score and score_unbounded fields).
 
         Returns:
             EvaluationResult with score and status
@@ -204,16 +199,15 @@ class AlgorithmicRunner(Runner):
                 message="Submission failed - judge server may be unavailable",
             )
 
-        # Poll for result
-        effective_timeout = timeout or self.DEFAULT_TIMEOUT
-        result = self._poll_result(sid, effective_timeout)
+        # Poll for result (use default timeout for polling)
+        result = self._poll_result(sid, self.DEFAULT_TIMEOUT)
         duration = time.time() - start_time
 
         if result is None:
             return EvaluationResult(
                 problem_id=pid,
                 status=EvaluationStatus.TIMEOUT,
-                message=f"Evaluation timed out after {timeout}s",
+                message=f"Evaluation timed out after {self.DEFAULT_TIMEOUT}s",
                 duration_seconds=duration,
             )
 
@@ -253,9 +247,7 @@ class AlgorithmicRunner(Runner):
         problem_id: str,
         solution_path: Path,
         *,
-        timeout: Optional[int] = None,
         solution_id: Optional[str] = None,
-        unbounded: bool = True,
     ) -> EvaluationResult:
         """Evaluate a solution file."""
         if not solution_path.exists():
@@ -281,7 +273,7 @@ class AlgorithmicRunner(Runner):
 
         code = solution_path.read_text(encoding="utf-8")
         lang = "cpp" if solution_path.suffix in [".cpp", ".cc", ".cxx"] else "cpp"
-        return self.evaluate(problem_id, code, timeout=timeout, lang=lang, unbounded=unbounded)
+        return self.evaluate(problem_id, code, lang=lang)
 
     def _submit(self, pid: str, code: str, lang: str) -> Optional[str]:
         """Submit solution to judge server."""

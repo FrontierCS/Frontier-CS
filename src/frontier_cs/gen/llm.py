@@ -44,7 +44,7 @@ def detect_provider(model: str, actual_model_lower: Optional[str] = None) -> str
     if provider_hint == "xai" or "grok" in actual_lower:
         return "xai"
     if provider_hint == "deepseek" or "deepseek" in actual_lower:
-        return "deepseek"
+        return "openrouter"
     return provider_hint or "openai"
 
 

@@ -17,7 +17,6 @@ import os
 import time
 import argparse
 import re
-import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -29,11 +28,14 @@ import requests
 from frontier_cs.models import get_model_prefix, is_reasoning_model
 from frontier_cs.gen import (
     build_key_pools, get_fallback_api_key, APIKeyPool,
+    ensure_env_loaded, precheck_required_providers,
     instantiate_llm_client, detect_provider,
     bold, dim, red, green, yellow, blue, cyan,
     model_name, problem_name as format_problem_name, solution_name as format_solution_name,
+    get_failed_path, write_failed_marker,
+    resolve_models,
+    print_generation_summary,
 )
-from frontier_cs.gen.io import read_models_file
 from frontier_cs.gen.solution_format import get_solution_path
 
 
@@ -168,27 +170,6 @@ def read_solution_indices(path: Path) -> List[int]:
         if line and not line.startswith("#"):
             indices.append(int(line))
     return indices or [0]
-
-
-def get_failed_path(solution_path: Path) -> Path:
-    """Get the .FAILED file path for a solution."""
-    return solution_path.with_suffix(".FAILED")
-
-
-def has_failed_marker(solution_path: Path) -> bool:
-    """Check if a .FAILED file exists for this solution."""
-    return get_failed_path(solution_path).exists()
-
-
-def write_failed_marker(solution_path: Path, error: str, model: str) -> None:
-    """Write a .FAILED marker file for a failed generation."""
-    failed_path = get_failed_path(solution_path)
-    failed_path.parent.mkdir(parents=True, exist_ok=True)
-    failed_path.write_text(json.dumps({
-        "error": error,
-        "model": model,
-        "timestamp": datetime.now().isoformat(),
-    }, indent=2), encoding="utf-8")
 
 
 def generate_code(
@@ -359,33 +340,29 @@ def main():
         print(f"Auto-discovered {len(problem_ids)} problems from judge")
 
     # Get model list
-    if args.models:
-        models_list = args.models
-    elif args.models_file:
-        models_path = Path(args.models_file)
-        if not models_path.is_absolute():
-            models_path = script_dir / models_path
-        if not models_path.is_file():
-            print(f"{red('ERROR:')} Models file not found: {models_path}")
-            sys.exit(1)
-        models_list = read_models_file(models_path)
-    else:
-        # Try default models.txt
-        models_path = script_dir / "models.txt"
-        if models_path.is_file():
-            models_list = read_models_file(models_path)
-        else:
-            print(f"{red('ERROR:')} No model specified. Use --model or create models.txt")
-            sys.exit(1)
-
-    if not models_list:
-        print(f"{red('ERROR:')} No models specified")
-        sys.exit(1)
-
+    model_result = resolve_models(
+        model_arg=args.models,
+        models_file=Path(args.models_file) if args.models_file else None,
+        default_models_path=script_dir / "models.txt",
+        base_dir=script_dir,
+    )
+    models_list = model_result.models
     print(f"Using {len(models_list)} model(s): {', '.join(models_list)}")
 
-    # Build key pools
-    provider_key_pools = build_key_pools()
+    # Load .env file
+    ensure_env_loaded()
+
+    # Collect required providers from models
+    required_providers = set()
+    for model in models_list:
+        provider = detect_provider(model)
+        required_providers.add(provider)
+
+    # Precheck API keys (validates before starting)
+    valid_keys, check_results = precheck_required_providers(list(required_providers))
+
+    # Build key pools with only valid keys and RPM weights
+    provider_key_pools = build_key_pools(valid_keys, check_results)
 
     # Determine solution indices
     if args.indices is not None:
@@ -568,20 +545,7 @@ def main():
                 failed.append(sol_name if error_text is None else f"{sol_name} ({error_text})")
 
     # Print summary
-    print(f"\n{bold('Summary:')}")
-    print("─" * 40)
-    if generated:
-        print(f"  {green('✓')} Generated: {green(bold(str(len(generated))))} solution(s)")
-    if skipped:
-        print(f"  {yellow('○')} Skipped: {yellow(bold(str(len(skipped))))} existing")
-    if failed:
-        print(f"  {red('✗')} Failed: {red(bold(str(len(failed))))} solution(s)")
-        for name in failed[:5]:
-            print(f"    {dim('•')} {red(name)}")
-        if len(failed) > 5:
-            print(f"    {dim(f'... and {len(failed) - 5} more')}")
-
-    print("─" * 40)
+    print_generation_summary(generated, failed, skipped, format_name=format_solution_name)
 
 
 if __name__ == "__main__":

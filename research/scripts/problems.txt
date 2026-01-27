@@ -44,6 +44,8 @@ llm_sql/large
 llm_sql/small
 mamba2_scan
 mixed_gemm
+nbody_simulation/random_100k
+nbody_simulation/random_10k
 poc_generation/heap_buffer_overflow/arvo_21000
 poc_generation/heap_buffer_overflow/arvo_47101
 poc_generation/heap_buffer_overflow/arvo_47500

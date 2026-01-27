@@ -12,6 +12,7 @@ static inline string trim_str(const string &s) {
 int h, n;
 vector<long long> f;
 vector<vector<long long>> prefix_sum;
+vector<int> query_count_per_u;  // 每个 u 的查询次数
 
 inline int get_depth(int x) {
     return 31 - __builtin_clz(x);
@@ -109,6 +110,9 @@ int main(int argc, char* argv[]) {
         total_sum += f[i];
     }
 
+    // 初始化每个 u 的查询计数
+    query_count_per_u.resize(n + 1, 0);
+
     // L = 3 * n / 4, R = (13 * n + 21) / 8
     long long L = 3LL * n / 4;
     long long R = (13LL * n + 21) / 8;
@@ -117,7 +121,7 @@ int main(int argc, char* argv[]) {
     cout.flush();
 
     int query_count = 0;
-    const int MAX_QUERIES = 3 * n;
+    const int MAX_QUERIES_PER_U = 5;        // 每个 u 的查询次数限制
 
     while (true) {
         string line;
@@ -137,12 +141,7 @@ int main(int argc, char* argv[]) {
                 quitf(_wa, "Wrong answer: expected %lld, got %lld", total_sum, user_ans);
             }
             
-            // 参照153的评分逻辑
-            // 将query_count映射到[baseline, best]区间
-            // baseline = R (0分), best = L (满分)
-            // 类似153: (score - baseline) / (best - baseline)
-            // 对于我们: (R - query_count) / (R - L)
-            
+            // 超过 R 则 0 分，低于 L 则满分，中间线性插值
             double score_ratio = max(0.0, min(1.0, (double)(R - query_count) / (double)(R - L)));
             double unbounded_ratio = max(0.0, (double)(R - query_count) / (double)(R - L));
             
@@ -150,10 +149,6 @@ int main(int argc, char* argv[]) {
                   query_count, score_ratio, unbounded_ratio);
             return 0;
         } else if (line[0] == '?') {
-            if (query_count >= MAX_QUERIES) {
-                quitf(_wa, "Too many queries (exceeded %d)", MAX_QUERIES);
-            }
-            
             istringstream iss(line.substr(1));
             int u;
             long long d;
@@ -166,6 +161,12 @@ int main(int argc, char* argv[]) {
             }
             if (d < 1) {
                 quitf(_wa, "Invalid d: %lld (should be d >= 1)", d);
+            }
+            
+            // 检查每个 u 的查询次数限制
+            query_count_per_u[u]++;
+            if (query_count_per_u[u] > MAX_QUERIES_PER_U) {
+                quitf(_wa, "Too many queries on u = %d (exceeded %d)", u, MAX_QUERIES_PER_U);
             }
             
             query_count++;

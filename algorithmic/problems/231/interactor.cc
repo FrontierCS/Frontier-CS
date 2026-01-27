@@ -180,39 +180,60 @@ string compute_result(const vector<int>& tokens) {
         return "Lose";
     }
     
-    bool has_draw = false;
-    int xor_val = 0;
+    // Separate Draw tokens and non-Draw tokens
+    vector<int> draw_tokens;
+    vector<int> nondraw_tokens;
     
     for (int v : tokens) {
         if (state[v] == 2) {
-            has_draw = true;
+            draw_tokens.push_back(v);
         } else {
-            if (nimber[v] >= 0) {
-                xor_val ^= nimber[v];
-            }
+            nondraw_tokens.push_back(v);
         }
     }
     
-    if (has_draw) {
-        // Complex case: need more careful analysis
-        // If there's a Draw token and xor of non-draw tokens is 0,
-        // the player can use the Draw token to stall forever
-        // If xor is non-zero, the player might be able to win
-        // Simplified: if has_draw, it's at least Draw (cannot be Lose)
-        // And if we can force a win before using draw, it's Win
-        
-        // For this problem, if there's any draw token:
-        // - If xor_val != 0, we might be able to win (move on non-draw to make xor=0)
-        //   But opponent might counter... Actually it's still Win
-        // - If xor_val == 0, we can just move on draw token forever -> Draw
-        
-        if (xor_val != 0) return "Win";
-        else return "Draw";
-    } else {
+    // Compute XOR of nimbers for non-Draw tokens
+    int xor_val = 0;
+    for (int v : nondraw_tokens) {
+        if (nimber[v] >= 0) {
+            xor_val ^= nimber[v];
+        }
+    }
+    
+    if (draw_tokens.empty()) {
         // Standard Sprague-Grundy: xor = 0 -> Lose, else Win
         if (xor_val == 0) return "Lose";
         else return "Win";
     }
+    
+    // Has Draw tokens - need careful analysis
+    // For each Draw token, check if it can move to a position that makes XOR = 0
+    // If any Draw token can do this, first player Wins
+    
+    for (int d : draw_tokens) {
+        // Check all successors of d (excluding self-loop)
+        for (int succ : adj[d]) {
+            if (succ == d) continue; // Skip self-loop
+            
+            if (state[succ] == 2) {
+                // Moving to another Draw state doesn't help immediately
+                continue;
+            }
+            
+            // If we move d's token to succ, the new XOR would be xor_val ^ nimber[succ]
+            // If this equals 0, we Win
+            if (nimber[succ] >= 0 && (xor_val ^ nimber[succ]) == 0) {
+                return "Win";
+            }
+        }
+    }
+    
+    // No Draw token can immediately make XOR = 0
+    // Since Draw tokens have self-loops, player can always stall the game forever
+    // The game becomes a Draw because:
+    // - Player can keep moving on self-loop indefinitely
+    // - Neither player is forced to lose
+    return "Draw";
 }
 
 int main(int argc, char* argv[]) {
@@ -359,14 +380,36 @@ int main(int argc, char* argv[]) {
                     quitf(_wa, "Invalid guess: %d", guess);
                 }
                 
-                // Contestant must narrow down to exactly one possibility
+                // Adaptive interactor logic:
+                // If there are multiple possible vertices, the interactor can choose
+                // any one that is NOT the contestant's guess (if such exists).
+                // Only accept if contestant has narrowed down to exactly this guess.
+                
+                if (possible.size() > 1) {
+                    // Multiple possibilities remain - adaptive interactor picks a different one
+                    int actual = -1;
+                    for (int v : possible) {
+                        if (v != guess) {
+                            actual = v;
+                            break;
+                        }
+                    }
+                    if (actual != -1) {
+                        cout << "Wrong" << endl;
+                        cout.flush();
+                        quitf(_wa, "Wrong answer in round %d: guessed %d but %d possibilities remain (actual was %d)", 
+                              round + 1, guess, (int)possible.size(), actual);
+                    }
+                }
+                
+                // possible.size() == 1, check if guess matches
                 if (possible.count(guess) == 0) {
                     cout << "Wrong" << endl;
                     cout.flush();
                     quitf(_wa, "Wrong answer in round %d: guessed %d but it's not consistent with previous answers", round + 1, guess);
                 }
                 
-                // Accept any guess that's consistent with previous answers
+                // Correct: contestant narrowed down to exactly one vertex and guessed it
                 cout << "Correct" << endl;
                 cout.flush();
                 

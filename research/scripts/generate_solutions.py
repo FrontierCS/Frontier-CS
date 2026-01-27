@@ -12,7 +12,6 @@ Usage:
 
 import sys
 import os
-import json
 import time
 import argparse
 import re
@@ -27,11 +26,15 @@ from importlib import metadata
 from frontier_cs.models import get_model_prefix, is_reasoning_model
 from frontier_cs.gen import (
     build_key_pools, get_fallback_api_key, APIKeyPool,
+    ensure_env_loaded, precheck_required_providers,
     instantiate_llm_client, detect_provider,
     bold, dim, red, green, yellow, blue, cyan, magenta,
     success, error, warning, info, header, section,
     model_name, problem_name as format_problem_name, solution_name as format_solution_name,
     print_header, print_section, print_success, print_error, print_warning, print_info,
+    get_failed_path, write_failed_marker,
+    resolve_models,
+    print_generation_summary,
 )
 from frontier_cs.gen.solution_format import (
     format_solution_filename,
@@ -43,7 +46,6 @@ from gen_env import get_system_prompt_for_problem
 from gen_io import (
     load_env_file,
     load_solution_targets,
-    read_models_file,
     read_variant_indices_file,
     read_readme,
     load_docker_config,
@@ -88,27 +90,6 @@ def ensure_numpy_version(required: str) -> None:
 
 # Directories to exclude when auto-discovering problems
 EXCLUDE_DIRS = {'common', 'resources', '__pycache__', '.venv', 'data', 'traces', 'bin', 'lib', 'include'}
-
-
-def get_failed_path(solution_path: Path) -> Path:
-    """Get the .FAILED file path for a solution."""
-    return solution_path.with_suffix(".FAILED")
-
-
-def has_failed_marker(solution_path: Path) -> bool:
-    """Check if a .FAILED file exists for this solution."""
-    return get_failed_path(solution_path).exists()
-
-
-def write_failed_marker(solution_path: Path, error: str, model: str) -> None:
-    """Write a .FAILED marker file for a failed generation."""
-    failed_path = get_failed_path(solution_path)
-    failed_path.parent.mkdir(parents=True, exist_ok=True)
-    failed_path.write_text(json.dumps({
-        "error": error,
-        "model": model,
-        "timestamp": datetime.now().isoformat(),
-    }, indent=2), encoding="utf-8")
 
 
 def discover_problems(problems_dir: Path) -> List[Path]:
@@ -717,48 +698,33 @@ Examples:
         logs_dir.mkdir(exist_ok=True)
 
     # Resolve model selection
-    models_source_desc = ""
-    if args.models:
-        models_list = args.models
-        if len(models_list) == 1:
-            print(f"Using model from --model: {models_list[0]}")
-            models_source_desc = f"--model ({models_list[0]})"
-        else:
-            print(f"Using {len(models_list)} models from --model: {', '.join(models_list)}")
-            models_source_desc = f"--model ({len(models_list)} models)"
-    elif args.models_file:
-        # User explicitly specified --models-file, must exist
-        models_path = Path(args.models_file)
-        if not models_path.is_absolute():
-            models_path = base_dir / models_path
-        if not models_path.is_file():
-            print(f"ERROR: Models file not found: {models_path}")
-            sys.exit(1)
-        models_list = read_models_file(models_path)
-        if not models_list:
-            print(f"ERROR: Models file is empty: {models_path}")
-            sys.exit(1)
-        print(f"Detected {len(models_list)} models from {models_path}.")
-        models_source_desc = f"--models-file ({models_path})"
+    model_result = resolve_models(
+        model_arg=args.models,
+        models_file=Path(args.models_file) if args.models_file else None,
+        default_models_path=base_dir / "models.txt",
+        base_dir=base_dir,
+    )
+    models_list = model_result.models
+    models_source_desc = model_result.source_description
+    if len(models_list) == 1:
+        print(f"Using model from {models_source_desc}")
     else:
-        # Default: use models.txt
-        models_path = base_dir / "models.txt"
-        if not models_path.is_file():
-            print(f"ERROR: No model specified and {models_path} not found.")
-            print("Use --model <model> or create models.txt")
-            sys.exit(1)
-        models_list = read_models_file(models_path)
-        if not models_list:
-            print(f"ERROR: Models file is empty: {models_path}")
-            sys.exit(1)
-        print(f"Detected {len(models_list)} models from {models_path}.")
-        models_source_desc = f"models.txt ({models_path})"
+        print(f"Detected {len(models_list)} models from {models_source_desc}.")
 
-    # Build key pools
-    provider_key_pools = build_key_pools()
-    if provider_key_pools:
-        for provider, pool in provider_key_pools.items():
-            print(f"Loaded {pool.size()} API key(s) for provider '{provider}'.")
+    # Load .env file
+    ensure_env_loaded()
+
+    # Collect required providers from models
+    required_providers = set()
+    for model in models_list:
+        provider = detect_provider(model)
+        required_providers.add(provider)
+
+    # Precheck API keys (validates before starting)
+    valid_keys, check_results = precheck_required_providers(list(required_providers))
+
+    # Build key pools with only valid keys and RPM weights
+    provider_key_pools = build_key_pools(valid_keys, check_results)
 
     # Build prefix to model mapping
     prefix_to_model: Dict[str, str] = {}
@@ -935,26 +901,7 @@ Examples:
                     failed.append(sol_name if error_text is None else f"{sol_name} ({error_text})")
 
     # Print summary
-    print(f"\n{bold('Summary:')}")
-    line = "─" * 40
-    print(dim(line))
-    if generated:
-        print(f"  {green('✓')} Generated: {green(bold(str(len(generated))))} solution(s)")
-        for name in generated[:5]:
-            print(f"    {dim('•')} {format_solution_name(name)}")
-        if len(generated) > 5:
-            print(f"    {dim(f'... and {len(generated) - 5} more')}")
-    else:
-        print(f"  {dim('•')} No new solutions generated.")
-    if skipped:
-        print(f"  {yellow('○')} Skipped: {yellow(bold(str(len(skipped))))} existing (use {bold('--force')} to regenerate)")
-    if failed:
-        print(f"  {red('✗')} Failed: {red(bold(str(len(failed))))} solution(s)")
-        for name in failed[:5]:
-            print(f"    {dim('•')} {red(name)}")
-        if len(failed) > 5:
-            print(f"    {dim(f'... and {len(failed) - 5} more')}")
-    print(dim(line))
+    print_generation_summary(generated, failed, skipped, format_name=format_solution_name)
 
     # Write detailed summary to file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -1,5 +1,5 @@
 {
-  "error": "Not generated (marked as failed)",
+  "error": "LLM call failed after retries",
   "model": "gpt-5.2",
-  "timestamp": "2026-01-14T08:45:00.053004"
+  "timestamp": "2026-01-21T23:29:26.062743"
 }

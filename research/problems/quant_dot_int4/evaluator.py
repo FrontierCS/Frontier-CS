@@ -68,14 +68,14 @@ def materialize_artifact(result: Any, solution_path: Path) -> Path:
 
 def load_quant_dot_from_artifact(artifact_path: Path) -> Any:
     """Load the quant_dot function from the artifact."""
+    import tempfile
+    import os
+
     with artifact_path.open("r", encoding="utf-8") as fin:
         artifact = json.load(fin)
-    
+
     if "code" in artifact:
         # Write code to temporary file and import as module to avoid Triton source inspection issues
-        import tempfile
-        import os
-        
         try:
             # Create temporary file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -246,7 +246,7 @@ def main():
         json.dump(result, fout, indent=2)
     
     # Print summary
-    if result["status"] == "success":
+    if result["status"] == "success" and "error" not in result:
         print(f"Evaluation completed successfully!")
         print(f"Score: {result['score']:.2f}/100")
         print(f"Geometric mean speedup: {result['geometric_mean_speedup']:.3f}x")
@@ -254,8 +254,17 @@ def main():
         # Print score as last line for main_loop.sh to extract
         # Format: "score score_unbounded" (space-separated)
         print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
+    elif result["status"] == "success" and "error" in result:
+        # Evaluation ran but solution failed (e.g., correctness issues, runtime errors)
+        print(f"Evaluation completed with errors: {result['error']}")
+        print(f"Score: {result['score']:.2f}/100")
+        if "geometric_mean_speedup" in result:
+            print(f"Geometric mean speedup: {result['geometric_mean_speedup']:.3f}x")
+        if "passed_tests" in result and "total_tests" in result:
+            print(f"Tests passed: {result['passed_tests']}/{result['total_tests']}")
+        print(f"{result['score']} {result.get('score_unbounded', result['score'])}")
     else:
-        print(f"Evaluation failed: {result['error']}")
+        print(f"Evaluation failed: {result.get('error', 'Unknown error')}")
         # Print error score as last line
         print("0")
         sys.exit(1)
