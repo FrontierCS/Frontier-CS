@@ -96,8 +96,8 @@ int main(int argc, char* argv[]) {
         // --- Interaction ---
         cout << n << endl; // Send n to user
 
-        double K_BASE = n * n;
-        double K_ZERO = n * n * n;
+        double K_BASE = n * n / 2;
+        double K_ZERO = n * n * 2;
 
         int queries = 0;
         bool solved = false;

@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
         // Zero Limit: n
         int limit_base = (int)ceil(log2((double)n)) + 1;
         limit_base /= 2;
-        int limit_zero = n + 1;
+        int limit_zero = limit_base * 2;
         
         // Hard limit to prevent infinite loops (set slightly above Zero Limit)
         int hard_limit = n + 50; 
