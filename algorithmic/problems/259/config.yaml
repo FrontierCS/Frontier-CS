@@ -1,0 +1,7 @@
+type: default
+time: 1s
+memory: 256m
+
+subtasks:
+- score: 100
+  n_cases: 5
