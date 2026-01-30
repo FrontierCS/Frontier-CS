@@ -79,10 +79,16 @@ jobs:
         run: uv sync
 
       - name: Setup GCP credentials
-        if: ${{ secrets.GCP_CREDENTIALS != '' }}
+        env:
+          GCP_CREDS: ${{ secrets.GCP_CREDENTIALS }}
         run: |
-          echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/gcp-key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+          if [ -n "$GCP_CREDS" ]; then
+            echo "$GCP_CREDS" > /tmp/gcp-key.json
+            echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+            echo "GCP credentials configured"
+          else
+            echo "No GCP credentials available, skipping..."
+          fi
 
       - name: Setup SkyPilot
         run: |
