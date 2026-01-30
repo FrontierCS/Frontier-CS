@@ -1,0 +1,96 @@
+name: Validate Problems
+
+on:
+  pull_request:
+    paths:
+      - 'algorithmic/problems/**'
+      - 'research/problems/**'
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      algorithmic: ${{ steps.detect.outputs.algorithmic }}
+      research: ${{ steps.detect.outputs.research }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Detect changed problems
+        id: detect
+        run: |
+          # Detect changed algorithmic problems
+          ALG=$(python scripts/detect_changed_problems.py --track algorithmic --base-ref origin/${{ github.base_ref }} -v 2>&1 | tail -1)
+          echo "algorithmic=$ALG" >> $GITHUB_OUTPUT
+          echo "Algorithmic problems: $ALG"
+
+          # Detect changed research problems
+          RES=$(python scripts/detect_changed_problems.py --track research --base-ref origin/${{ github.base_ref }} -v 2>&1 | tail -1)
+          echo "research=$RES" >> $GITHUB_OUTPUT
+          echo "Research problems: $RES"
+
+  validate-algorithmic:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.algorithmic != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Validate problems
+        run: |
+          echo "Validating algorithmic problems: ${{ needs.detect-changes.outputs.algorithmic }}"
+          uv run python scripts/validate_problems.py \
+            --track algorithmic \
+            --problems ${{ needs.detect-changes.outputs.algorithmic }}
+
+  validate-research:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.research != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Setup GCP credentials
+        if: ${{ secrets.GCP_CREDENTIALS != '' }}
+        run: |
+          echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/gcp-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+
+      - name: Setup SkyPilot
+        run: |
+          uv run sky check || echo "SkyPilot check failed, continuing..."
+
+      - name: Validate problems
+        run: |
+          echo "Validating research problems: ${{ needs.detect-changes.outputs.research }}"
+          uv run python scripts/validate_problems.py \
+            --track research \
+            --problems ${{ needs.detect-changes.outputs.research }}
