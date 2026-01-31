@@ -22,12 +22,14 @@ labels: algorithmic-problem
 - [ ] `config.yaml` - Time/memory limits, test count
 - [ ] `testdata/` - At least one public test case (1.in, 1.ans)
 - [ ] `chk.cc` or `interactor.cc` - Checker or interactor
+- [ ] `reference.cpp` - Reference solution **(required for CI)**
 
 ### Problem Structure
 ```
 algorithmic/problems/{id}/
 ├── statement.txt
 ├── config.yaml
+├── reference.cpp    # Required: CI will validate this achieves score > 0
 ├── testdata/
 │   ├── 1.in
 │   └── 1.ans
@@ -37,7 +39,7 @@ algorithmic/problems/{id}/
 ### Testing
 - [ ] Verified checker/interactor compiles
 - [ ] Tested with sample solution
-- [ ] Problem registered and accessible via judge API
+- [ ] **Reference solution (`reference.cpp`) achieves score > 0**
 
 ## Additional Notes
 <!-- Any additional context or special requirements -->

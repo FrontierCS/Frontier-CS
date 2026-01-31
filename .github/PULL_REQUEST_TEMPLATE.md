@@ -17,3 +17,8 @@
 - [ ] Code follows the project structure and conventions
 - [ ] Self-review completed
 - [ ] Documentation updated (if applicable)
+
+## CI Validation (for new problems)
+> When adding new problems, CI will automatically validate that your reference solution achieves score > 0.
+> - Algorithmic problems: Include `reference.cpp` in your problem directory
+> - Research problems: Include `reference.py` in your problem directory

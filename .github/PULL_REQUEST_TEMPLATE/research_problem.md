@@ -28,6 +28,7 @@ labels: research-problem
 - [ ] `evaluate.sh` - Evaluation entry point
 - [ ] `evaluator.py` - Scoring logic (outputs 0-100 score)
 - [ ] `resources/` - Problem-specific code/data
+- [ ] `reference.py` - Reference solution **(required for CI)**
 
 ### Problem Structure
 ```
@@ -37,6 +38,7 @@ research/{problem_name}/
 ├── set_up_env.sh
 ├── evaluate.sh
 ├── evaluator.py
+├── reference.py     # Required: CI will validate this achieves score > 0
 └── resources/
     └── ...
 ```
@@ -44,7 +46,7 @@ research/{problem_name}/
 ### Testing
 - [ ] Verified `set_up_env.sh` runs successfully
 - [ ] Verified `evaluate.sh` runs and outputs a numeric score
-- [ ] Tested with a baseline/reference solution
+- [ ] **Reference solution (`reference.py`) achieves score > 0**
 
 **Test Results** (if available):
 ```

@@ -35,6 +35,7 @@ algorithmic/problems/{problem_id}/
 ├── config.yaml       # Problem configuration (time limit, memory limit, checker)
 ├── statement.txt     # Problem description and requirements
 ├── chk.cc or interactor.cc (for interactive problems)          # Evaluator
+├── reference.cpp     # Reference solution (required for CI validation)
 └── testdata/        # Test cases
     ├── 1.in         # Sample input
     ├── 1.ans        # Hidden evaluation data used by the evaluator, e.g., reference score.
@@ -42,6 +43,8 @@ algorithmic/problems/{problem_id}/
     ├── 2.ans
     └── ...
 ```
+
+> **Note**: The `reference.cpp` is required for CI validation. When you submit a PR, the CI will automatically run your reference solution and verify it achieves score > 0.
 
 ### Required Files
 
@@ -127,8 +130,11 @@ research/{problem_name}/
 ├── evaluate.sh          # Evaluation entry point
 ├── evaluator.py         # Scoring logic
 ├── readme               # Problem description
+├── reference.py         # Reference solution (required for CI validation)
 └── resources/           # Problem-specific code/data
 ```
+
+> **Note**: The `reference.py` is required for CI validation. When you submit a PR, the CI will automatically run your reference solution and verify it achieves score > 0.
 
 ### Solution Interface
 
