@@ -53,29 +53,12 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Start judge server
-        run: |
-          cd algorithmic
-          docker compose up -d --build
-          echo "Waiting for judge server..."
-          for i in {1..60}; do
-            if curl -s http://localhost:8081/health > /dev/null 2>&1; then
-              echo "Judge server is ready"
-              break
-            fi
-            sleep 2
-          done
-
       - name: Validate problems
         run: |
           echo "Validating algorithmic problems: ${{ needs.detect-changes.outputs.algorithmic }}"
           uv run python scripts/validate_problems.py \
             --track algorithmic \
             --problems ${{ needs.detect-changes.outputs.algorithmic }}
-
-      - name: Stop judge server
-        if: always()
-        run: cd algorithmic && docker compose down
 
   validate-research:
     needs: detect-changes
