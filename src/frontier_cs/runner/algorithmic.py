@@ -74,8 +74,7 @@ class AlgorithmicRunner(Runner):
             logger.error(f"docker-compose.yml not found: {compose_file}")
             return False
 
-        # Build docker compose command (--build for CI environments without cached images)
-        cmd = ["docker", "compose", "up", "-d", "--build"]
+        cmd = ["docker", "compose", "up", "-d"]
 
         # Build environment with optional problems_dir override
         env = None
