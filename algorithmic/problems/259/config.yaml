@@ -1,4 +1,5 @@
 type: default
+checker: chk.cc
 time: 1s
 memory: 256m
 
