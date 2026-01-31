@@ -168,6 +168,26 @@ print(f"Score (bounded): {result.score}")
 print(f"Score (unbounded): {result.score_unbounded}")
 ```
 
+### Batch Evaluation
+
+For running evaluations at scale, use the batch evaluation script:
+
+```bash
+# Evaluate all research solutions (uses SkyPilot)
+./scripts/run_eval.sh --track research
+
+# Evaluate all algorithmic solutions (uses Docker)
+./scripts/run_eval.sh --track algorithmic
+
+# Custom parallelism
+./scripts/run_eval.sh --track research -j 20
+
+# Force re-evaluation (ignore cache)
+./scripts/run_eval.sh --track algorithmic --force
+```
+
+The script auto-clones the internal and results repositories. See `./scripts/run_eval.sh --help` for all options.
+
 ## Submitting Results
 
 Reference solutions and full test cases are withheld. We release partial test cases so you can develop and debug locally. For full evaluation and leaderboard inclusion, please follow the instructions in [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.

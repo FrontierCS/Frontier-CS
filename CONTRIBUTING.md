@@ -264,6 +264,35 @@ research/poc_generation/heap_buffer_overflow/arvo_21000
 research/poc_generation/heap_buffer_overflow/arvo_47101
 ```
 
+## CI Validation
+
+When you submit a PR that adds or modifies problems, CI will automatically validate your changes:
+
+1. **Detection**: CI detects which problems were modified via `git diff`
+2. **Validation**: For each modified problem, CI runs the reference solution
+3. **Pass Criteria**: Reference solution must achieve score > 0
+
+### Reference Solution Requirements
+
+| Track | File | Location |
+|-------|------|----------|
+| Algorithmic | `reference.cpp` | `algorithmic/problems/{id}/reference.cpp` |
+| Research | `reference.py` | `research/problems/{name}/reference.py` |
+
+If the reference solution is missing or scores 0, the PR will be blocked from merging.
+
+### Local Testing
+
+Before submitting a PR, test your reference solution locally:
+
+```bash
+# Algorithmic
+frontier eval --algorithmic {id} algorithmic/problems/{id}/reference.cpp
+
+# Research
+frontier eval {name} research/problems/{name}/reference.py
+```
+
 ## Contact
 
 For questions, submissions, or to request an invitation:
