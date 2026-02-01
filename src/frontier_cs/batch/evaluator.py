@@ -186,15 +186,9 @@ class BatchEvaluator:
         """Compute hashes for all pairs for cache invalidation."""
         hashes = {}
         problem_hash_cache: Dict[str, Optional[str]] = {}
+        solutions_dir = self._get_default_solutions_dir()
 
         for pair in pairs:
-            # Use explicit solutions_dir if set, otherwise use base_dir
-            if self.solutions_dir:
-                solutions_dir = self.solutions_dir
-            elif self.track == "algorithmic":
-                solutions_dir = self.base_dir / "algorithmic" / "solutions"
-            else:
-                solutions_dir = self.base_dir / "research" / "solutions"
             solution_path = solutions_dir / pair.solution
 
             sol_hash = hash_file(solution_path) if solution_path.exists() else None
@@ -319,6 +313,14 @@ class BatchEvaluator:
             logger.info("All pairs already evaluated")
             self._export_all_results(pairs)
             return self.state
+
+        # Adjust workers to not exceed pending pairs count
+        effective_workers = min(self.workers, len(pending))
+        effective_clusters = min(self.clusters, len(pending))
+        if effective_workers < self.workers:
+            logger.info(f"Adjusting workers: {self.workers} -> {effective_workers} (only {len(pending)} pairs)")
+            self.workers = effective_workers
+            self.clusters = effective_clusters
 
         logger.info(f"Evaluating {len(pending)} pairs (workers={self.workers}, clusters={self.clusters})")
 
@@ -487,13 +489,18 @@ class BatchEvaluator:
         SkyPilotRunner.down_clusters(self._cluster_names)
         self._cluster_names = []
 
+    def _get_default_solutions_dir(self) -> Path:
+        """Get the solutions directory (explicit or default based on track)."""
+        if self.solutions_dir:
+            return self.solutions_dir
+        elif self.track == "algorithmic":
+            return self.base_dir / "algorithmic" / "solutions"
+        else:
+            return self.base_dir / "research" / "solutions"
+
     def _get_solution_path(self, pair: Pair) -> Path:
         """Get the solution file path for a pair."""
-        if self.track == "algorithmic":
-            solutions_dir = self.base_dir / "algorithmic" / "solutions"
-        else:
-            solutions_dir = self.base_dir / "research" / "solutions"
-        return solutions_dir / pair.solution
+        return self._get_default_solutions_dir() / pair.solution
 
     def _evaluate_pair(self, pair: Pair) -> EvaluationResult:
         """Evaluate a single pair using the configured runner."""
@@ -666,12 +673,8 @@ class BatchEvaluator:
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
         """Evaluate all problems for a given model."""
-        if self.track == "algorithmic":
-            solutions_dir = self.base_dir / "algorithmic" / "solutions"
-            ext = "cpp"
-        else:
-            solutions_dir = self.base_dir / "research" / "solutions"
-            ext = "py"
+        solutions_dir = self._get_default_solutions_dir()
+        ext = "cpp" if self.track == "algorithmic" else "py"
 
         pairs = expand_pairs(
             problems, [model], variants,
@@ -694,12 +697,8 @@ class BatchEvaluator:
         on_progress: Optional[Callable[[Pair, EvaluationResult], None]] = None,
     ) -> EvaluationState:
         """Evaluate a problem across all given models."""
-        if self.track == "algorithmic":
-            solutions_dir = self.base_dir / "algorithmic" / "solutions"
-            ext = "cpp"
-        else:
-            solutions_dir = self.base_dir / "research" / "solutions"
-            ext = "py"
+        solutions_dir = self._get_default_solutions_dir()
+        ext = "cpp" if self.track == "algorithmic" else "py"
 
         pairs = expand_pairs(
             [problem], models, variants,
@@ -737,12 +736,8 @@ class BatchEvaluator:
         models = read_models_file(models_file)
         variants = read_variants_file(variants_file) if variants_file else [0]
 
-        if self.track == "algorithmic":
-            solutions_dir = self.base_dir / "algorithmic" / "solutions"
-            ext = "cpp"
-        else:
-            solutions_dir = self.base_dir / "research" / "solutions"
-            ext = "py"
+        solutions_dir = self._get_default_solutions_dir()
+        ext = "cpp" if self.track == "algorithmic" else "py"
 
         pairs = expand_pairs(
             problems, models, variants,
@@ -814,12 +809,8 @@ class BatchEvaluator:
         show_progress: bool = True,
     ) -> EvaluationState:
         """Evaluate only missing pairs (those not yet in results)."""
-        if self.track == "algorithmic":
-            solutions_dir = self.base_dir / "algorithmic" / "solutions"
-            ext = "cpp"
-        else:
-            solutions_dir = self.base_dir / "research" / "solutions"
-            ext = "py"
+        solutions_dir = self._get_default_solutions_dir()
+        ext = "cpp" if self.track == "algorithmic" else "py"
 
         all_pairs = expand_pairs(
             problems, models, variants,

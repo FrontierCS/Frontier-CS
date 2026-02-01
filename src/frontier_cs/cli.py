@@ -230,11 +230,12 @@ Examples:
   # Evaluate research solutions (uses SkyPilot by default)
   frontier batch --track research
 
-  # Evaluate algorithmic solutions (uses Docker)
+  # Evaluate algorithmic solutions (uses Docker by default)
   frontier batch --track algorithmic
 
-  # Use Docker for research track (local GPU)
-  frontier batch --track research --docker
+  # Override default backend
+  frontier batch --track research --backend docker
+  frontier batch --track algorithmic --backend skypilot
 
   # Filter by model or problem
   frontier batch --track research --model gpt5.1
@@ -308,14 +309,11 @@ Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
 
     batch_backend = batch_parser.add_argument_group("Backend Options")
     batch_backend.add_argument(
-        "--skypilot",
-        action="store_true",
-        help="Use SkyPilot for cloud evaluation (default for research track)",
-    )
-    batch_backend.add_argument(
-        "--docker",
-        action="store_true",
-        help="Use Docker for local evaluation (override default for research track)",
+        "--backend",
+        type=str,
+        choices=["docker", "skypilot"],
+        help="Evaluation backend: docker (local) or skypilot (cloud). "
+             "Default: skypilot for research, docker for algorithmic",
     )
     batch_backend.add_argument(
         "--clusters",
@@ -325,8 +323,8 @@ Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
     batch_backend.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="Number of parallel workers/concurrent evaluations (default: 1)",
+        default=10,
+        help="Number of parallel workers/concurrent evaluations (default: 10)",
     )
     batch_backend.add_argument(
         "--idle-timeout",
@@ -541,10 +539,10 @@ def run_batch(args: argparse.Namespace) -> int:
     # Determine backend
     track = args.track
 
-    # Determine backend: research defaults to skypilot, algorithmic always uses docker
-    if args.docker:
-        backend = "docker"
-    elif args.skypilot or track == "research":
+    # Determine backend: explicit --backend, or default based on track
+    if args.backend:
+        backend = args.backend
+    elif track == "research":
         backend = "skypilot"
     else:
         backend = "docker"

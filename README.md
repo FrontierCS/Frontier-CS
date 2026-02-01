@@ -170,41 +170,60 @@ print(f"Score (unbounded): {result.score_unbounded}")
 
 ### Batch Evaluation
 
-For testing your solutions at scale with public test cases:
+For testing your solutions at scale with public test cases.
+
+**Solution directory structure:**
+```
+{track}/solutions/
+  {problem}/
+    {model}.py          # variant 0
+    {model}_1.py        # variant 1
+    {model}_2.py        # variant 2
+```
+
+Example for research track:
+```
+research/solutions/
+  flash_attn/
+    gpt5.py
+    claude4.5sonnet.py
+  cross_entropy/
+    gpt5.py
+```
+
+**Basic usage:**
 
 ```bash
-# Evaluate all research solutions
+# Evaluate all research solutions (uses SkyPilot by default)
 uv run frontier-eval batch --track research
 
-# Evaluate all algorithmic solutions
+# Evaluate all algorithmic solutions (uses Docker by default)
 uv run frontier-eval batch --track algorithmic
 
-# Test a specific model across all problems
+# Filter by model or problem
 uv run frontier-eval batch --track research --model gpt5.1
-
-# Test all models on a specific problem
 uv run frontier-eval batch --track research --problem flash_attn
-
-# Test a specific model on a specific problem
 uv run frontier-eval batch --track research --model gpt5.1 --problem flash_attn
+
+# Override default backend
+uv run frontier-eval batch --track research --backend docker
+uv run frontier-eval batch --track algorithmic --backend skypilot
 ```
 
-**Custom solutions directory:** You can test solutions from a custom directory. Results accumulate in the same state file, so you can run multiple times with different directories:
+**Custom solutions directory:** You can test solutions from a custom directory with the same structure:
 
 ```bash
-# Test your custom solutions
+# Your custom directory should have the same structure:
+# my_solutions/{problem}/{model}.py
+
 uv run frontier-eval batch --track research --solutions-dir ./my_solutions
-
-# Results from both runs are accumulated in ./results/research/
 ```
 
-**Shell script:** For automatic SkyPilot cluster cleanup, use the wrapper script:
+Results are saved to `./results/batch/{track}/` by default. The state file tracks which (solution, problem) pairs have been evaluated, so you can:
+- Resume interrupted evaluations automatically
+- Run multiple times with different `--solutions-dir` and results accumulate
 
-```bash
-./scripts/run_eval_public.sh --track research --model gpt5.1
-```
-
-Results are saved to `./results/{track}/` by default. See `--help` for all options.
+See `--help` for all options.
 
 > **Note:** For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
 
