@@ -173,34 +173,40 @@ print(f"Score (unbounded): {result.score_unbounded}")
 For testing your solutions at scale with public test cases:
 
 ```bash
-# Evaluate all algorithmic solutions locally
-./scripts/run_eval_public.sh --track algorithmic
+# Evaluate all research solutions
+uv run frontier-eval batch --track research
 
-# Evaluate all research solutions with SkyPilot
-./scripts/run_eval_public.sh --track research
+# Evaluate all algorithmic solutions
+uv run frontier-eval batch --track algorithmic
 
 # Test a specific model across all problems
-./scripts/run_eval_public.sh --track research --model gpt5.1
+uv run frontier-eval batch --track research --model gpt5.1
 
 # Test all models on a specific problem
-./scripts/run_eval_public.sh --track research --problem flash_attn
+uv run frontier-eval batch --track research --problem flash_attn
 
 # Test a specific model on a specific problem
-./scripts/run_eval_public.sh --track research --model gpt5.1 --problem flash_attn
-
-# Custom solutions directory
-./scripts/run_eval_public.sh --track algorithmic --solutions-dir ./my_solutions
+uv run frontier-eval batch --track research --model gpt5.1 --problem flash_attn
 ```
 
-Or use the CLI directly:
+**Custom solutions directory:** You can test solutions from a custom directory. Results accumulate in the same state file, so you can run multiple times with different directories:
 
 ```bash
-uv run frontier-eval batch --track research --model gpt5.1
+# Test your custom solutions
+uv run frontier-eval batch --track research --solutions-dir ./my_solutions
+
+# Results from both runs are accumulated in ./results/research/
+```
+
+**Shell script:** For automatic SkyPilot cluster cleanup, use the wrapper script:
+
+```bash
+./scripts/run_eval_public.sh --track research --model gpt5.1
 ```
 
 Results are saved to `./results/{track}/` by default. See `--help` for all options.
 
-> **Note:** The shell script provides automatic SkyPilot cluster cleanup. For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
+> **Note:** For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
 
 
 ## Submitting Results
