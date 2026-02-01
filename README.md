@@ -170,23 +170,28 @@ print(f"Score (unbounded): {result.score_unbounded}")
 
 ### Batch Evaluation
 
-For running evaluations at scale, use the batch evaluation script:
+For testing your solutions at scale with public test cases:
 
 ```bash
-# Evaluate all research solutions (uses SkyPilot)
-./scripts/run_eval.sh --track research
+# Evaluate all algorithmic solutions locally
+./scripts/run_eval_public.sh --track algorithmic
 
-# Evaluate all algorithmic solutions (uses Docker)
-./scripts/run_eval.sh --track algorithmic
+# Evaluate all research solutions with SkyPilot
+./scripts/run_eval_public.sh --track research
+
+# Custom solutions and results directories
+./scripts/run_eval_public.sh --track algorithmic \
+  --solutions-dir ./my_solutions \
+  --results-dir ./my_results
 
 # Custom parallelism
-./scripts/run_eval.sh --track research -j 20
-
-# Force re-evaluation (ignore cache)
-./scripts/run_eval.sh --track algorithmic --force
+./scripts/run_eval_public.sh --track research -j 20
 ```
 
-The script auto-clones the internal and results repositories. See `./scripts/run_eval.sh --help` for all options.
+This script evaluates solutions against public test cases only and saves results locally. See `./scripts/run_eval_public.sh --help` for all options.
+
+> **Note:** For maintainers only - `./scripts/run_eval.sh` is used for full evaluation with private test cases and results reporting. Regular users should use `run_eval_public.sh` for local testing.
+
 
 ## Submitting Results
 
