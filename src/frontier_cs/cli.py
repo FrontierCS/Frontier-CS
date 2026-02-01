@@ -227,24 +227,21 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Evaluate all research solutions
+  # Evaluate research solutions (uses SkyPilot by default)
   frontier batch --track research
 
-  # Evaluate all algorithmic solutions
+  # Evaluate algorithmic solutions (uses Docker)
   frontier batch --track algorithmic
+
+  # Use Docker for research track (local GPU)
+  frontier batch --track research --docker
 
   # Filter by model or problem
   frontier batch --track research --model gpt5.1
   frontier batch --track research --problem flash_attn
 
-  # Evaluate specific pairs
-  frontier batch --track research --pairs "flash_attn/gpt5.py:flash_attn"
-
   # Resume interrupted evaluation
   frontier batch --track research --resume
-
-  # Check evaluation status
-  frontier batch --track research --status
 
 Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
         """,
@@ -313,7 +310,12 @@ Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
     batch_backend.add_argument(
         "--skypilot",
         action="store_true",
-        help="Use SkyPilot for cloud evaluation",
+        help="Use SkyPilot for cloud evaluation (default for research track)",
+    )
+    batch_backend.add_argument(
+        "--docker",
+        action="store_true",
+        help="Use Docker for local evaluation (override default for research track)",
     )
     batch_backend.add_argument(
         "--clusters",
@@ -504,6 +506,8 @@ def get_problem_ids(
 
 def run_batch(args: argparse.Namespace) -> int:
     """Run batch evaluation command."""
+    import signal
+    import atexit
     from .batch import BatchEvaluator
     from .batch.pair import Pair
 
@@ -513,10 +517,37 @@ def run_batch(args: argparse.Namespace) -> int:
         format="[%(levelname)s] %(message)s",
     )
 
-    # Determine backend
-    backend = "skypilot" if args.skypilot else "docker"
+    # Track batch evaluator for cleanup on interrupt
+    batch_evaluator_ref: List = []  # Use list to allow modification in nested function
 
+    def cleanup_on_exit():
+        """Cleanup SkyPilot clusters on exit."""
+        if batch_evaluator_ref:
+            batch = batch_evaluator_ref[0]
+            if hasattr(batch, '_cluster_names') and batch._cluster_names and not batch.keep_cluster:
+                print("\nCleaning up SkyPilot clusters...")
+                batch._cleanup_cluster_pool()
+
+    def signal_handler(signum, frame):
+        """Handle Ctrl+C by cleaning up and exiting."""
+        print("\n\nInterrupted! Cleaning up...")
+        cleanup_on_exit()
+        sys.exit(1)
+
+    # Register cleanup handlers
+    atexit.register(cleanup_on_exit)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Determine backend
     track = args.track
+
+    # Determine backend: research defaults to skypilot, algorithmic always uses docker
+    if args.docker:
+        backend = "docker"
+    elif args.skypilot or track == "research":
+        backend = "skypilot"
+    else:
+        backend = "docker"
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
@@ -555,6 +586,7 @@ def run_batch(args: argparse.Namespace) -> int:
     )
 
     batch = BatchEvaluator(**batch_kwargs)
+    batch_evaluator_ref.append(batch)  # Register for cleanup on interrupt
 
     # Handle status command
     if args.status:

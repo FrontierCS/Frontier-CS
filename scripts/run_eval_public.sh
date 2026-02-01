@@ -162,13 +162,13 @@ if [[ "$TRACK" != "research" ]] && [[ "$TRACK" != "algorithmic" ]]; then
     exit 1
 fi
 
-# Research track uses SkyPilot by default
+# Research track uses SkyPilot by default (handled by CLI)
 if [[ "$TRACK" == "research" ]]; then
     SKYPILOT=true
 fi
 
-# Build command - CLI now handles default paths based on track
-CMD="uv run frontier-eval batch --track $TRACK"
+# Build command - CLI handles default paths and backend based on track
+CMD="uv run frontier-eval batch --track $TRACK --workers $PARALLELISM"
 
 if [[ -n "$SOLUTIONS_DIR" ]]; then
     CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
@@ -178,10 +178,9 @@ if [[ -n "$RESULTS_DIR" ]]; then
     CMD="$CMD --results-dir $RESULTS_DIR"
 fi
 
+# Add clusters for SkyPilot
 if $SKYPILOT; then
-    CMD="$CMD --skypilot --workers $PARALLELISM --clusters $PARALLELISM"
-else
-    CMD="$CMD --workers $PARALLELISM"
+    CMD="$CMD --clusters $PARALLELISM"
 fi
 
 if $FORCE; then
