@@ -289,7 +289,7 @@ Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
         "--results-dir",
         type=Path,
         default=Path("results/batch"),
-        help="Directory for results and state (default: results/batch)",
+        help="Directory for results and state (default: results/batch/{track})",
     )
 
     batch_track = batch_parser.add_argument_group("Track Selection")
@@ -564,7 +564,7 @@ def run_batch(args: argparse.Namespace) -> int:
     if problems_dir is None:
         problems_dir = base_dir / track / "problems"
 
-    # Results dir: always create track subdir
+    # Results dir: always add track subdir
     results_dir = args.results_dir / track
     timeout = getattr(args, "timeout", 1000)
     # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)

@@ -447,18 +447,15 @@ echo "Running tools from: $PUBLIC_DIR"
 
 # Set paths based on track
 # Solutions always from public, problems from internal (more test cases)
-# Results saved directly to results repo
+# Results saved directly to results repo (CLI adds track subdir automatically)
 if [[ "$TRACK" == "algorithmic" ]]; then
     SOLUTIONS_DIR="$PUBLIC_DIR/algorithmic/solutions"
-    RESULTS_DIR="$RESULTS_REPO/algorithmic/batch"
     PROBLEMS_DIR="$INTERNAL_DIR/algorithmic/problems"
-    EXTRA_ARGS="--algorithmic"
 else
     SOLUTIONS_DIR="$PUBLIC_DIR/research/solutions"
-    RESULTS_DIR="$RESULTS_REPO/research/batch"
     PROBLEMS_DIR="$INTERNAL_DIR/research/problems"
-    EXTRA_ARGS=""
 fi
+RESULTS_DIR="$RESULTS_REPO/batch"
 
 if [[ ! -d "$SOLUTIONS_DIR" ]]; then
     echo "ERROR: Solutions directory not found: $SOLUTIONS_DIR"
@@ -469,18 +466,13 @@ fi
 mkdir -p "$RESULTS_DIR"
 
 # Build command
-CMD="uv run frontier-eval batch"
+CMD="uv run frontier-eval batch --track $TRACK"
 CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
 CMD="$CMD --results-dir $RESULTS_DIR"
-CMD="$CMD $EXTRA_ARGS"
-
-# For algorithmic track, use internal's problems (more test cases)
-if [[ -n "$PROBLEMS_DIR" ]]; then
-    CMD="$CMD --problems-dir $PROBLEMS_DIR"
-fi
+CMD="$CMD --problems-dir $PROBLEMS_DIR"
 
 if $SKYPILOT; then
-    CMD="$CMD --skypilot --workers $PARALLELISM --clusters $PARALLELISM"
+    CMD="$CMD --backend skypilot --workers $PARALLELISM --clusters $PARALLELISM"
 else
     CMD="$CMD --workers $PARALLELISM"
 fi
