@@ -19,6 +19,8 @@ SKYPILOT=false
 RESULTS_DIR=""
 DRY_RUN=false
 FORCE=false  # Force re-evaluation of all pairs (--no-resume)
+MODEL=""      # Filter by model name
+PROBLEM=""    # Filter by problem name
 
 # Script directory (public repo root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +38,8 @@ Options:
                           algorithmic: uses Docker
     --solutions-dir DIR   Path to solutions directory (default: ./<track>/solutions)
     --results-dir DIR     Path to save results (default: ./results/<track>/batch)
+    --model MODEL         Filter solutions by model name (e.g., gpt4, claude)
+    --problem PROBLEM     Filter solutions by problem name (e.g., flash_attn)
     -j N                  Parallelism: clusters for research, workers for algorithmic (default: 10)
     --force               Force re-evaluation of all pairs (ignore cache)
     --dry-run             Print commands without executing
@@ -48,14 +52,17 @@ Examples:
     # Run algorithmic track (Docker, 10 workers)
     ./scripts/run_eval_public.sh --track algorithmic
 
-    # Custom parallelism
-    ./scripts/run_eval_public.sh --track research -j 20
+    # Test a specific model across all problems
+    ./scripts/run_eval_public.sh --track research --model gpt4
+
+    # Test all models on a specific problem
+    ./scripts/run_eval_public.sh --track research --problem flash_attn
+
+    # Test a specific model on a specific problem
+    ./scripts/run_eval_public.sh --track research --model gpt4 --problem flash_attn
 
     # Custom solutions directory
     ./scripts/run_eval_public.sh --track algorithmic --solutions-dir ./my_solutions
-
-    # Custom results directory
-    ./scripts/run_eval_public.sh --track algorithmic --results-dir ./my_results
 EOF
     exit 1
 }
@@ -73,6 +80,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --results-dir)
             RESULTS_DIR="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        --problem)
+            PROBLEM="$2"
             shift 2
             ;;
         -j)
@@ -208,6 +223,14 @@ if $FORCE; then
     CMD="$CMD --no-resume"
 fi
 
+if [[ -n "$MODEL" ]]; then
+    CMD="$CMD --model $MODEL"
+fi
+
+if [[ -n "$PROBLEM" ]]; then
+    CMD="$CMD --problem $PROBLEM"
+fi
+
 echo ""
 echo "=========================================="
 echo "Public Repo Evaluation (Local)"
@@ -216,6 +239,12 @@ echo "Track:              $TRACK"
 echo "Solutions dir:      $SOLUTIONS_DIR"
 echo "Problems dir:       $PROBLEMS_DIR"
 echo "Results dir:        $RESULTS_DIR"
+if [[ -n "$MODEL" ]]; then
+    echo "Model filter:       $MODEL"
+fi
+if [[ -n "$PROBLEM" ]]; then
+    echo "Problem filter:     $PROBLEM"
+fi
 echo "Parallelism:        $PARALLELISM"
 if $SKYPILOT; then
     echo "Execution:          SkyPilot (GPU)"

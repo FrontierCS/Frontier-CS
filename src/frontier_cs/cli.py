@@ -270,6 +270,18 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
         help="Problems directory (default: auto-detect from code location)",
     )
 
+    batch_filter = batch_parser.add_argument_group("Filter Options")
+    batch_filter.add_argument(
+        "--model",
+        type=str,
+        help="Filter solutions by model name (e.g., gpt4, claude)",
+    )
+    batch_filter.add_argument(
+        "--problem",
+        type=str,
+        help="Filter solutions by problem name (e.g., flash_attn)",
+    )
+
     batch_output = batch_parser.add_argument_group("Output Options")
     batch_output.add_argument(
         "--results-dir",
@@ -509,11 +521,13 @@ def run_batch(args: argparse.Namespace) -> int:
     clusters = args.clusters  # None means same as workers
 
     # Create batch evaluator
+    solutions_dir = getattr(args, "solutions_dir", None)
     problems_dir = getattr(args, "problems_dir", None)
     timeout = getattr(args, "timeout", 1000)
     # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)
     batch_kwargs = dict(
         results_dir=args.results_dir,
+        solutions_dir=solutions_dir,
         problems_dir=problems_dir,
         backend=backend,
         track=track,
@@ -677,6 +691,42 @@ def run_batch(args: argparse.Namespace) -> int:
         if not pairs:
             print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1
+
+        # Apply filters
+        model_filter = getattr(args, "model", None)
+        problem_filter = getattr(args, "problem", None)
+
+        if model_filter or problem_filter:
+            from .gen.solution_format import parse_solution_filename
+
+            filtered_pairs = []
+            for pair in pairs:
+                # Filter by problem
+                if problem_filter and pair.problem != problem_filter:
+                    continue
+
+                # Filter by model
+                if model_filter:
+                    filename = Path(pair.solution).name
+                    parsed = parse_solution_filename(filename)
+                    if parsed:
+                        model_name, _, _ = parsed
+                        if model_name != model_filter:
+                            continue
+                    else:
+                        continue
+
+                filtered_pairs.append(pair)
+
+            pairs = filtered_pairs
+            if not pairs:
+                filter_desc = []
+                if model_filter:
+                    filter_desc.append(f"model={model_filter}")
+                if problem_filter:
+                    filter_desc.append(f"problem={problem_filter}")
+                print(f"Error: No solutions found matching filters: {', '.join(filter_desc)}", file=sys.stderr)
+                return 1
 
         backend_info = f", backend={backend}" if backend != "docker" else ""
         print(f"\nBatch evaluation ({track}{backend_info}): {len(pairs)} solutions from {solutions_dir}")

@@ -66,6 +66,7 @@ class BatchEvaluator:
         results_dir: Path,
         *,
         base_dir: Optional[Path] = None,
+        solutions_dir: Optional[Path] = None,
         problems_dir: Optional[Path] = None,
         backend: str = "docker",
         track: str = "research",
@@ -83,6 +84,7 @@ class BatchEvaluator:
         Args:
             results_dir: Directory for results and state
             base_dir: Frontier-CS base directory (auto-detected if None)
+            solutions_dir: Solutions directory (overrides base_dir for solution lookup if set)
             problems_dir: Problems directory (overrides base_dir for problem lookup if set)
             backend: Evaluation backend ("docker" or "skypilot")
             track: Evaluation track ("research" or "algorithmic")
@@ -97,6 +99,7 @@ class BatchEvaluator:
         self.track = track
         self.results_dir = Path(results_dir)
         self.base_dir = base_dir or self._find_base_dir()
+        self.solutions_dir = Path(solutions_dir) if solutions_dir else None
         self.problems_dir = Path(problems_dir) if problems_dir else None
         self.backend = backend
         self.clusters = clusters if clusters is not None else workers  # Default: same as workers
@@ -185,7 +188,10 @@ class BatchEvaluator:
         problem_hash_cache: Dict[str, Optional[str]] = {}
 
         for pair in pairs:
-            if self.track == "algorithmic":
+            # Use explicit solutions_dir if set, otherwise use base_dir
+            if self.solutions_dir:
+                solutions_dir = self.solutions_dir
+            elif self.track == "algorithmic":
                 solutions_dir = self.base_dir / "algorithmic" / "solutions"
             else:
                 solutions_dir = self.base_dir / "research" / "solutions"
