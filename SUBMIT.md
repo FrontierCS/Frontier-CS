@@ -140,10 +140,10 @@ Before submitting, you can verify your solutions locally:
 frontier-eval flash_attn solution.py
 
 # Batch evaluation with progress tracking
-frontier-eval batch --pairs-file pairs.txt --results-dir results/
+frontier-eval batch --track research --pairs-file pairs.txt --results-dir results/
 
 # Batch evaluation with SkyPilot (cloud)
-frontier-eval batch --pairs-file pairs.txt --skypilot --max-concurrent 4
+frontier-eval batch --track research --pairs-file pairs.txt --backend skypilot --workers 4
 ```
 
 ## How to Submit
