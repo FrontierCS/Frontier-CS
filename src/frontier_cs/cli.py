@@ -227,22 +227,26 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Evaluate all solutions (scans solutions/ directory)
-  frontier batch
+  # Evaluate all research solutions
+  frontier batch --track research
 
-  # Evaluate from specific solutions directory
-  frontier batch --solutions-dir path/to/solutions
+  # Evaluate all algorithmic solutions
+  frontier batch --track algorithmic
+
+  # Filter by model or problem
+  frontier batch --track research --model gpt5.1
+  frontier batch --track research --problem flash_attn
 
   # Evaluate specific pairs
-  frontier batch --pairs "flash_attn.gpt5.py:flash_attn"
+  frontier batch --track research --pairs "flash_attn/gpt5.py:flash_attn"
 
   # Resume interrupted evaluation
-  frontier batch --resume --results-dir results/batch1
+  frontier batch --track research --resume
 
   # Check evaluation status
-  frontier batch --status --results-dir results/batch1
+  frontier batch --track research --status
 
-Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
+Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
         """,
     )
 
@@ -292,9 +296,11 @@ Solution files use format: {problem}.{model}.py (e.g., flash_attn.gpt5.py)
 
     batch_track = batch_parser.add_argument_group("Track Selection")
     batch_track.add_argument(
-        "--algorithmic",
-        action="store_true",
-        help="Evaluate algorithmic track (C++ solutions)",
+        "--track",
+        type=str,
+        required=True,
+        choices=["research", "algorithmic"],
+        help="Track to evaluate: research (Python, SkyPilot) or algorithmic (C++, Docker)",
     )
     batch_track.add_argument(
         "--judge-url",
@@ -510,7 +516,7 @@ def run_batch(args: argparse.Namespace) -> int:
     # Determine backend
     backend = "skypilot" if args.skypilot else "docker"
 
-    track = "algorithmic" if getattr(args, "algorithmic", False) else "research"
+    track = args.track
     bucket_url = getattr(args, "bucket_url", None)
     keep_cluster = getattr(args, "keep_cluster", False)
     idle_timeout = None if keep_cluster else getattr(args, "idle_timeout", 10)
@@ -520,13 +526,21 @@ def run_batch(args: argparse.Namespace) -> int:
     workers = args.workers
     clusters = args.clusters  # None means same as workers
 
-    # Create batch evaluator
+    # Set default paths based on track
+    base_dir = Path(__file__).parents[2]  # src/frontier_cs/cli.py -> repo root
     solutions_dir = getattr(args, "solutions_dir", None)
+    if solutions_dir is None:
+        solutions_dir = base_dir / track / "solutions"
     problems_dir = getattr(args, "problems_dir", None)
+    if problems_dir is None:
+        problems_dir = base_dir / track / "problems"
+
+    # Results dir: always create track subdir
+    results_dir = args.results_dir / track
     timeout = getattr(args, "timeout", 1000)
     # Build kwargs, only include timeout if explicitly set (otherwise use BatchEvaluator default)
     batch_kwargs = dict(
-        results_dir=args.results_dir,
+        results_dir=results_dir,
         solutions_dir=solutions_dir,
         problems_dir=problems_dir,
         backend=backend,
@@ -569,7 +583,7 @@ def run_batch(args: argparse.Namespace) -> int:
         batch._export_all_results()
         status = batch.get_status()
         print(f"\nStatus: {status['completed']}/{status['total_pairs']} completed")
-        print(f"Results exported to {args.results_dir}")
+        print(f"Results exported to {results_dir}")
         return 0
 
     # Handle report command
@@ -599,7 +613,6 @@ def run_batch(args: argparse.Namespace) -> int:
             print(f"  {problem}: {stats['successful']}/{stats['total']} successful, avg={avg}")
 
         # Also export CSV files
-        results_dir = Path(args.results_dir)
         batch.state.export_aggregated_csv(
             results_dir / "by_model.csv", by="model",
             valid_problems=valid_problems if valid_problems else None
@@ -620,7 +633,7 @@ def run_batch(args: argparse.Namespace) -> int:
     # Handle retry-failed command
     # Retries both error/timeout AND score=0 pairs (can't distinguish real 0 from failure)
     if args.retry_failed:
-        print(f"\nRetrying failed pairs from {args.results_dir}")
+        print(f"\nRetrying failed pairs from {results_dir}")
         state = batch.retry_failed()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
         # Return 0 even if some evaluations failed - individual errors are expected
@@ -628,7 +641,7 @@ def run_batch(args: argparse.Namespace) -> int:
 
     # Handle resume command
     if args.resume:
-        print(f"\nResuming batch evaluation from {args.results_dir}")
+        print(f"\nResuming batch evaluation from {results_dir}")
         state = batch.resume()
         print(f"\nComplete: {state.success_count}/{state.total_pairs} successful")
         # Return 0 even if some evaluations failed - individual errors are expected
@@ -667,27 +680,12 @@ def run_batch(args: argparse.Namespace) -> int:
         # Mode: scan solutions directory (default)
         from .batch import scan_solutions_dir
 
-        solutions_dir = args.solutions_dir
-        if solutions_dir is None:
-            # Use base_dir from batch evaluator
-            base_dir = Path(__file__).parents[2]  # src/frontier_cs/cli.py -> repo root
-            track_dir = "algorithmic" if track == "algorithmic" else "research"
-            solutions_dir = base_dir / track_dir / "solutions"
-
         if not solutions_dir.is_dir():
-            track_dir = "algorithmic" if track == "algorithmic" else "research"
-            print(f"Error: No solutions directory found. Expected {track_dir}/solutions/", file=sys.stderr)
-            print("Use --solutions-dir or --pairs-file to specify", file=sys.stderr)
+            print(f"Error: No solutions directory found: {solutions_dir}", file=sys.stderr)
+            print("Use --solutions-dir to specify", file=sys.stderr)
             return 1
 
-        # Determine problems_dir for validation
-        probs_dir = problems_dir
-        if probs_dir is None:
-            base_dir = Path(__file__).parents[2]
-            track_dir = "algorithmic" if track == "algorithmic" else "research"
-            probs_dir = base_dir / track_dir / "problems"
-
-        pairs = scan_solutions_dir(solutions_dir, problems_dir=probs_dir)
+        pairs = scan_solutions_dir(solutions_dir, problems_dir=problems_dir)
         if not pairs:
             print(f"Error: No solution files found in {solutions_dir}", file=sys.stderr)
             return 1
@@ -739,7 +737,7 @@ def run_batch(args: argparse.Namespace) -> int:
     print(f"Total: {state.total_pairs}")
     print(f"Successful: {state.success_count}")
     print(f"Errors: {state.error_count}")
-    print(f"Results saved to: {args.results_dir}")
+    print(f"Results saved to: {results_dir}")
     print(f"\nOutput files:")
     print(f"  - results.csv: All results")
     print(f"  - by_model.csv: Aggregated by model")

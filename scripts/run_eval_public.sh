@@ -162,56 +162,21 @@ if [[ "$TRACK" != "research" ]] && [[ "$TRACK" != "algorithmic" ]]; then
     exit 1
 fi
 
-# Research track always uses SkyPilot
+# Research track uses SkyPilot by default
 if [[ "$TRACK" == "research" ]]; then
     SKYPILOT=true
 fi
 
-# Set paths based on track
-# Solutions and problems from public repo only
-if [[ "$TRACK" == "algorithmic" ]]; then
-    # Default solutions directory if not specified
-    if [[ -z "$SOLUTIONS_DIR" ]]; then
-        SOLUTIONS_DIR="$PUBLIC_DIR/algorithmic/solutions"
-    fi
-    PROBLEMS_DIR="$PUBLIC_DIR/algorithmic/problems"
-    EXTRA_ARGS="--algorithmic"
-    # Default results directory
-    if [[ -z "$RESULTS_DIR" ]]; then
-        RESULTS_DIR="$PUBLIC_DIR/results/algorithmic/batch"
-    fi
-else
-    # Default solutions directory if not specified
-    if [[ -z "$SOLUTIONS_DIR" ]]; then
-        SOLUTIONS_DIR="$PUBLIC_DIR/research/solutions"
-    fi
-    PROBLEMS_DIR="$PUBLIC_DIR/research/problems"
-    EXTRA_ARGS=""
-    # Default results directory
-    if [[ -z "$RESULTS_DIR" ]]; then
-        RESULTS_DIR="$PUBLIC_DIR/results/research/batch"
-    fi
+# Build command - CLI now handles default paths based on track
+CMD="uv run frontier-eval batch --track $TRACK"
+
+if [[ -n "$SOLUTIONS_DIR" ]]; then
+    CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
 fi
 
-if [[ ! -d "$SOLUTIONS_DIR" ]]; then
-    echo "ERROR: Solutions directory not found: $SOLUTIONS_DIR"
-    exit 1
+if [[ -n "$RESULTS_DIR" ]]; then
+    CMD="$CMD --results-dir $RESULTS_DIR"
 fi
-
-if [[ ! -d "$PROBLEMS_DIR" ]]; then
-    echo "ERROR: Problems directory not found: $PROBLEMS_DIR"
-    exit 1
-fi
-
-# Ensure results directory exists
-mkdir -p "$RESULTS_DIR"
-
-# Build command
-CMD="uv run frontier-eval batch"
-CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
-CMD="$CMD --problems-dir $PROBLEMS_DIR"
-CMD="$CMD --results-dir $RESULTS_DIR"
-CMD="$CMD $EXTRA_ARGS"
 
 if $SKYPILOT; then
     CMD="$CMD --skypilot --workers $PARALLELISM --clusters $PARALLELISM"
@@ -233,12 +198,19 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Public Repo Evaluation (Local)"
+echo "Public Repo Evaluation"
 echo "=========================================="
 echo "Track:              $TRACK"
-echo "Solutions dir:      $SOLUTIONS_DIR"
-echo "Problems dir:       $PROBLEMS_DIR"
-echo "Results dir:        $RESULTS_DIR"
+if [[ -n "$SOLUTIONS_DIR" ]]; then
+    echo "Solutions dir:      $SOLUTIONS_DIR"
+else
+    echo "Solutions dir:      (default: ./$TRACK/solutions)"
+fi
+if [[ -n "$RESULTS_DIR" ]]; then
+    echo "Results dir:        $RESULTS_DIR"
+else
+    echo "Results dir:        (default: ./results/$TRACK)"
+fi
 if [[ -n "$MODEL" ]]; then
     echo "Model filter:       $MODEL"
 fi

@@ -192,9 +192,15 @@ For testing your solutions at scale with public test cases:
 ./scripts/run_eval_public.sh --track algorithmic --solutions-dir ./my_solutions
 ```
 
-This script evaluates solutions against public test cases only and saves results locally. See `./scripts/run_eval_public.sh --help` for all options.
+Or use the CLI directly:
 
-> **Note:** For maintainers only - `./scripts/run_eval.sh` is used for full evaluation with private test cases and results reporting. Regular users should use `run_eval_public.sh` for local testing.
+```bash
+uv run frontier-eval batch --track research --model gpt5.1
+```
+
+Results are saved to `./results/{track}/` by default. See `--help` for all options.
+
+> **Note:** The shell script provides automatic SkyPilot cluster cleanup. For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
 
 
 ## Submitting Results
