@@ -179,13 +179,17 @@ For testing your solutions at scale with public test cases:
 # Evaluate all research solutions with SkyPilot
 ./scripts/run_eval_public.sh --track research
 
-# Custom solutions and results directories
-./scripts/run_eval_public.sh --track algorithmic \
-  --solutions-dir ./my_solutions \
-  --results-dir ./my_results
+# Test a specific model across all problems
+./scripts/run_eval_public.sh --track research --model gpt5.1
 
-# Custom parallelism
-./scripts/run_eval_public.sh --track research -j 20
+# Test all models on a specific problem
+./scripts/run_eval_public.sh --track research --problem flash_attn
+
+# Test a specific model on a specific problem
+./scripts/run_eval_public.sh --track research --model gpt5.1 --problem flash_attn
+
+# Custom solutions directory
+./scripts/run_eval_public.sh --track algorithmic --solutions-dir ./my_solutions
 ```
 
 This script evaluates solutions against public test cases only and saves results locally. See `./scripts/run_eval_public.sh --help` for all options.
