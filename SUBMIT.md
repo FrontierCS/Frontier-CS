@@ -137,13 +137,13 @@ Before submitting, you can verify your solutions locally:
 
 ```bash
 # Evaluate a single solution
-frontier-eval flash_attn solution.py
+frontier-eval research flash_attn solution.py
 
 # Batch evaluation with progress tracking
-frontier-eval batch --track research --pairs-file pairs.txt --results-dir results/
+frontier-eval batch research --pairs-file pairs.txt --results-dir results/
 
 # Batch evaluation with SkyPilot (cloud)
-frontier-eval batch --track research --pairs-file pairs.txt --backend skypilot --workers 4
+frontier-eval batch research --pairs-file pairs.txt --backend skypilot --workers 4
 ```
 
 ## How to Submit

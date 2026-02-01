@@ -97,13 +97,13 @@ Here's [Algorithmic Problem 0](algorithmic/problems/0/statement.txt) - try to be
 
 ```bash
 # Run the example solution (Human Expert Solution)
-frontier eval --algorithmic 0 algorithmic/problems/0/examples/reference.cpp
+frontier eval algorithmic 0 algorithmic/problems/0/examples/reference.cpp
 
 # Run the example solution (GPT-5 Thinking Solution)
-frontier eval --algorithmic 0 algorithmic/problems/0/examples/gpt5.cpp
+frontier eval algorithmic 0 algorithmic/problems/0/examples/gpt5.cpp
 
 # Try your own solution!
-frontier eval --algorithmic 0 <your_solution.cpp>
+frontier eval algorithmic 0 <your_solution.cpp>
 ```
 
 <p align="center">
@@ -114,13 +114,13 @@ frontier eval --algorithmic 0 <your_solution.cpp>
 
 ```bash
 # List all problems
-frontier list
+frontier list research
 
 # Evaluate a generated solution locally for flash_attn problem (requires Docker)
-frontier eval flash_attn <your_solution.py>
+frontier eval research flash_attn <your_solution.py>
 
 # Evaluate on cloud (requires SkyPilot)
-frontier eval flash_attn <your_solution.py> --skypilot
+frontier eval research flash_attn <your_solution.py> --skypilot
 ```
 
 See [research/README.md](research/README.md) for full documentation.
@@ -129,10 +129,10 @@ See [research/README.md](research/README.md) for full documentation.
 
 ```bash
 # Evaluate a solution locally (requires Docker)
-frontier eval --algorithmic 1 <your_solution.cpp>
+frontier eval algorithmic 1 <your_solution.cpp>
 
 # Evaluate on cloud (requires SkyPilot)
-frontier eval --algorithmic 1 <your_solution.cpp> --skypilot
+frontier eval algorithmic 1 <your_solution.cpp> --skypilot
 ```
 
 See [algorithmic/README.md](algorithmic/README.md) for full documentation.
@@ -143,8 +143,8 @@ Frontier-CS supports unbounded scoring, enabling open-ended evaluation compatibl
 
 ```bash
 # Get unbounded score (without clipping to 100)
-frontier eval --unbounded flash_attn <your_solution.py>
-frontier eval --algorithmic --unbounded 1 <your_solution.cpp>
+frontier eval research flash_attn <your_solution.py> --unbounded
+frontier eval algorithmic 1 <your_solution.cpp> --unbounded
 ```
 
 ### Python API
@@ -195,19 +195,19 @@ research/solutions/
 
 ```bash
 # Evaluate all research solutions (uses SkyPilot by default)
-uv run frontier-eval batch --track research
+uv run frontier-eval batch research
 
 # Evaluate all algorithmic solutions (uses Docker by default)
-uv run frontier-eval batch --track algorithmic
+uv run frontier-eval batch algorithmic
 
 # Filter by model or problem
-uv run frontier-eval batch --track research --model gpt5.1
-uv run frontier-eval batch --track research --problem flash_attn
-uv run frontier-eval batch --track research --model gpt5.1 --problem flash_attn
+uv run frontier-eval batch research --model gpt5.1
+uv run frontier-eval batch research --problem flash_attn
+uv run frontier-eval batch research --model gpt5.1 --problem flash_attn
 
 # Override default backend
-uv run frontier-eval batch --track research --backend docker
-uv run frontier-eval batch --track algorithmic --backend skypilot
+uv run frontier-eval batch research --backend docker
+uv run frontier-eval batch algorithmic --backend skypilot
 ```
 
 **Custom solutions directory:** You can test solutions from a custom directory with the same structure:
@@ -216,7 +216,7 @@ uv run frontier-eval batch --track algorithmic --backend skypilot
 # Your custom directory should have the same structure:
 # my_solutions/{problem}/{model}.py
 
-uv run frontier-eval batch --track research --solutions-dir ./my_solutions
+uv run frontier-eval batch research --solutions-dir ./my_solutions
 ```
 
 Results are saved to `./results/batch/{track}/` by default. The state file tracks which (solution, problem) pairs have been evaluated, so you can:

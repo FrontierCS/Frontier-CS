@@ -59,23 +59,23 @@ print(f"Score (unbounded): {result.score_unbounded}")
 
 ```bash
 # Evaluate a solution
-frontier-eval --algorithmic 1 solution.cpp
+frontier-eval algorithmic 1 solution.cpp
 
 # Get unbounded score
-frontier-eval --algorithmic 1 solution.cpp --unbounded
+frontier-eval algorithmic 1 solution.cpp --unbounded
 ```
 
 ### Batch Evaluation
 
 ```bash
 # Evaluate all solutions in algorithmic/solutions/
-frontier-eval batch --track algorithmic
+frontier-eval batch algorithmic
 
 # With SkyPilot (cloud go-judge)
-frontier-eval batch --track algorithmic --backend skypilot
+frontier-eval batch algorithmic --backend skypilot
 
 # Check status
-frontier-eval batch --track algorithmic --status
+frontier-eval batch algorithmic --status
 ```
 
 **Note:** For algorithmic track, `--clusters` is not used. All workers share a single go-judge server (local Docker or SkyPilot).
@@ -86,11 +86,11 @@ For environments where Docker privileged mode is unavailable (e.g., gVisor, Clou
 
 ```bash
 # Auto-launch cloud judge
-frontier eval --algorithmic --skypilot 1 solution.cpp
+frontier eval algorithmic 1 solution.cpp --skypilot
 
 # Or manually launch
 sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 10
-frontier eval --algorithmic --judge-url http://$(sky status --ip algo-judge):8081 1 solution.cpp
+frontier eval algorithmic 1 solution.cpp --judge-url http://$(sky status --ip algo-judge):8081
 ```
 
 ### Customized Problems
@@ -118,7 +118,7 @@ checker: chk.cc         # or interactor: interactor.cc
 
 #### docker-compose.yml
 
-The judge server will be auto-started when running `frontier-eval --algorithmic`.
+The judge server will be auto-started when running `frontier-eval algorithmic`.
 
 ```yaml
 environment:
