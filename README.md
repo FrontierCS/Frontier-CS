@@ -195,19 +195,19 @@ research/solutions/
 
 ```bash
 # Evaluate all research solutions (uses SkyPilot by default)
-uv run frontier-eval batch research
+uv run frontier batch research
 
 # Evaluate all algorithmic solutions (uses Docker by default)
-uv run frontier-eval batch algorithmic
+uv run frontier batch algorithmic
 
 # Filter by model or problem
-uv run frontier-eval batch research --model gpt5.1
-uv run frontier-eval batch research --problem flash_attn
-uv run frontier-eval batch research --model gpt5.1 --problem flash_attn
+uv run frontier batch research --model gpt5.1
+uv run frontier batch research --problem flash_attn
+uv run frontier batch research --model gpt5.1 --problem flash_attn
 
 # Override default backend
-uv run frontier-eval batch research --backend docker
-uv run frontier-eval batch algorithmic --backend skypilot
+uv run frontier batch research --backend docker
+uv run frontier batch algorithmic --backend skypilot
 ```
 
 **Custom solutions directory:** You can test solutions from a custom directory with the same structure:
@@ -216,7 +216,7 @@ uv run frontier-eval batch algorithmic --backend skypilot
 # Your custom directory should have the same structure:
 # my_solutions/{problem}/{model}.py
 
-uv run frontier-eval batch research --solutions-dir ./my_solutions
+uv run frontier batch research --solutions-dir ./my_solutions
 ```
 
 Results are saved to `./results/batch/{track}/` by default. The state file tracks which (solution, problem) pairs have been evaluated, so you can:

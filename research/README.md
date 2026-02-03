@@ -32,30 +32,13 @@ frontier eval research --problems flash_attn,cross_entropy <your_solution.py>
 
 ## Batch Evaluation
 
-Batch evaluation automatically scans `solutions/` and parses problem IDs from filenames:
+For batch evaluation of multiple solutions, see [SUBMIT.md](../SUBMIT.md#step-2-run-evaluation).
 
 ```bash
-# Evaluate all solutions (uses SkyPilot by default, auto-skips completed)
-frontier-eval batch research
-
-# With custom parallelism
-frontier-eval batch research --workers 20 --clusters 4
-
-# Check status
-frontier-eval batch research --status
-
-# Force re-evaluate all
-frontier-eval batch research --no-resume
-
-# Retry failed evaluations
-frontier-eval batch research --retry-failed
+frontier batch research                    # Evaluate all in solutions/
+frontier batch research --model my_model   # Filter by model
+frontier batch research --status           # Check progress
 ```
-
-**Parameters:**
-- `--workers`: Number of parallel workers (default: 10)
-- `--clusters`: Number of SkyPilot clusters for load-balancing (default: same as workers, research + skypilot only)
-
-With `--workers 20 --clusters 4`, 20 workers share 4 clusters via load-balancing.
 
 ## Python API
 
@@ -64,13 +47,13 @@ from frontier_cs import FrontierCSEvaluator
 
 evaluator = FrontierCSEvaluator()
 
-# Single problem
+# Single problem (uses SkyPilot by default for research)
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code)
 print(f"Score: {result.score}")
 
-# With SkyPilot
+# Use Docker instead
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code,
-                           backend="skypilot")
+                           backend="docker")
 ```
 
 ## Problem Structure
