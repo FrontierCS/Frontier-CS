@@ -23,15 +23,15 @@ class FrontierCSEvaluator:
     Example usage:
         evaluator = FrontierCSEvaluator()
 
-        # Algorithmic problem
+        # Algorithmic problem (uses Docker by default)
         result = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)
 
-        # Research problem (local Docker)
+        # Research problem (uses SkyPilot by default)
         result = evaluator.evaluate("research", problem_id="flash_attn", code=py_code)
 
-        # Research problem (SkyPilot)
+        # Override backend
         result = evaluator.evaluate("research", problem_id="flash_attn", code=py_code,
-                                   backend="skypilot")
+                                   backend="docker")
     """
 
     def __init__(

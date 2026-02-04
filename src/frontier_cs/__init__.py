@@ -6,15 +6,15 @@ Usage:
 
     evaluator = FrontierCSEvaluator()
 
-    # Algorithmic problems
+    # Algorithmic problems (uses Docker by default)
     score = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)
 
-    # Research problems (local Docker)
+    # Research problems (uses SkyPilot by default)
     score = evaluator.evaluate("research", problem_id="flash_attn", code=py_code)
 
-    # Research problems (SkyPilot cloud)
+    # Override backend
     score = evaluator.evaluate("research", problem_id="flash_attn", code=py_code,
-                               backend="skypilot")
+                               backend="docker")
 
     # Batch evaluation with incremental progress
     from frontier_cs.batch import BatchEvaluator
