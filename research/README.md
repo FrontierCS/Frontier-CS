@@ -6,7 +6,7 @@ Real-world systems challenges requiring domain expertise in GPU computing, distr
 
 ## Basic Usage
 
-Research track defaults to SkyPilot (cloud). Run `sky check` to verify cloud credentials are configured. See [SkyPilot docs](https://skypilot.readthedocs.io/en/latest/getting-started/installation.html) for setup.
+Research track defaults to SkyPilot (cloud) because problems have specific resource requirements (GPUs, memory, etc.) that can affect evaluation results. Run `sky check` to verify cloud credentials. See [SkyPilot docs](https://skypilot.readthedocs.io/en/latest/getting-started/installation.html) for setup.
 
 ```bash
 # List all problems
