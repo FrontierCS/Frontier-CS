@@ -48,9 +48,9 @@ class KeyInfo:
 
 
 class APIKeyPool:
-    """Thread-safe pool of API keys with weighted load balancing."""
+    """Thread-safe pool of API keys with weighted load balancing and concurrency control."""
 
-    def __init__(self, keys: List[KeyInfo], *, name: str):
+    def __init__(self, keys: List[KeyInfo], *, name: str, max_concurrent: Optional[int] = None):
         self.name = name
         self._states = [
             {
@@ -66,6 +66,9 @@ class APIKeyPool:
         ]
         self._lock = threading.Lock()
         self._total_weight = sum(s["weight"] for s in self._states)
+        # Concurrency control: limit concurrent requests to this provider
+        self.max_concurrent = max_concurrent
+        self._semaphore = threading.Semaphore(max_concurrent) if max_concurrent else None
 
     def acquire(self) -> Tuple[Optional[str], Optional[int]]:
         """Acquire an API key using weighted selection."""
@@ -137,6 +140,17 @@ class APIKeyPool:
         with self._lock:
             return len(self._states)
 
+    def acquire_slot(self, timeout: Optional[float] = None) -> bool:
+        """Acquire a concurrency slot. Returns True if acquired, False if timed out."""
+        if self._semaphore is None:
+            return True
+        return self._semaphore.acquire(timeout=timeout)
+
+    def release_slot(self) -> None:
+        """Release a concurrency slot."""
+        if self._semaphore is not None:
+            self._semaphore.release()
+
 
 def _matches_env_base(key_name: str, base: str) -> bool:
     """Check if an environment variable name matches a base name pattern."""
@@ -167,6 +181,30 @@ def _collect_provider_keys(provider: str, base_names: List[str]) -> List[str]:
                     seen.add(key_value)
                     keys.append(key_value)
     return keys
+
+
+def _compute_max_concurrent(provider_results: List[KeyCheckResult]) -> Optional[int]:
+    """Compute max concurrent requests for a provider based on RPM limits.
+
+    Logic: sum RPM across unique orgs (same org shares limit), then divide by 10
+    (conservative estimate since LLM calls take time).
+    """
+    if not provider_results:
+        return None
+
+    # Group by org_id, take max RPM per org
+    org_rpms: Dict[str, int] = {}
+    for r in provider_results:
+        if r.valid and r.rpm_limit and r.org_id:
+            org_rpms[r.org_id] = max(org_rpms.get(r.org_id, 0), r.rpm_limit)
+
+    if not org_rpms:
+        return None
+
+    total_rpm = sum(org_rpms.values())
+    n_orgs = len(org_rpms)
+    # RPM/10, capped at 20 per org (LLM generation takes time)
+    return min(n_orgs * 20, max(1, total_rpm // 10))
 
 
 def build_key_pools(
@@ -201,9 +239,11 @@ def build_key_pools(
                 else:
                     key_infos.append(KeyInfo(key, 100, None))
 
-            pools[provider] = APIKeyPool(key_infos, name=provider)
+            # Compute max concurrent based on RPM
+            max_concurrent = _compute_max_concurrent(provider_results)
+            pools[provider] = APIKeyPool(key_infos, name=provider, max_concurrent=max_concurrent)
     else:
-        # Collect from environment (legacy behavior, equal weights)
+        # Collect from environment (legacy behavior, equal weights, no concurrency limit)
         for provider, bases in PROVIDER_ENV_KEY_MAP.items():
             keys = _collect_provider_keys(provider, bases)
             if keys:
@@ -493,11 +533,11 @@ def precheck_required_providers(
         else:
             parts.append(f"{n_orgs} orgs")
         if total_rpm:
-            # Suggest concurrent: RPM/10, capped at 20 per org
+            # Max concurrent: RPM/10, capped at 20 per org
             # (LLM generation takes minutes, so conservative estimate)
-            suggested_concurrent = min(n_orgs * 20, max(1, total_rpm // 10))
+            max_concurrent = min(n_orgs * 20, max(1, total_rpm // 10))
             parts.append(f"~{total_rpm} RPM")
-            parts.append(f"suggest ~{suggested_concurrent} concurrent")
+            parts.append(f"max {max_concurrent} concurrent")
         print(f"  {provider}: {', '.join(parts)}")
 
     print(f"\nAPI key validation complete. {valid_count} valid key(s).\n")

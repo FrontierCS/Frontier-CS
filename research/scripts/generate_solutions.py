@@ -833,61 +833,71 @@ Examples:
     failed: List[str] = []
 
     def execute_task(task: GenerationTask) -> Tuple[str, str, Optional[str], str, Optional[int]]:
-        variant_label = f"{task.variant_position + 1}/{task.total_variants}"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
-              f"({dim('model:')} {model_name(task.model)}, {dim('variant')} {variant_label})...")
-        print(f"  {dim('Log:')} {dim(str(log_file))}")
-
         pool = provider_key_pools.get(task.provider)
-        api_key_for_task: Optional[str] = None
-        pool_token: Optional[int] = None
 
+        # Acquire concurrency slot for this provider (blocks if at limit)
         if pool:
-            api_key_for_task, pool_token = pool.acquire()
-            if api_key_for_task is None:
-                message = f"No available API key for provider {task.provider}; skipping."
-                print(f"  {red('✗')} {red('ERROR:')} {message}")
-                return ("failed", task.solution_name, message, task.provider, None)
-        else:
-            api_key_for_task = get_fallback_api_key(task.provider)
-
-        solutions_dir = research_dir / "solutions"
-        sol_file = solutions_dir / task.solution_name
-        failed_path = get_failed_path(sol_file)
+            pool.acquire_slot()
 
         try:
-            code = generate_code(
-                task.readme,
-                model=task.model,
-                api_key=api_key_for_task,
-                log_file=log_file,
-                is_reasoning_model=task.reasoning_model,
-                timeout=args.timeout,
-                problem_name=task.problem_name,
-                problem_path=task.problem_path,
-                docker_config=docker_config,
-            )
-            # Write solution to nested directory
-            sol_file.parent.mkdir(parents=True, exist_ok=True)
-            sol_file.write_text(code, encoding="utf-8")
-            print(f"  {green('✓')} Created: {green(str(sol_file))}")
-            print(f"  {dim('Log saved:')} {dim(str(log_file))}")
+            variant_label = f"{task.variant_position + 1}/{task.total_variants}"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            log_file = logs_dir / f"{task.solution_name}_{timestamp}.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            print(f"{cyan('▶')} Generating {format_solution_name(task.solution_name)} "
+                  f"({dim('model:')} {model_name(task.model)}, {dim('variant')} {variant_label})...")
+            print(f"  {dim('Log:')} {dim(str(log_file))}")
 
-            # Delete .FAILED file if it exists (successful retry)
-            if failed_path.exists():
-                failed_path.unlink()
+            api_key_for_task: Optional[str] = None
+            pool_token: Optional[int] = None
 
-            return ("generated", task.solution_name, None, task.provider, pool_token)
-        except Exception as exc:
-            message = f"{exc} (log: {log_file})"
-            print(f"  {red('✗')} {red('ERROR:')} {exc}")
-            # Write .FAILED marker file
-            write_failed_marker(sol_file, str(exc), task.model)
-            print(f"  {yellow('!')} Created: {yellow(str(failed_path))}")
-            return ("failed", task.solution_name, message, task.provider, pool_token)
+            if pool:
+                api_key_for_task, pool_token = pool.acquire()
+                if api_key_for_task is None:
+                    message = f"No available API key for provider {task.provider}; skipping."
+                    print(f"  {red('✗')} {red('ERROR:')} {message}")
+                    return ("failed", task.solution_name, message, task.provider, None)
+            else:
+                api_key_for_task = get_fallback_api_key(task.provider)
+
+            solutions_dir = research_dir / "solutions"
+            sol_file = solutions_dir / task.solution_name
+            failed_path = get_failed_path(sol_file)
+
+            try:
+                code = generate_code(
+                    task.readme,
+                    model=task.model,
+                    api_key=api_key_for_task,
+                    log_file=log_file,
+                    is_reasoning_model=task.reasoning_model,
+                    timeout=args.timeout,
+                    problem_name=task.problem_name,
+                    problem_path=task.problem_path,
+                    docker_config=docker_config,
+                )
+                # Write solution to nested directory
+                sol_file.parent.mkdir(parents=True, exist_ok=True)
+                sol_file.write_text(code, encoding="utf-8")
+                print(f"  {green('✓')} Created: {green(str(sol_file))}")
+                print(f"  {dim('Log saved:')} {dim(str(log_file))}")
+
+                # Delete .FAILED file if it exists (successful retry)
+                if failed_path.exists():
+                    failed_path.unlink()
+
+                return ("generated", task.solution_name, None, task.provider, pool_token)
+            except Exception as exc:
+                message = f"{exc} (log: {log_file})"
+                print(f"  {red('✗')} {red('ERROR:')} {exc}")
+                # Write .FAILED marker file
+                write_failed_marker(sol_file, str(exc), task.model)
+                print(f"  {yellow('!')} Created: {yellow(str(failed_path))}")
+                return ("failed", task.solution_name, message, task.provider, pool_token)
+        finally:
+            # Release concurrency slot
+            if pool:
+                pool.release_slot()
 
     if total_tasks:
         max_workers = min(args.concurrency, total_tasks)
