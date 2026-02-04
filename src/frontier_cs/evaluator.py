@@ -36,7 +36,7 @@ class FrontierCSEvaluator:
 
     def __init__(
         self,
-        backend: BackendType = "docker",
+        backend: Optional[BackendType] = None,
         base_dir: Optional[Path] = None,
         judge_url: str = "http://localhost:8081",
         cloud: str = "gcp",
@@ -49,7 +49,8 @@ class FrontierCSEvaluator:
         Initialize FrontierCSEvaluator.
 
         Args:
-            backend: Default backend for research problems ("docker" or "skypilot")
+            backend: Override default backend ("docker" or "skypilot").
+                     If None, auto-detects: research -> skypilot, algorithmic -> docker
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
             judge_url: URL of the algorithmic judge server
             cloud: Cloud provider for SkyPilot ("gcp", "aws", "azure")
@@ -117,7 +118,14 @@ class FrontierCSEvaluator:
 
     def _get_runner(self, track: TrackType, backend: Optional[BackendType] = None) -> Runner:
         """Get the appropriate runner for a track and backend."""
-        effective_backend = backend or self.default_backend
+        # Priority: explicit backend > init backend > track default
+        if backend:
+            effective_backend = backend
+        elif self.default_backend:
+            effective_backend = self.default_backend
+        else:
+            # Auto-detect: research -> skypilot, algorithmic -> docker
+            effective_backend = "skypilot" if track == "research" else "docker"
 
         if track == "algorithmic":
             if effective_backend == "skypilot":
