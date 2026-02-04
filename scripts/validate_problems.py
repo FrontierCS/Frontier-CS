@@ -57,13 +57,11 @@ def run_evaluation(
         "run",
         "frontier",
         "eval",
+        track,
         problem_id,
         str(solution_path),
         "--json",
     ]
-
-    if track == "algorithmic":
-        cmd.append("--algorithmic")
 
     try:
         result = subprocess.run(
