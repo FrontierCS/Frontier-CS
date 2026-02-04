@@ -7,8 +7,8 @@ Usage:
     frontier eval research flash_attn solution.py
     frontier eval algorithmic 1 solution.cpp
 
-    # With SkyPilot
-    frontier eval research flash_attn solution.py --skypilot
+    # Override backend
+    frontier eval research flash_attn solution.py --backend docker
 
     # All problems for a solution
     frontier eval research --all-problems solution.py
@@ -74,8 +74,8 @@ Examples:
   # Evaluate an algorithmic problem
   frontier eval algorithmic 1 solution.cpp
 
-  # Evaluate with SkyPilot (cloud)
-  frontier eval research flash_attn solution.py --skypilot
+  # Override backend
+  frontier eval research flash_attn solution.py --backend docker
 
   # Evaluate multiple problems
   frontier eval research --problems flash_attn,cross_entropy solution.py

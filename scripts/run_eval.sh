@@ -127,6 +127,10 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
+        --skypilot)
+            SKYPILOT=true
+            shift
+            ;;
         -h|--help)
             usage
             ;;
