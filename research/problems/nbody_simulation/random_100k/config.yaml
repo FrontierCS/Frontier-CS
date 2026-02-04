@@ -1,5 +1,6 @@
 tag: hpc
 runtime:
+  language: cpp
   timeout_seconds: 600
   environment: "C++17 with OpenMP (GCC with libgomp1) on Ubuntu 22.04, 16 vCPUs"
   resources:

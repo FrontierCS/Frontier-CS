@@ -43,6 +43,7 @@ from frontier_cs.gen.solution_format import (
 
 # Local modules (research-specific)
 from gen_env import get_system_prompt_for_problem
+from frontier_cs.config import get_language_config, LanguageConfig
 from gen_io import (
     load_env_file,
     load_solution_targets,
@@ -226,14 +227,19 @@ def generate_code(
 
     code = content.strip()
 
-    # Try to extract code from markdown code blocks
-    code_block_pattern = r'```(?:python)?\s*\n(.*?)```'
+    # Try to extract code from markdown code blocks (language-aware)
+    lang_config = get_language_config(problem_path)
+    lang_tag = lang_config.code_block_tag
+    # Match ```{lang} or ``` (generic) code blocks
+    code_block_pattern = rf'```(?:{lang_tag})?\s*\n(.*?)```'
     matches = re.findall(code_block_pattern, code, re.DOTALL)
     if matches:
         code = max(matches, key=len).strip()
     else:
-        if code.startswith("```python"):
-            code = code[9:].strip()
+        # Fallback: strip markdown fences
+        lang_prefix = f"```{lang_tag}"
+        if code.startswith(lang_prefix):
+            code = code[len(lang_prefix):].strip()
         if code.startswith("```"):
             code = code[3:].strip()
         if code.endswith("```"):
@@ -405,6 +411,7 @@ def build_tasks(
                     relative_problem_path = Path(problem_path_real.name)
 
             problem_name = args.name or get_problem_name(relative_problem_path)
+            lang_config = get_language_config(problem_path_real)
 
             for model in models_list:
                 reasoning_model = is_reasoning_model(model)
@@ -412,9 +419,9 @@ def build_tasks(
                 provider = detect_provider(model)
 
                 for pos, variant_index in enumerate(variant_indices):
-                    # Nested format: {problem}/{model}.py or {problem}/{model}_{variant}.py
+                    # Nested format: {problem}/{model}.{ext} or {problem}/{model}_{variant}.{ext}
                     solutions_dir = repo_root / "research" / "solutions"
-                    sol_file = get_solution_path(solutions_dir, problem_name, model_prefix, "py", variant_index)
+                    sol_file = get_solution_path(solutions_dir, problem_name, model_prefix, lang_config.extension, variant_index)
                     sol_filename = str(sol_file.relative_to(solutions_dir))
                     failed_path = get_failed_path(sol_file)
 

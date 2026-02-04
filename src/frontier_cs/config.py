@@ -72,6 +72,7 @@ class RuntimeConfig:
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
     docker: DockerConfig = field(default_factory=DockerConfig)
     environment: Optional[str] = None  # For LLM prompts
+    language: Optional[str] = None  # Target language: "python", "cpp", etc.
 
 
 @dataclass
@@ -129,6 +130,8 @@ def load_problem_config(problem_path: Path) -> ProblemConfig:
         rt.requires_gpu = bool(runtime["requires_gpu"])
     if runtime.get("environment"):
         rt.environment = str(runtime["environment"])
+    if runtime.get("language"):
+        rt.language = str(runtime["language"])
 
     # Parse docker section
     docker = runtime.get("docker", {})
@@ -184,3 +187,79 @@ def get_effective_gpu_type(runtime_config: RuntimeConfig) -> Optional[str]:
         return "L4"
 
     return None
+
+
+# =============================================================================
+# Language Configuration
+# =============================================================================
+
+@dataclass
+class LanguageConfig:
+    """Configuration for a target programming language."""
+    name: str              # "python", "cpp"
+    extension: str         # "py", "cpp"
+    code_block_tag: str    # Markdown code block tag: "python", "cpp"
+
+
+# Registry of supported languages
+LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
+    "python": LanguageConfig(
+        name="python",
+        extension="py",
+        code_block_tag="python",
+    ),
+    "cpp": LanguageConfig(
+        name="cpp",
+        extension="cpp",
+        code_block_tag="cpp",
+    ),
+}
+
+DEFAULT_LANGUAGE = "python"
+
+
+def get_language_config(problem_path: Optional[Path] = None) -> LanguageConfig:
+    """
+    Get language configuration for a problem.
+
+    Reads the `language` field from config.yaml runtime section.
+    Defaults to Python if not specified.
+
+    Args:
+        problem_path: Path to the problem directory
+
+    Returns:
+        LanguageConfig for the problem's target language
+
+    Raises:
+        ValueError: If the language is not supported
+    """
+    language = DEFAULT_LANGUAGE
+
+    if problem_path and problem_path.is_dir():
+        runtime_config = load_runtime_config(problem_path)
+        if runtime_config.language:
+            language = runtime_config.language
+
+    if language not in LANGUAGE_CONFIGS:
+        raise ValueError(
+            f"Unsupported language: {language}. "
+            f"Supported: {list(LANGUAGE_CONFIGS.keys())}"
+        )
+
+    return LANGUAGE_CONFIGS[language]
+
+
+def get_problem_extension(problem_path: Optional[Path] = None) -> str:
+    """
+    Get file extension for a problem based on its language config.
+
+    Convenience function that returns just the extension string.
+
+    Args:
+        problem_path: Path to the problem directory
+
+    Returns:
+        File extension without dot (e.g., "py", "cpp")
+    """
+    return get_language_config(problem_path).extension

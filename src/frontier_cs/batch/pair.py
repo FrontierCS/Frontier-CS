@@ -15,7 +15,7 @@ Examples:
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ..models import get_model_prefix
 from ..gen.solution_format import format_solution_filename, get_solution_path
@@ -106,6 +106,7 @@ def expand_pairs(
     solutions_dir: Optional[Path] = None,
     validate_paths: bool = True,
     ext: str = "py",
+    problem_extensions: Optional[Dict[str, str]] = None,
     interleave: bool = False,
 ) -> List[Pair]:
     """
@@ -117,7 +118,8 @@ def expand_pairs(
         variants: List of variant indices (default: [0] for no suffix)
         solutions_dir: Directory containing solutions (for validation)
         validate_paths: Whether to validate solution paths exist
-        ext: File extension (default: "py", use "cpp" for algorithmic)
+        ext: Default file extension (default: "py", use "cpp" for algorithmic)
+        problem_extensions: Optional per-problem extension mapping (overrides ext)
         interleave: Interleave pairs by problem for load balancing (default: True)
 
     Returns:
@@ -129,6 +131,9 @@ def expand_pairs(
     pairs: List[Pair] = []
 
     for problem in problems:
+        # Use problem-specific extension if available, otherwise default
+        problem_ext = (problem_extensions or {}).get(problem, ext)
+
         for model in models:
             model_prefix = get_model_prefix(model)
 
@@ -138,7 +143,7 @@ def expand_pairs(
                     solutions_dir or Path("."),
                     problem,
                     model_prefix,
-                    ext,
+                    problem_ext,
                     variant_idx,
                 )
 

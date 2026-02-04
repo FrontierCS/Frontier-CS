@@ -28,7 +28,7 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -39,6 +39,7 @@ from frontier_cs.gen.solution_format import (
     format_solution_filename,
     FAILED_EXTENSION,
 )
+from frontier_cs.config import get_language_config, DEFAULT_LANGUAGE
 
 
 class Colors:
@@ -114,8 +115,12 @@ def info(text: str) -> str:
 EXCLUDE_DIRS = {"common", "resources", "__pycache__", ".venv"}
 
 
-def discover_problems(problems_dir: Path) -> List[str]:
-    """Auto-discover all problem names by finding leaf directories with readme files."""
+def discover_problems(problems_dir: Path) -> List[Tuple[str, Path]]:
+    """Auto-discover all problems by finding leaf directories with readme files.
+
+    Returns:
+        List of (problem_name, problem_path) tuples.
+    """
     result = []
 
     def is_excluded(p: Path) -> bool:
@@ -144,9 +149,9 @@ def discover_problems(problems_dir: Path) -> List[str]:
             # Convert path to problem name (slash-separated to match solutions structure)
             rel_path = p.relative_to(problems_dir)
             problem_name = str(rel_path)
-            result.append(problem_name)
+            result.append((problem_name, p))
 
-    return sorted(result)
+    return sorted(result, key=lambda x: x[0])
 
 
 def read_models_list(path: Path) -> List[str]:
@@ -194,14 +199,16 @@ def compute_expected(
     problems: List[str],
     models: List[str],
     variants: List[int],
+    problem_extensions: Dict[str, str],
 ) -> Set[str]:
-    """Compute expected solution keys in format: {problem}/{model}.py"""
+    """Compute expected solution keys in format: {problem}/{model}.{ext}"""
     expected: Set[str] = set()
     for problem in problems:
+        ext = problem_extensions.get(problem, "py")
         for model in models:
             model_prefix = get_model_prefix(model)
             for variant_idx in variants:
-                filename = format_solution_filename(model_prefix, "py", variant_idx)
+                filename = format_solution_filename(model_prefix, ext, variant_idx)
                 # Key format: {problem}/{filename}
                 expected.add(f"{problem}/{filename}")
     return expected
@@ -217,8 +224,10 @@ def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
     if not solutions_dir.is_dir():
         return solutions
 
-    # Find all solution files recursively
-    for sol_file in solutions_dir.rglob("*.py"):
+    # Find all solution files recursively (supports .py, .cpp, etc.)
+    for sol_file in solutions_dir.rglob("*"):
+        if not sol_file.is_file():
+            continue
         if sol_file.name.startswith("."):
             continue
         # Skip _deleted directory
@@ -228,6 +237,9 @@ def scan_solutions(solutions_dir: Path) -> Dict[str, Dict]:
         parsed = parse_solution_filename(sol_file.name)
         if parsed:
             model, variant, ext = parsed
+            # Skip .FAILED marker files (handled separately)
+            if ext == FAILED_EXTENSION:
+                continue
             # Problem is the relative path from solutions_dir to the parent directory
             problem = str(sol_file.parent.relative_to(solutions_dir))
 
@@ -342,10 +354,18 @@ def main():
     if args.no_color:
         Colors.disable()
 
-    # Auto-discover problems
-    problems = discover_problems(args.problems_dir)
-    if not problems:
+    # Auto-discover problems (returns list of (name, path) tuples)
+    problem_tuples = discover_problems(args.problems_dir)
+    if not problem_tuples:
         print(warning(f"No problems found in {args.problems_dir}"))
+
+    # Build problem -> extension mapping from config.yaml
+    problem_names = []
+    problem_extensions: Dict[str, str] = {}
+    for name, path in problem_tuples:
+        problem_names.append(name)
+        lang_config = get_language_config(path)
+        problem_extensions[name] = lang_config.extension
 
     # Read config files
     models = read_models_list(args.models_file) if args.models_file.exists() else []
@@ -358,22 +378,29 @@ def main():
 
     # Compute expected and actual
     expected = (
-        compute_expected(problems, models, variants) if problems and models else set()
+        compute_expected(problem_names, models, variants, problem_extensions)
+        if problem_names and models
+        else set()
     )
     actual = scan_solutions(args.solutions_dir)
     actual_set = set(actual.keys())
 
     # Failed solutions (.FAILED marker files)
     failed_solutions = scan_failed_solutions(args.solutions_dir)
-    # Convert failed keys to match expected format: {problem}/{model}.FAILED -> {problem}/{model}.py
-    failed_as_py = {
-        key.replace(f".{FAILED_EXTENSION}", ".py")
-        for key in failed_solutions.keys()
-    }
+    # Convert failed keys to match expected format using problem-specific extensions
+    failed_as_expected = set()
+    for key in failed_solutions.keys():
+        # Key format: {problem}/{model}.FAILED
+        parts = key.rsplit("/", 1)
+        if len(parts) == 2:
+            problem = parts[0]
+            ext = problem_extensions.get(problem, "py")
+            expected_key = key.replace(f".{FAILED_EXTENSION}", f".{ext}")
+            failed_as_expected.add(expected_key)
 
     # Analyze
     generated = expected & actual_set  # Expected and exists
-    missing = expected - actual_set - failed_as_py  # Expected but not generated (exclude failed)
+    missing = expected - actual_set - failed_as_expected  # Expected but not generated (exclude failed)
     extra = actual_set - expected  # Exists but not expected
 
     # Empty solutions

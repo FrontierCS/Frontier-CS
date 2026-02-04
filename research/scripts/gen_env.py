@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from frontier_cs.config import load_runtime_config, get_effective_gpu_type
+from frontier_cs.config import (
+    load_runtime_config,
+    get_effective_gpu_type,
+    get_language_config,
+    LanguageConfig,
+    DEFAULT_LANGUAGE,
+)
 
 DEFAULT_GPU_TYPE = "L4"
 
@@ -21,8 +27,9 @@ GPU_SPECS: Dict[str, Dict[str, str]] = {
     "T4": {"name": "NVIDIA T4", "vram": "16GB"},
 }
 
-# Base system prompt template - environment section will be injected
-SYSTEM_PROMPT_TEMPLATE = """You are an expert programmer. Generate Python code for the given problem.
+# Language-specific prompt templates (keyed by language name)
+PROMPT_TEMPLATES: Dict[str, str] = {
+    "python": """You are an expert programmer. Generate Python code for the given problem.
 
 {environment_section}
 REQUIREMENTS:
@@ -31,7 +38,26 @@ REQUIREMENTS:
 3. Use efficient algorithms appropriate for the evaluation environment
 4. Final class name must match the API specification exactly
 
-Output ONLY the code, starting with imports."""
+Output ONLY the code, starting with imports.""",
+
+    "cpp": """You are an expert programmer. Generate C++ code for the given problem.
+
+{environment_section}
+REQUIREMENTS:
+1. Output ONLY C++ code - no explanations, no markdown
+2. Implement ALL required classes/functions from the API section
+3. Use efficient algorithms appropriate for the evaluation environment
+4. Final class name must match the API specification exactly
+
+Output ONLY the code, starting with includes.""",
+}
+
+
+def get_prompt_template(language: str) -> str:
+    """Get the prompt template for a language."""
+    if language not in PROMPT_TEMPLATES:
+        raise ValueError(f"No prompt template for language: {language}")
+    return PROMPT_TEMPLATES[language]
 
 
 @dataclass
@@ -153,6 +179,7 @@ def get_system_prompt_for_problem(
     3. Default CPU environment
     """
     env_config = EnvConfig()
+    lang_config = get_language_config(problem_path)
 
     # Priority 1: Try to load config from config.yaml
     if problem_path and problem_path.is_dir():
@@ -175,4 +202,5 @@ def get_system_prompt_for_problem(
     else:
         environment_section = build_cpu_environment(env_config)
 
-    return SYSTEM_PROMPT_TEMPLATE.format(environment_section=environment_section)
+    prompt_template = get_prompt_template(lang_config.name)
+    return prompt_template.format(environment_section=environment_section)
