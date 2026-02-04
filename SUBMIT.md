@@ -1,6 +1,6 @@
 # Evaluating Your Model
 
-Complete workflow for benchmarking your model on Frontier-CS and submitting results to the leaderboard.
+> **For Model Providers**: Complete workflow for benchmarking your model on Frontier-CS and submitting results to the leaderboard.
 
 ## Step 1: Prepare Solutions
 

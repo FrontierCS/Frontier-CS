@@ -1,6 +1,8 @@
 # Contributing to Frontier-CS
 
-Frontier-CS is currently an **invitation-only** project for new problems. 
+> **For Problem Contributors**: Guidelines for creating and submitting new problems to Frontier-CS.
+
+Frontier-CS is currently an **invitation-only** project for new problems.
 Please create a GitHub pull request (PR) with your proposed problem following the guidelines below. After your PR is reviewed and merged, please send any hidden test data and reference solutions to the contact email provided at the end of this document.
 
 

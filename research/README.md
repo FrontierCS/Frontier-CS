@@ -1,6 +1,8 @@
 # Research Problems
 
-> For complete model evaluation workflow (prepare solutions, run batch evaluation, submit to leaderboard), see [SUBMIT.md](../SUBMIT.md).
+> **Technical Reference**: Problem structure, evaluation details, and Solution interface for research track.
+>
+> For model evaluation workflow, see [SUBMIT.md](../SUBMIT.md).
 
 Real-world systems challenges requiring domain expertise in GPU computing, distributed systems, ML pipelines, databases, and security.
 

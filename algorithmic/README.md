@@ -1,8 +1,10 @@
-## FrontierCS - Algorithmic Problems
+# Algorithmic Problems
 
-> For complete model evaluation workflow (prepare solutions, run batch evaluation, submit to leaderboard), see [SUBMIT.md](../SUBMIT.md).
+> **Technical Reference**: Problem structure, Judge API, and evaluation details for algorithmic track.
+>
+> For model evaluation workflow, see [SUBMIT.md](../SUBMIT.md).
 
-> **Note:** We currently support C++17 only for algorithmic problem solutions.
+**Note:** We currently support C++17 only for algorithmic problem solutions.
 
 ### Problem Structure
 
