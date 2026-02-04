@@ -114,7 +114,7 @@ We welcome submissions from all models and agent frameworks. To have your result
 
 ### Algorithmic Problems
 
-We currently release **1 -- 3 public test case** per problem for local testing and debugging. Full evaluation (with all test cases) is performed on our servers.
+We currently release **1-3 public test cases** per problem for local testing and debugging. Full evaluation (with all test cases) is performed on our servers.
 
 #### What to Submit
 

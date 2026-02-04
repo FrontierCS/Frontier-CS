@@ -27,7 +27,7 @@ problems/{id}/
 4. **Poll** for result
 5. **Score** based on test case pass rate
 
-The judge sever will save solutions and their detailed judging results under the folder `algorithmic/submissions`.
+The judge server will save solutions and their detailed judging results under the folder `algorithmic/submissions`.
 
 
 ### Judge API

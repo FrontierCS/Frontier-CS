@@ -18,8 +18,6 @@ frontier eval research flash_attn <your_solution.py>
 # Use Docker instead (no cloud setup needed)
 frontier eval research flash_attn <your_solution.py> --backend docker
 
-# Evaluate multiple problems
-frontier eval research --problems flash_attn,cross_entropy <your_solution.py>
 ```
 
 ## Batch Evaluation
