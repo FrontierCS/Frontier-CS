@@ -69,15 +69,12 @@ frontier eval algorithmic 1 solution.cpp --unbounded
 
 ### Batch Evaluation
 
+For batch evaluation of multiple solutions, see [SUBMIT.md](../SUBMIT.md#step-2-run-evaluation).
+
 ```bash
-# Evaluate all solutions in algorithmic/solutions/
-frontier batch algorithmic
-
-# With SkyPilot (cloud go-judge)
-frontier batch algorithmic --backend skypilot
-
-# Check status
-frontier batch algorithmic --status
+frontier batch algorithmic                    # Evaluate all in solutions/
+frontier batch algorithmic --backend skypilot # Use cloud go-judge
+frontier batch algorithmic --status           # Check progress
 ```
 
 **Note:** For algorithmic track, `--clusters` is not used. All workers share a single go-judge server (local Docker or SkyPilot).
