@@ -100,9 +100,7 @@ jobs:
             --track research \
             --internal-dir internal \
             --results-repo results-repo \
-            --workers $WORKERS \
-            --clusters $CLUSTERS \
-            --skypilot \
+            -j $CLUSTERS \
             --push
 
       - name: Run algorithmic evaluation
@@ -116,8 +114,7 @@ jobs:
             --track algorithmic \
             --internal-dir internal \
             --results-repo results-repo \
-            --workers $WORKERS \
-            --skypilot \
+            -j $WORKERS \
             --push
 
       - name: Upload results artifact
