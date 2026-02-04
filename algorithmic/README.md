@@ -4,8 +4,6 @@
 >
 > For model evaluation workflow, see [SUBMIT.md](../SUBMIT.md).
 
-**Note:** We currently support C++17 only for algorithmic problem solutions.
-
 ### Problem Structure
 
 Each problem in `problems/{id}/` contains:
@@ -60,6 +58,8 @@ print(f"Score (unbounded): {result.score_unbounded}")
 ```
 
 ### CLI
+
+Solutions must be C++17.
 
 ```bash
 # Evaluate a solution
