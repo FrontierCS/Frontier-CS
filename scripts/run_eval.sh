@@ -466,7 +466,7 @@ fi
 mkdir -p "$RESULTS_DIR"
 
 # Build command
-CMD="uv run frontier-eval batch $TRACK"
+CMD="uv run frontier batch $TRACK"
 CMD="$CMD --solutions-dir $SOLUTIONS_DIR"
 CMD="$CMD --results-dir $RESULTS_DIR"
 CMD="$CMD --problems-dir $PROBLEMS_DIR"

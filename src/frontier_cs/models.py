@@ -3,8 +3,7 @@ Model name utilities for Frontier-CS.
 
 Provides consistent model prefix conversion used across:
 - Solution generation (generate_solutions.py)
-- Solution matrix checking (frontier-eval check)
-- Batch evaluation (frontier-eval batch)
+- Batch evaluation (frontier batch)
 """
 
 import re
