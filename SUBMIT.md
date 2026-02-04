@@ -174,7 +174,7 @@ Problem (e.g., gemm_optimization, poc_generation)
 
 Each variant has a unique **Problem ID** based on its path under `research/`.
 
-The full list of all evaluatable variants is in [`research/problems.txt`](research/problems.txt) (109 variants total, aggregated into ~50 categories for reporting).
+The full list of all evaluatable variants is in [`research/scripts/problems.txt`](research/scripts/problems.txt).
 
 | Type | Example Path | Problem ID |
 |------|-------------|------------|
