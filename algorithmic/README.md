@@ -99,8 +99,6 @@ frontier eval algorithmic 1 solution.cpp --judge-url http://$(sky status --ip al
 
 > For contributing problems to Frontier-CS (detailed file formats, CI requirements), see [CONTRIBUTING.md](../CONTRIBUTING.md#algorithmic-problems).
 
-For local testing, create `problems/{id}/` with required files and restart the judge.
-
 ### Judge Server Configuration
 
 #### config.yaml
