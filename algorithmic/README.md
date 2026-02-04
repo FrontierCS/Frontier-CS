@@ -19,6 +19,11 @@ problems/{id}/
 └── chk.cc / interactor.cc   # Checker or interactor
 ```
 
+### Solution Requirements
+
+- **Language**: C++17 only
+- **Single file**: Submit one `.cpp` file per problem
+
 ### How It Works
 
 1. **Fetch problem** statement from judge API
@@ -58,8 +63,6 @@ print(f"Score (unbounded): {result.score_unbounded}")
 ```
 
 ### CLI
-
-Solutions must be C++17.
 
 ```bash
 # Evaluate a solution
