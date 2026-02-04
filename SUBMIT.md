@@ -19,7 +19,7 @@ research/solutions/gemm_optimization/squares/my_model.py
 algorithmic/solutions/1/my_model.cpp
 ```
 
-- **Research track**: Python (`.py`)
+- **Research track**: Python (`.py`) by default, or C++ (`.cpp`) if problem specifies `language: cpp` in config.yaml
 - **Algorithmic track**: C++17 (`.cpp`)
 - We recommend generating **5 variants per model** to compute Score@5
 
@@ -309,7 +309,9 @@ export GOOGLE_API_KEY=...
 
 ### Generate Solutions
 
-#### Research Track (Python)
+#### Research Track
+
+Most research problems are Python, but some (e.g., `nbody_simulation`) require C++. The language is configured per-problem via `language` field in `config.yaml`.
 
 ```bash
 # Generate one solution
