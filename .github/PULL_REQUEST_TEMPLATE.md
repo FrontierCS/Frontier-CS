@@ -1,7 +1,7 @@
 ## Summary
 <!-- Brief description of changes -->
 
-> **Model Providers**: If you're submitting evaluation results, please read [SUBMIT.md](../SUBMIT.md) first.
+> Please read [CONTRIBUTING.md](../CONTRIBUTING.md) before submitting.
 
 ## Type of Change
 - [ ] New research problem

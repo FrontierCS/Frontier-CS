@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from frontier_cs.config import get_problem_extension
+
 
 def find_reference_solution(track: str, problem_id: str) -> Optional[Path]:
     """
@@ -32,8 +34,10 @@ def find_reference_solution(track: str, problem_id: str) -> Optional[Path]:
         if ref_path.exists():
             return ref_path
     else:
-        # Research: reference.py in problem directory
-        ref_path = Path(f"research/problems/{problem_id}/reference.py")
+        # Research: extension based on config.yaml language field
+        problem_path = Path(f"research/problems/{problem_id}")
+        ext = get_problem_extension(problem_path)
+        ref_path = problem_path / f"reference.{ext}"
         if ref_path.exists():
             return ref_path
     return None
@@ -132,7 +136,9 @@ def validate_problem(
         if track == "algorithmic":
             print(f"  Expected: algorithmic/problems/{problem_id}/reference.cpp")
         else:
-            print(f"  Expected: research/problems/{problem_id}/reference.py")
+            problem_path = Path(f"research/problems/{problem_id}")
+            ext = get_problem_extension(problem_path)
+            print(f"  Expected: research/problems/{problem_id}/reference.{ext}")
         return False
 
     print(f"  Reference: {ref_path}")

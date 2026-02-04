@@ -132,11 +132,11 @@ research/{problem_name}/
 ├── evaluate.sh          # Evaluation entry point
 ├── evaluator.py         # Scoring logic
 ├── readme               # Problem description
-├── reference.py         # Reference solution (required for CI validation)
+├── reference.{py,cpp}   # Reference solution (required for CI, extension per language)
 └── resources/           # Problem-specific code/data
 ```
 
-> **Note**: The `reference.py` is required for CI validation. When you submit a PR, the CI will automatically run your reference solution and verify it achieves score > 0.
+> **Note**: A reference solution is required for CI validation. Use `reference.py` for Python problems or `reference.cpp` if `language: cpp` in config.yaml. The CI will automatically run your reference solution and verify it achieves score > 0.
 
 ### Solution Interface
 
@@ -333,7 +333,7 @@ When you submit a PR that adds or modifies problems, CI will automatically valid
 | Track | File | Location |
 |-------|------|----------|
 | Algorithmic | `reference.cpp` | `algorithmic/problems/{id}/reference.cpp` |
-| Research | `reference.py` | `research/problems/{name}/reference.py` |
+| Research | `reference.{py,cpp}` | `research/problems/{name}/reference.{ext}` (extension per `language` in config.yaml) |
 
 If the reference solution is missing or scores 0, the PR will be blocked from merging.
 
@@ -345,8 +345,8 @@ Before submitting a PR, test your reference solution locally:
 # Algorithmic
 frontier eval algorithmic {id} algorithmic/problems/{id}/reference.cpp
 
-# Research
-frontier eval research {name} research/problems/{name}/reference.py
+# Research (use .py or .cpp based on problem's language config)
+frontier eval research {name} research/problems/{name}/reference.{ext}
 ```
 
 ## Contact

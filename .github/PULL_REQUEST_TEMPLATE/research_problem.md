@@ -28,7 +28,7 @@ labels: research-problem
 - [ ] `evaluate.sh` - Evaluation entry point
 - [ ] `evaluator.py` - Scoring logic (outputs 0-100 score)
 - [ ] `resources/` - Problem-specific code/data
-- [ ] `reference.py` - Reference solution **(required for CI)**
+- [ ] `reference.{py,cpp}` - Reference solution **(required for CI, extension matches `language` in config.yaml)**
 
 ### Problem Structure
 ```
@@ -38,7 +38,7 @@ research/{problem_name}/
 ├── set_up_env.sh
 ├── evaluate.sh
 ├── evaluator.py
-├── reference.py     # Required: CI will validate this achieves score > 0
+├── reference.{py,cpp}  # Required: CI validates score > 0 (extension per language)
 └── resources/
     └── ...
 ```
@@ -46,7 +46,7 @@ research/{problem_name}/
 ### Testing
 - [ ] Verified `set_up_env.sh` runs successfully
 - [ ] Verified `evaluate.sh` runs and outputs a numeric score
-- [ ] **Reference solution (`reference.py`) achieves score > 0**
+- [ ] **Reference solution achieves score > 0**
 
 **Test Results** (if available):
 ```
