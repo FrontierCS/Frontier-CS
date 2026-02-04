@@ -6,15 +6,7 @@ Real-world systems challenges requiring domain expertise in GPU computing, distr
 
 ## Basic Usage
 
-Research track defaults to SkyPilot (cloud). Requires `sky check` first:
-
-```bash
-# Setup SkyPilot (one-time)
-pip install skypilot-nightly
-sky check
-```
-
-See [SkyPilot docs](https://skypilot.readthedocs.io/en/latest/getting-started/installation.html) for cloud credential setup.
+Research track defaults to SkyPilot (cloud). Run `sky check` to verify cloud credentials are configured. See [SkyPilot docs](https://skypilot.readthedocs.io/en/latest/getting-started/installation.html) for setup.
 
 ```bash
 # List all problems
