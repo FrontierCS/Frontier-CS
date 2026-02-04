@@ -39,11 +39,12 @@ from frontier_cs import FrontierCSEvaluator
 
 evaluator = FrontierCSEvaluator()
 
-# Single problem (uses SkyPilot by default for research)
-result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code)
+# Research problem with SkyPilot (recommended)
+result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code,
+                           backend="skypilot")
 print(f"Score: {result.score}")
 
-# Use Docker instead
+# Or use Docker (no cloud setup needed)
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code,
                            backend="docker")
 ```
