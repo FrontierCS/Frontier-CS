@@ -1,6 +1,7 @@
 ## Summary
 <!-- Brief description of changes -->
 
+> **Model Providers**: If you're submitting evaluation results, please read [SUBMIT.md](../SUBMIT.md) first.
 
 ## Type of Change
 - [ ] New research problem
@@ -21,4 +22,4 @@
 ## CI Validation (for new problems)
 > When adding new problems, CI will automatically validate that your reference solution achieves score > 0.
 > - Algorithmic problems: Include `reference.cpp` in your problem directory
-> - Research problems: Include `reference.py` in your problem directory
+> - Research problems: Include `reference.py` (or `reference.cpp` if `language: cpp` in config.yaml)
