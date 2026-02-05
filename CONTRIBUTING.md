@@ -337,7 +337,7 @@ When you submit a PR that adds or modifies problems, CI will automatically valid
 
 If the reference solution is missing or scores 0, the PR will be blocked from merging.
 
-> **Important**: The reference solution must achieve score > 0. For problems that compare against a baseline (e.g., measuring speedup), the reference solution must be **better than the baseline**, not just a copy of it. A baseline implementation that scores 0 (1x speedup = no improvement) will not pass CI validation.
+> **Important**: The reference solution must achieve score > 0. This is a design choice to ensure the evaluator is working correctly - a score > 0 proves that the evaluation pipeline can successfully compile/run the solution and produce a valid score. If the reference only scores 0, we cannot distinguish between "evaluator error" and "valid solution with no improvement". For problems that measure speedup against a baseline, the reference must be **faster than the baseline**, not just a copy of it.
 
 ### Local Testing
 
