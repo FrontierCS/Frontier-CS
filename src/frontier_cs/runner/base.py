@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..config import load_problem_config
 from ..gen.solution_format import FAILED_EXTENSION
 
 class EvaluationStatus(Enum):
@@ -165,3 +166,16 @@ class ResearchRunner(Runner):
             )
 
         return None
+
+    def _load_runtime_settings(self, problem_path: Path) -> dict:
+        problem_config = load_problem_config(problem_path)
+        runtime_config = problem_config.runtime
+        docker_config = runtime_config.docker
+        uv_project = problem_config.dependencies.get("uv_project")
+        return {
+            "problem_config": problem_config,
+            "runtime": runtime_config,
+            "docker": docker_config,
+            "uv_project": uv_project,
+            "timeout_seconds": runtime_config.timeout_seconds,
+        }

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
-from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE, get_problem_extension
+from ..config import DockerConfig, DEFAULT_DOCKER_IMAGE, get_problem_extension
 
 
 class DockerRunner(ResearchRunner):
@@ -119,17 +119,16 @@ class DockerRunner(ResearchRunner):
         """Run the actual evaluation in Docker."""
         start_time = time.time()
 
-        # Load config from problem's config.yaml
-        problem_config = load_problem_config(problem_path)
-        runtime_config = problem_config.runtime
-        docker_config = runtime_config.docker
-        uv_project = problem_config.dependencies.get("uv_project")
+        settings = self._load_runtime_settings(problem_path)
+        runtime_config = settings["runtime"]
+        docker_config = settings["docker"]
+        uv_project = settings["uv_project"]
 
         # Determine timeout: user-specified > problem config > default
         if self.timeout is not None:
             effective_timeout = self.timeout
         else:
-            effective_timeout = runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
+            effective_timeout = settings["timeout_seconds"] or self.DEFAULT_TIMEOUT
 
         # Check GPU requirements
         needs_gpu = docker_config.gpu or runtime_config.requires_gpu or runtime_config.resources.has_gpu

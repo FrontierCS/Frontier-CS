@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from .cluster_cleanup import ActiveClusterRegistry
-from ..config import load_problem_config, get_problem_extension
+from ..config import get_problem_extension
 
 
 def _sanitize_name(name: str) -> str:
@@ -148,14 +148,13 @@ class SkyPilotRunner(ResearchRunner):
 
         start_time = time.time()
 
-        # Load config from config.yaml
-        problem_config = load_problem_config(problem_path)
-        runtime_config = problem_config.runtime
-        docker_config = runtime_config.docker
+        settings = self._load_runtime_settings(problem_path)
+        runtime_config = settings["runtime"]
+        docker_config = settings["docker"]
         res = runtime_config.resources
 
         # Extract uv_project for automatic dependency installation
-        uv_project = problem_config.dependencies.get("uv_project")
+        uv_project = settings["uv_project"]
 
         # Determine resources
         accelerators = res.accelerators
@@ -165,7 +164,7 @@ class SkyPilotRunner(ResearchRunner):
             accelerators = self.DEFAULT_GPU
 
         # Determine timeout from config or default
-        effective_timeout = runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
+        effective_timeout = settings["timeout_seconds"] or self.DEFAULT_TIMEOUT
 
         # Create cluster name with date to avoid conflicts between runs
         date_str = datetime.now().strftime("%m%d%H%M")
@@ -622,14 +621,13 @@ class SkyPilotRunner(ResearchRunner):
         if error:
             return error
 
-        # Load config
-        problem_config = load_problem_config(problem_path)
-        runtime_config = problem_config.runtime
-        docker_config = runtime_config.docker
-        uv_project = problem_config.dependencies.get("uv_project")
+        settings = self._load_runtime_settings(problem_path)
+        runtime_config = settings["runtime"]
+        docker_config = settings["docker"]
+        uv_project = settings["uv_project"]
 
         # Determine timeout from config or default
-        effective_timeout = runtime_config.timeout_seconds or self.DEFAULT_TIMEOUT
+        effective_timeout = settings["timeout_seconds"] or self.DEFAULT_TIMEOUT
 
         # Create workspace with file mounts
         with tempfile.TemporaryDirectory(prefix="frontier_exec_") as workspace_dir:
