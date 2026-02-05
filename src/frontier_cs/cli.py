@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -839,18 +840,25 @@ def run_eval(args: argparse.Namespace) -> int:
 
     # Run evaluations
     results = []
-    for pid in problem_ids:
-        if not args.quiet:
-            print(f"Evaluating {pid}...", end=" ", flush=True)
+    eval_stdout = contextlib.nullcontext()
+    if args.json:
+        # Keep JSON clean: suppress human-readable prints and route runner stdout to stderr
+        args.quiet = True
+        eval_stdout = contextlib.redirect_stdout(sys.stderr)
 
-        result = evaluator.evaluate(track, pid, code)
-        results.append(result)
+    with eval_stdout:
+        for pid in problem_ids:
+            if not args.quiet:
+                print(f"Evaluating {pid}...", end=" ", flush=True)
 
-        if not args.quiet:
-            if result.success:
-                print(f"Score: {result.score}")
-            else:
-                print(f"ERROR: {result.message}")
+            result = evaluator.evaluate(track, pid, code)
+            results.append(result)
+
+            if not args.quiet:
+                if result.success:
+                    print(f"Score: {result.score}")
+                else:
+                    print(f"ERROR: {result.message}")
 
     # Output results
     if args.json:

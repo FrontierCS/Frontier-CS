@@ -12,14 +12,12 @@ Usage:
 """
 
 import argparse
-import json
-import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
 from frontier_cs.config import get_problem_extension
+from frontier_cs.evaluator import FrontierCSEvaluator
 
 
 def find_reference_solution(track: str, problem_id: str) -> Optional[Path]:
@@ -48,85 +46,23 @@ def run_evaluation(
     track: str, problem_id: str, solution_path: Path, timeout: int = 300
 ) -> dict:
     """
-    Run evaluation using frontier CLI.
+    Run evaluation using Python API.
 
     Returns:
         Dict with keys: success, score, message
     """
-    cmd = [
-        "uv",
-        "run",
-        "frontier",
-        "eval",
-        track,
-        problem_id,
-        str(solution_path),
-        "--json",
-    ]
-
+    evaluator = FrontierCSEvaluator(timeout=timeout)
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        # Parse JSON output (may have prefix text before JSON array)
-        # Note: CLI returns non-zero exit code when evaluation fails, but still produces JSON
-        # Note: GitHub Actions may mask {} as *** due to credential masking
-        if result.stdout.strip():
-            stdout = result.stdout.strip()
-
-            # Try JSON parsing first
-            json_start = stdout.find("[")
-            if json_start >= 0:
-                try:
-                    data = json.loads(stdout[json_start:])
-                    if isinstance(data, list) and len(data) > 0:
-                        item = data[0]
-                        return {
-                            "success": item.get("status") == "success",
-                            "score": item.get("score", 0),
-                            "message": item.get("message", ""),
-                        }
-                except json.JSONDecodeError:
-                    pass
-
-            # Fallback: extract score from "Score: X.XX" line or "score": X.XX in output
-            # This handles cases where JSON is corrupted by CI secret masking
-            score_match = re.search(r'"score":\s*([\d.]+)', stdout)
-            if not score_match:
-                score_match = re.search(r'Score:\s*([\d.]+)', stdout)
-            status_match = re.search(r'"status":\s*"(\w+)"', stdout)
-
-            if score_match:
-                score = float(score_match.group(1))
-                status = status_match.group(1) if status_match else "success"
-                return {
-                    "success": status == "success",
-                    "score": score,
-                    "message": "",
-                }
-
-        # Fallback: check stderr for error messages
-        # Include both stdout and stderr for debugging
-        error_msg = ""
-        if result.stderr:
-            error_msg += result.stderr
-        if result.stdout:
-            error_msg += "\n" + result.stdout
+        result = evaluator.evaluate_file(track, problem_id, solution_path)
+        message_parts = []
+        if result.message:
+            message_parts.append(result.message)
+        if result.logs:
+            message_parts.append(result.logs)
         return {
-            "success": False,
-            "score": 0,
-            "message": error_msg.strip() or f"Command failed with exit code {result.returncode}",
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "score": 0,
-            "message": f"Evaluation timed out after {timeout}s",
+            "success": result.success,
+            "score": result.score,
+            "message": "\n".join(message_parts).strip(),
         }
     except Exception as e:
         return {
