@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -73,9 +74,11 @@ def run_evaluation(
 
         # Parse JSON output (may have prefix text before JSON array)
         # Note: CLI returns non-zero exit code when evaluation fails, but still produces JSON
+        # Note: GitHub Actions may mask {} as *** due to credential masking
         if result.stdout.strip():
             stdout = result.stdout.strip()
-            # Find JSON array in output
+
+            # Try JSON parsing first
             json_start = stdout.find("[")
             if json_start >= 0:
                 try:
@@ -89,6 +92,22 @@ def run_evaluation(
                         }
                 except json.JSONDecodeError:
                     pass
+
+            # Fallback: extract score from "Score: X.XX" line or "score": X.XX in output
+            # This handles cases where JSON is corrupted by CI secret masking
+            score_match = re.search(r'"score":\s*([\d.]+)', stdout)
+            if not score_match:
+                score_match = re.search(r'Score:\s*([\d.]+)', stdout)
+            status_match = re.search(r'"status":\s*"(\w+)"', stdout)
+
+            if score_match:
+                score = float(score_match.group(1))
+                status = status_match.group(1) if status_match else "success"
+                return {
+                    "success": status == "success",
+                    "score": score,
+                    "message": "",
+                }
 
         # Fallback: check stderr for error messages
         # Include both stdout and stderr for debugging
