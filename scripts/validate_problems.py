@@ -12,16 +12,12 @@ Usage:
 """
 
 import argparse
-import atexit
-import signal
 import sys
 from pathlib import Path
 from typing import Optional
 
 from frontier_cs.config import get_problem_extension
 from frontier_cs.evaluator import FrontierCSEvaluator
-from frontier_cs.runner.cluster_cleanup import ActiveClusterRegistry
-from frontier_cs.runner.skypilot import SkyPilotRunner
 
 
 def find_reference_solution(track: str, problem_id: str) -> Optional[Path]:
@@ -160,23 +156,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    def cleanup_on_exit():
-        if args.track == "research":
-            try:
-                names = ActiveClusterRegistry.snapshot()
-                if names:
-                    SkyPilotRunner.down_clusters(names)
-            except Exception:
-                pass
-
-    def signal_handler(signum, frame):
-        print("\n\nInterrupted! Cleaning up...")
-        cleanup_on_exit()
-        sys.exit(1)
-
-    atexit.register(cleanup_on_exit)
-    signal.signal(signal.SIGINT, signal_handler)
 
     print(f"Validating {len(args.problems)} {args.track} problem(s)")
 

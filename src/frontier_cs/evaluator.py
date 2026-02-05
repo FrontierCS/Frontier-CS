@@ -5,11 +5,16 @@ Provides a single interface for evaluating both algorithmic and research problem
 with support for different backends (local Docker, SkyPilot cloud).
 """
 
+import atexit
+import signal
 from pathlib import Path
 from typing import List, Literal, Optional, Union
 
-from .runner import EvaluationResult, DockerRunner, AlgorithmicRunner
+from .runner import AlgorithmicRunner, DockerRunner, EvaluationResult
 from .runner.base import Runner
+from .runner.cluster_cleanup import ActiveClusterRegistry
+from .runner.skypilot import SkyPilotRunner
+from .runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
 
 
 TrackType = Literal["algorithmic", "research"]
@@ -44,6 +49,7 @@ class FrontierCSEvaluator:
         keep_cluster: bool = False,
         idle_timeout: Optional[int] = 10,
         timeout: Optional[int] = None,
+        register_cleanup: bool = True,
     ):
         """
         Initialize FrontierCSEvaluator.
@@ -67,12 +73,41 @@ class FrontierCSEvaluator:
         self.keep_cluster = keep_cluster
         self.idle_timeout = idle_timeout
         self.timeout = timeout
+        self._register_cleanup = register_cleanup
 
         # Lazy-initialized runners
         self._algorithmic_runner: Optional[AlgorithmicRunner] = None
         self._algorithmic_skypilot_runner: Optional[Runner] = None
         self._docker_runner: Optional[DockerRunner] = None
         self._skypilot_runner: Optional[Runner] = None
+
+        if self._register_cleanup:
+            self._register_cleanup_hooks()
+
+    def _register_cleanup_hooks(self) -> None:
+        if self.keep_cluster:
+            return
+
+        def cleanup_on_exit():
+            try:
+                names = ActiveClusterRegistry.snapshot()
+                if names:
+                    SkyPilotRunner.down_clusters(names)
+            except Exception:
+                pass
+            try:
+                SkyPilotRunner.down_cluster(AlgorithmicSkyPilotRunner.CLUSTER_NAME)
+            except Exception:
+                pass
+
+        def signal_handler(signum, frame):
+            print("\n\nInterrupted! Cleaning up...")
+            cleanup_on_exit()
+            raise SystemExit(1)
+
+        atexit.register(cleanup_on_exit)
+        signal.signal(signal.SIGINT, signal_handler)
+
 
     @property
     def algorithmic_runner(self) -> AlgorithmicRunner:

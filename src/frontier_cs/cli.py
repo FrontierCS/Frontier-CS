@@ -798,12 +798,6 @@ def run_show(args: argparse.Namespace) -> int:
 
 def run_eval(args: argparse.Namespace) -> int:
     """Run eval command."""
-    import atexit
-    import signal
-    from .runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
-    from .runner.skypilot import SkyPilotRunner
-    from .runner.cluster_cleanup import ActiveClusterRegistry
-
     track = args.track
 
     # Determine backend: explicit --backend or track default
@@ -823,31 +817,6 @@ def run_eval(args: argparse.Namespace) -> int:
         idle_timeout=idle_timeout,
         timeout=timeout,
     )
-
-    keep_cluster = getattr(args, "keep_cluster", False)
-
-    def cleanup_on_exit():
-        if keep_cluster:
-            return
-        try:
-            names = ActiveClusterRegistry.snapshot()
-            if names:
-                SkyPilotRunner.down_clusters(names)
-        except Exception:
-            pass
-        if backend == "skypilot" and track == "algorithmic":
-            try:
-                SkyPilotRunner.down_cluster(AlgorithmicSkyPilotRunner.CLUSTER_NAME)
-            except Exception:
-                pass
-
-    def signal_handler(signum, frame):
-        print("\n\nInterrupted! Cleaning up...")
-        cleanup_on_exit()
-        sys.exit(1)
-
-    atexit.register(cleanup_on_exit)
-    signal.signal(signal.SIGINT, signal_handler)
 
     # Get problem IDs
     problem_ids = get_problem_ids(args, evaluator, track)
