@@ -72,7 +72,8 @@ def run_evaluation(
         )
 
         # Parse JSON output (may have prefix text before JSON array)
-        if result.returncode == 0 and result.stdout.strip():
+        # Note: CLI returns non-zero exit code when evaluation fails, but still produces JSON
+        if result.stdout.strip():
             stdout = result.stdout.strip()
             # Find JSON array in output
             json_start = stdout.find("[")

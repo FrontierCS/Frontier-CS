@@ -93,13 +93,24 @@ jobs:
             echo "No GCP credentials available, skipping..."
           fi
 
+      - name: Generate SSH key for SkyPilot
+        run: |
+          mkdir -p ~/.ssh
+          if [ ! -f ~/.ssh/sky-key ]; then
+            ssh-keygen -t rsa -b 4096 -f ~/.ssh/sky-key -N "" -C "sky-ci"
+            echo "Generated SSH key for SkyPilot"
+          fi
+
       - name: Setup SkyPilot
         run: |
           uv run sky check gcp || echo "SkyPilot check failed, continuing..."
 
       - name: Validate problems
+        timeout-minutes: 30
         run: |
           echo "Validating research problems: ${{ needs.detect-changes.outputs.research }}"
           uv run python scripts/validate_problems.py \
             --track research \
-            --problems ${{ needs.detect-changes.outputs.research }}
+            --timeout 1200 \
+            --problems ${{ needs.detect-changes.outputs.research }} \
+            --verbose
