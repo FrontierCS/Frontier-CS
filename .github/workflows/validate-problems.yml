@@ -95,6 +95,18 @@ jobs:
           EOF
           echo "AWS credentials configured"
 
+      - name: Setup GCP credentials
+        env:
+          GCP_CREDS: ${{ secrets.GCP_CREDENTIALS }}
+        run: |
+          if [ -n "$GCP_CREDS" ]; then
+            echo "$GCP_CREDS" > /tmp/gcp-key.json
+            echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+            gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+            gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+            echo "GCP credentials configured"
+          fi
+
       - name: Generate SSH key for SkyPilot
         run: |
           mkdir -p ~/.ssh
@@ -105,7 +117,7 @@ jobs:
 
       - name: Setup SkyPilot
         run: |
-          uv run sky check aws || echo "SkyPilot check failed, continuing..."
+          uv run sky check aws gcp || echo "SkyPilot check failed, continuing..."
 
       - name: Validate problems
         timeout-minutes: 30
