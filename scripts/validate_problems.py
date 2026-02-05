@@ -20,6 +20,7 @@ from typing import Optional
 
 from frontier_cs.config import get_problem_extension
 from frontier_cs.evaluator import FrontierCSEvaluator
+from frontier_cs.runner.cluster_cleanup import ActiveClusterRegistry
 from frontier_cs.runner.skypilot import SkyPilotRunner
 
 
@@ -163,7 +164,9 @@ def main():
     def cleanup_on_exit():
         if args.track == "research":
             try:
-                SkyPilotRunner.down_active_clusters()
+                names = ActiveClusterRegistry.snapshot()
+                if names:
+                    SkyPilotRunner.down_clusters(names)
             except Exception:
                 pass
 

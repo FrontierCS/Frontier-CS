@@ -802,6 +802,7 @@ def run_eval(args: argparse.Namespace) -> int:
     import signal
     from .runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
     from .runner.skypilot import SkyPilotRunner
+    from .runner.cluster_cleanup import ActiveClusterRegistry
 
     track = args.track
 
@@ -829,7 +830,9 @@ def run_eval(args: argparse.Namespace) -> int:
         if keep_cluster:
             return
         try:
-            SkyPilotRunner.down_active_clusters()
+            names = ActiveClusterRegistry.snapshot()
+            if names:
+                SkyPilotRunner.down_clusters(names)
         except Exception:
             pass
         if backend == "skypilot" and track == "algorithmic":

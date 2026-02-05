@@ -14,13 +14,13 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
+from .cluster_cleanup import ActiveClusterRegistry
 from ..config import load_problem_config, get_problem_extension
 from ..gen.solution_format import FAILED_EXTENSION
 
@@ -58,9 +58,6 @@ class SkyPilotRunner(ResearchRunner):
     DEFAULT_GPU = "L4:1"
     DEFAULT_TIMEOUT = 1800  # 30 minutes
     DEFAULT_IDLE_TIMEOUT = 10  # 10 minutes
-
-    _active_clusters: set[str] = set()
-    _active_clusters_lock = threading.Lock()
 
     def __init__(
         self,
@@ -202,7 +199,7 @@ class SkyPilotRunner(ResearchRunner):
         date_str = datetime.now().strftime("%m%d%H%M")
         digest = hashlib.md5(f"{problem_id}-{date_str}".encode()).hexdigest()[:8]
         cluster_name = _sanitize_name(f"eval-{problem_id}-{digest}")[:63]
-        self._register_active_cluster(cluster_name)
+        ActiveClusterRegistry.register(cluster_name)
 
         # Build pair_id for bucket storage
         pair_id = f"{solution_id}:{problem_id}" if solution_id else None
@@ -320,7 +317,7 @@ class SkyPilotRunner(ResearchRunner):
                         sky.stream_and_get(down_request)
                     except Exception:
                         pass
-                self._unregister_active_cluster(cluster_name)
+                ActiveClusterRegistry.unregister(cluster_name)
 
     def _setup_mounts(
         self,
@@ -788,20 +785,4 @@ class SkyPilotRunner(ResearchRunner):
         with ThreadPoolExecutor(max_workers=len(cluster_names)) as executor:
             executor.map(down_one, cluster_names)
 
-    @classmethod
-    def _register_active_cluster(cls, name: str) -> None:
-        with cls._active_clusters_lock:
-            cls._active_clusters.add(name)
-
-    @classmethod
-    def _unregister_active_cluster(cls, name: str) -> None:
-        with cls._active_clusters_lock:
-            cls._active_clusters.discard(name)
-
-    @classmethod
-    def down_active_clusters(cls) -> None:
-        with cls._active_clusters_lock:
-            names = list(cls._active_clusters)
-        if not names:
-            return
-        cls.down_clusters(names)
+    # Active cluster cleanup is handled via ActiveClusterRegistry in callers.
