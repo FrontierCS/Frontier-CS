@@ -6,7 +6,5 @@ runtime:
   docker:
     image: "gcc:13"
   resources:
-    cloud: aws
-    instance_type: c7i.4xlarge
     cpus: "16"
     memory: "32"
