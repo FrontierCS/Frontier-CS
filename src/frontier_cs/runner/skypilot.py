@@ -338,10 +338,11 @@ class SkyPilotRunner(ResearchRunner):
             if common_dir.is_dir():
                 mounts[f"{remote_base}/research/{parent}/common"] = str(common_dir.resolve())
 
-        # Mount solution (preserve original extension)
+        # Mount solution (rename to solution.{ext})
         solution_dir = workspace / "solution"
         solution_dir.mkdir(parents=True)
-        shutil.copy2(solution_path, solution_dir / solution_path.name)
+        dest_name = f"solution{solution_path.suffix}"
+        shutil.copy2(solution_path, solution_dir / dest_name)
         mounts[f"{remote_base}/solution"] = str(solution_dir.resolve())
 
         return mounts

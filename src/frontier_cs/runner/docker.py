@@ -245,10 +245,11 @@ class DockerRunner(ResearchRunner):
                 dest = workspace / "research" / parent / "common"
                 shutil.copytree(common_dir, dest)
 
-        # Create solution structure (preserve original extension)
+        # Create solution structure (rename to solution.{ext})
         solution_dir = workspace / "solution"
         solution_dir.mkdir(parents=True)
-        shutil.copy2(solution_path, solution_dir / solution_path.name)
+        dest_name = f"solution{solution_path.suffix}"
+        shutil.copy2(solution_path, solution_dir / dest_name)
 
     def _run_docker(
         self,
