@@ -78,20 +78,22 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Setup GCP credentials
+      - name: Setup AWS credentials
         env:
-          GCP_CREDS: ${{ secrets.GCP_CREDENTIALS }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          if [ -n "$GCP_CREDS" ]; then
-            echo "$GCP_CREDS" > /tmp/gcp-key.json
-            echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
-            # Activate service account for gcloud CLI (required by SkyPilot)
-            gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
-            gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-            echo "GCP credentials configured"
-          else
-            echo "No GCP credentials available, skipping..."
-          fi
+          mkdir -p ~/.aws
+          cat > ~/.aws/credentials << EOF
+          [default]
+          aws_access_key_id = $AWS_ACCESS_KEY_ID
+          aws_secret_access_key = $AWS_SECRET_ACCESS_KEY
+          EOF
+          cat > ~/.aws/config << EOF
+          [default]
+          region = us-east-1
+          EOF
+          echo "AWS credentials configured"
 
       - name: Generate SSH key for SkyPilot
         run: |
@@ -103,7 +105,7 @@ jobs:
 
       - name: Setup SkyPilot
         run: |
-          uv run sky check gcp || echo "SkyPilot check failed, continuing..."
+          uv run sky check aws || echo "SkyPilot check failed, continuing..."
 
       - name: Validate problems
         timeout-minutes: 30
