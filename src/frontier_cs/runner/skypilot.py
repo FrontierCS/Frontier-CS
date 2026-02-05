@@ -308,8 +308,8 @@ class SkyPilotRunner(ResearchRunner):
                 )
 
             finally:
-                # Only down immediately if no autostop and not keeping cluster
-                if not self.keep_cluster and self.idle_timeout is None:
+                # Always down after evaluation unless explicitly keeping the cluster.
+                if not self.keep_cluster:
                     try:
                         down_request = sky.down(cluster_name)
                         sky.stream_and_get(down_request)

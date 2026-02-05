@@ -269,11 +269,15 @@ class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
         # Use parent class with the cloud judge URL
         self.judge_url = judge_url
         self.session = requests.Session()
-        return super().evaluate(
-            problem_id,
-            solution_code,
-            lang=lang,
-        )
+        try:
+            return super().evaluate(
+                problem_id,
+                solution_code,
+                lang=lang,
+            )
+        finally:
+            if not self.keep_cluster and self._initialized:
+                self.stop_cluster()
 
     def evaluate_file(
         self,
