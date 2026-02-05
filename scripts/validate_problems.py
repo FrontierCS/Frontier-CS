@@ -90,10 +90,16 @@ def run_evaluation(
                     pass
 
         # Fallback: check stderr for error messages
+        # Include both stdout and stderr for debugging
+        error_msg = ""
+        if result.stderr:
+            error_msg += result.stderr
+        if result.stdout:
+            error_msg += "\n" + result.stdout
         return {
             "success": False,
             "score": 0,
-            "message": result.stderr or result.stdout or "Unknown error",
+            "message": error_msg.strip() or f"Command failed with exit code {result.returncode}",
         }
 
     except subprocess.TimeoutExpired:
