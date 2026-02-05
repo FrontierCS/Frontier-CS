@@ -5,9 +5,11 @@ Abstract base class for evaluation runners.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..gen.solution_format import FAILED_EXTENSION
 
 class EvaluationStatus(Enum):
     """Status of an evaluation."""
@@ -123,3 +125,43 @@ class ResearchRunner(Runner):
         (e.g., "cant_be_late/high_availability_loose_deadline_large_overhead").
         """
         return self.problems_dir / problem_id
+
+    def _get_problem_path_or_error(
+        self, problem_id: str
+    ) -> tuple[Optional[Path], Optional[EvaluationResult]]:
+        problem_path = self.get_problem_path(problem_id)
+        if not problem_path.exists():
+            return (
+                None,
+                EvaluationResult(
+                    problem_id=problem_id,
+                    status=EvaluationStatus.ERROR,
+                    message=f"Problem not found: {problem_path}",
+                ),
+            )
+        return (problem_path, None)
+
+    def _validate_solution_file(
+        self, problem_id: str, solution_path: Path
+    ) -> Optional[EvaluationResult]:
+        if not solution_path.exists():
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                message=f"Solution file not found: {solution_path}",
+            )
+
+        if solution_path.suffix == f".{FAILED_EXTENSION}":
+            try:
+                meta = json.loads(solution_path.read_text(encoding="utf-8"))
+                error_msg = meta.get("error", "Generation failed")
+            except (json.JSONDecodeError, OSError):
+                error_msg = "Generation failed"
+            return EvaluationResult(
+                problem_id=problem_id,
+                status=EvaluationStatus.ERROR,
+                score=0,
+                message=f"Generation failed: {error_msg}",
+            )
+
+        return None

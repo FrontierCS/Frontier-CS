@@ -9,7 +9,6 @@ Supports two result storage modes:
 """
 
 import hashlib
-import json
 import shutil
 import subprocess
 import tempfile
@@ -22,7 +21,6 @@ from typing import Optional, Tuple
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from .cluster_cleanup import ActiveClusterRegistry
 from ..config import load_problem_config, get_problem_extension
-from ..gen.solution_format import FAILED_EXTENSION
 
 
 def _sanitize_name(name: str) -> str:
@@ -107,14 +105,9 @@ class SkyPilotRunner(ResearchRunner):
         Returns:
             EvaluationResult with score and status
         """
-        problem_path = self.get_problem_path(problem_id)
-
-        if not problem_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Problem not found: {problem_path}",
-            )
+        problem_path, error = self._get_problem_path_or_error(problem_id)
+        if error:
+            return error
 
         # Create temp directory with solution
         with tempfile.TemporaryDirectory(prefix="frontier_sky_") as temp_dir:
@@ -133,34 +126,13 @@ class SkyPilotRunner(ResearchRunner):
         solution_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Evaluate a solution file using SkyPilot."""
-        if not solution_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Solution file not found: {solution_path}",
-            )
+        error = self._validate_solution_file(problem_id, solution_path)
+        if error:
+            return error
 
-        # Check for generation failure marker (.FAILED file)
-        if solution_path.suffix == f".{FAILED_EXTENSION}":
-            try:
-                meta = json.loads(solution_path.read_text(encoding="utf-8"))
-                error_msg = meta.get("error", "Generation failed")
-            except (json.JSONDecodeError, OSError):
-                error_msg = "Generation failed"
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                score=0,
-                message=f"Generation failed: {error_msg}",
-            )
-
-        problem_path = self.get_problem_path(problem_id)
-        if not problem_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Problem not found: {problem_path}",
-            )
+        problem_path, error = self._get_problem_path_or_error(problem_id)
+        if error:
+            return error
 
         return self._run_evaluation(problem_id, problem_path, solution_path, solution_id)
 
@@ -642,34 +614,13 @@ class SkyPilotRunner(ResearchRunner):
 
         start_time = time.time()
 
-        problem_path = self.get_problem_path(problem_id)
-        if not problem_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Problem not found: {problem_path}",
-            )
+        error = self._validate_solution_file(problem_id, solution_path)
+        if error:
+            return error
 
-        if not solution_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Solution file not found: {solution_path}",
-            )
-
-        # Check for generation failure marker (.FAILED file)
-        if solution_path.suffix == f".{FAILED_EXTENSION}":
-            try:
-                meta = json.loads(solution_path.read_text(encoding="utf-8"))
-                error_msg = meta.get("error", "Generation failed")
-            except (json.JSONDecodeError, OSError):
-                error_msg = "Generation failed"
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                score=0,
-                message=f"Generation failed: {error_msg}",
-            )
+        problem_path, error = self._get_problem_path_or_error(problem_id)
+        if error:
+            return error
 
         # Load config
         problem_config = load_problem_config(problem_path)

@@ -4,7 +4,6 @@ Docker runner for research problems.
 Runs evaluations in local Docker containers.
 """
 
-import json
 import shutil
 import subprocess
 import tempfile
@@ -14,7 +13,6 @@ from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE, get_problem_extension
-from ..gen.solution_format import FAILED_EXTENSION
 
 
 class DockerRunner(ResearchRunner):
@@ -81,14 +79,9 @@ class DockerRunner(ResearchRunner):
         Returns:
             EvaluationResult with score and status
         """
-        problem_path = self.get_problem_path(problem_id)
-
-        if not problem_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Problem not found: {problem_path}",
-            )
+        problem_path, error = self._get_problem_path_or_error(problem_id)
+        if error:
+            return error
 
         # Create temp directory with solution
         with tempfile.TemporaryDirectory(prefix="frontier_eval_") as temp_dir:
@@ -107,34 +100,13 @@ class DockerRunner(ResearchRunner):
         solution_id: Optional[str] = None,  # Unused, for API compatibility with SkyPilotRunner
     ) -> EvaluationResult:
         """Evaluate a solution file for a research problem."""
-        if not solution_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Solution file not found: {solution_path}",
-            )
+        error = self._validate_solution_file(problem_id, solution_path)
+        if error:
+            return error
 
-        # Check for generation failure marker (.FAILED file)
-        if solution_path.suffix == f".{FAILED_EXTENSION}":
-            try:
-                meta = json.loads(solution_path.read_text(encoding="utf-8"))
-                error_msg = meta.get("error", "Generation failed")
-            except (json.JSONDecodeError, OSError):
-                error_msg = "Generation failed"
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                score=0,
-                message=f"Generation failed: {error_msg}",
-            )
-
-        problem_path = self.get_problem_path(problem_id)
-        if not problem_path.exists():
-            return EvaluationResult(
-                problem_id=problem_id,
-                status=EvaluationStatus.ERROR,
-                message=f"Problem not found: {problem_path}",
-            )
+        problem_path, error = self._get_problem_path_or_error(problem_id)
+        if error:
+            return error
 
         return self._run_evaluation(problem_id, problem_path, solution_path)
 
