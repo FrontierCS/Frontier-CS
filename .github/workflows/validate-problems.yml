@@ -85,6 +85,9 @@ jobs:
           if [ -n "$GCP_CREDS" ]; then
             echo "$GCP_CREDS" > /tmp/gcp-key.json
             echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json" >> $GITHUB_ENV
+            # Activate service account for gcloud CLI (required by SkyPilot)
+            gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+            gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
             echo "GCP credentials configured"
           else
             echo "No GCP credentials available, skipping..."
@@ -92,7 +95,7 @@ jobs:
 
       - name: Setup SkyPilot
         run: |
-          uv run sky check || echo "SkyPilot check failed, continuing..."
+          uv run sky check gcp || echo "SkyPilot check failed, continuing..."
 
       - name: Validate problems
         run: |
