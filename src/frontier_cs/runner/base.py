@@ -194,3 +194,6 @@ class ResearchRunner(Runner):
             f'    fi\n'
             f'fi'
         )
+
+    def _build_timeout_prefix(self, timeout_seconds: Optional[int]) -> str:
+        return f"timeout {timeout_seconds}s " if timeout_seconds else ""

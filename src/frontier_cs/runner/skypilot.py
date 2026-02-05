@@ -349,7 +349,7 @@ class SkyPilotRunner(ResearchRunner):
     ) -> str:
         """Get run script for SkyPilot task."""
         gpu_flags = "--gpus all" if gpu else ""
-        timeout_prefix = f"timeout {timeout_seconds}s " if timeout_seconds else ""
+        timeout_prefix = self._build_timeout_prefix(timeout_seconds)
         dind_flags = '-v /var/run/docker.sock:/var/run/docker.sock' if dind else ""
 
         # Build Docker CLI install command for DinD (socket is mounted but CLI needed)
