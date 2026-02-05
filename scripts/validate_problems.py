@@ -61,8 +61,6 @@ def run_evaluation(
         problem_id,
         str(solution_path),
         "--json",
-        "--backend",
-        "docker",  # Always use docker for CI validation (local, fast)
     ]
 
     try:
