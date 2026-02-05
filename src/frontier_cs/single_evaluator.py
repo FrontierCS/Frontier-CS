@@ -10,10 +10,10 @@ import signal
 from pathlib import Path
 from typing import List, Literal, Optional, Union
 
-from .runner import AlgorithmicRunner, DockerRunner, EvaluationResult
+from .runner import AlgorithmicLocalRunner, EvaluationResult, ResearchDockerRunner
 from .runner.base import Runner
 from .runner.cluster_cleanup import ActiveClusterRegistry
-from .runner.skypilot import SkyPilotRunner
+from .runner.research_skypilot import ResearchSkyPilotRunner
 from .runner.algorithmic_skypilot import AlgorithmicSkyPilotRunner
 
 
@@ -21,12 +21,12 @@ TrackType = Literal["algorithmic", "research"]
 BackendType = Literal["docker", "skypilot"]
 
 
-class FrontierCSEvaluator:
+class SingleEvaluator:
     """
     Unified evaluator for Frontier-CS problems.
 
     Example usage:
-        evaluator = FrontierCSEvaluator()
+        evaluator = SingleEvaluator()
 
         # Algorithmic problem (uses Docker by default)
         result = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)
@@ -52,7 +52,7 @@ class FrontierCSEvaluator:
         register_cleanup: bool = True,
     ):
         """
-        Initialize FrontierCSEvaluator.
+        Initialize SingleEvaluator.
 
         Args:
             backend: Override default backend ("docker" or "skypilot").
@@ -76,9 +76,9 @@ class FrontierCSEvaluator:
         self._register_cleanup = register_cleanup
 
         # Lazy-initialized runners
-        self._algorithmic_runner: Optional[AlgorithmicRunner] = None
+        self._algorithmic_runner: Optional[AlgorithmicLocalRunner] = None
         self._algorithmic_skypilot_runner: Optional[Runner] = None
-        self._docker_runner: Optional[DockerRunner] = None
+        self._docker_runner: Optional[ResearchDockerRunner] = None
         self._skypilot_runner: Optional[Runner] = None
 
         if self._register_cleanup:
@@ -92,11 +92,11 @@ class FrontierCSEvaluator:
             try:
                 names = ActiveClusterRegistry.snapshot()
                 if names:
-                    SkyPilotRunner.down_clusters(names)
+                    ResearchSkyPilotRunner.down_clusters(names)
             except Exception:
                 pass
             try:
-                SkyPilotRunner.down_cluster(AlgorithmicSkyPilotRunner.CLUSTER_NAME)
+                ResearchSkyPilotRunner.down_cluster(AlgorithmicSkyPilotRunner.CLUSTER_NAME)
             except Exception:
                 pass
 
@@ -110,10 +110,10 @@ class FrontierCSEvaluator:
 
 
     @property
-    def algorithmic_runner(self) -> AlgorithmicRunner:
+    def algorithmic_runner(self) -> AlgorithmicLocalRunner:
         """Get or create the algorithmic runner."""
         if self._algorithmic_runner is None:
-            self._algorithmic_runner = AlgorithmicRunner(judge_url=self.judge_url)
+            self._algorithmic_runner = AlgorithmicLocalRunner(judge_url=self.judge_url)
         return self._algorithmic_runner
 
     @property
@@ -131,18 +131,20 @@ class FrontierCSEvaluator:
         return self._algorithmic_skypilot_runner
 
     @property
-    def docker_runner(self) -> DockerRunner:
+    def docker_runner(self) -> ResearchDockerRunner:
         """Get or create the Docker runner."""
         if self._docker_runner is None:
-            self._docker_runner = DockerRunner(base_dir=self.base_dir, timeout=self.timeout)
+            self._docker_runner = ResearchDockerRunner(
+                base_dir=self.base_dir, timeout=self.timeout
+            )
         return self._docker_runner
 
     @property
     def skypilot_runner(self) -> Runner:
         """Get or create the SkyPilot runner."""
         if self._skypilot_runner is None:
-            from .runner.skypilot import SkyPilotRunner
-            self._skypilot_runner = SkyPilotRunner(
+            from .runner.research_skypilot import ResearchSkyPilotRunner
+            self._skypilot_runner = ResearchSkyPilotRunner(
                 base_dir=self.base_dir,
                 cloud=self.cloud,
                 region=self.region,
@@ -332,5 +334,5 @@ def evaluate(
         result = evaluate("research", "flash_attn", solution_code)
         print(f"Score: {result.score}")
     """
-    evaluator = FrontierCSEvaluator(backend=backend)
+    evaluator = SingleEvaluator(backend=backend)
     return evaluator.evaluate(track, problem_id, code)

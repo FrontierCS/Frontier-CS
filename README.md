@@ -150,9 +150,9 @@ frontier eval algorithmic 1 <your_solution.cpp> --unbounded
 ### Python API
 
 ```python
-from frontier_cs import FrontierCSEvaluator
+from frontier_cs import SingleEvaluator
 
-evaluator = FrontierCSEvaluator()
+evaluator = SingleEvaluator()
 
 # Evaluate a research problem
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code)

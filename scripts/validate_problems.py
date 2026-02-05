@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from frontier_cs.config import get_problem_extension
-from frontier_cs.evaluator import FrontierCSEvaluator
+from frontier_cs.single_evaluator import SingleEvaluator
 
 
 def find_reference_solution(track: str, problem_id: str) -> Optional[Path]:
@@ -51,7 +51,7 @@ def run_evaluation(
     Returns:
         Dict with keys: success, score, message
     """
-    evaluator = FrontierCSEvaluator(timeout=timeout)
+    evaluator = SingleEvaluator(timeout=timeout)
     try:
         result = evaluator.evaluate_file(track, problem_id, solution_path)
         message_parts = []

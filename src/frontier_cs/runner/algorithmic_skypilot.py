@@ -14,14 +14,14 @@ from typing import Any, Optional
 
 import requests
 
-from .algorithmic import AlgorithmicRunner
+from .algorithmic_local import AlgorithmicLocalRunner
 from .base import EvaluationResult, EvaluationStatus
 from ..gen.solution_format import FAILED_EXTENSION
 
 logger = logging.getLogger(__name__)
 
 
-class AlgorithmicSkyPilotRunner(AlgorithmicRunner):
+class AlgorithmicSkyPilotRunner(AlgorithmicLocalRunner):
     """
     Runner that auto-launches go-judge on SkyPilot.
 

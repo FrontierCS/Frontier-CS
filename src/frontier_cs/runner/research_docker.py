@@ -15,7 +15,7 @@ from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from ..config import DockerConfig, DEFAULT_DOCKER_IMAGE, get_problem_extension
 
 
-class DockerRunner(ResearchRunner):
+class ResearchDockerRunner(ResearchRunner):
     """
     Runner for research problems using local Docker.
 
@@ -36,7 +36,7 @@ class DockerRunner(ResearchRunner):
         timeout: Optional[int] = None,
     ):
         """
-        Initialize DockerRunner.
+        Initialize ResearchDockerRunner.
 
         Args:
             base_dir: Base directory of Frontier-CS repo (auto-detected if None)
@@ -97,7 +97,7 @@ class DockerRunner(ResearchRunner):
         problem_id: str,
         solution_path: Path,
         *,
-        solution_id: Optional[str] = None,  # Unused, for API compatibility with SkyPilotRunner
+        solution_id: Optional[str] = None,  # Unused, for API compatibility with ResearchSkyPilotRunner
     ) -> EvaluationResult:
         """Evaluate a solution file for a research problem."""
         error = self._validate_solution_file(problem_id, solution_path)

@@ -48,9 +48,9 @@ The judge server will save solutions and their detailed judging results under th
 ### Python API
 
 ```python
-from frontier_cs import FrontierCSEvaluator
+from frontier_cs import SingleEvaluator
 
-evaluator = FrontierCSEvaluator()
+evaluator = SingleEvaluator()
 
 # Evaluate an algorithmic problem
 result = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)

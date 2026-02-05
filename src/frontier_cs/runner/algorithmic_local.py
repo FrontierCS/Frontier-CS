@@ -19,7 +19,7 @@ from ..gen.solution_format import FAILED_EXTENSION
 logger = logging.getLogger(__name__)
 
 
-class AlgorithmicRunner(Runner):
+class AlgorithmicLocalRunner(Runner):
     """
     Runner for algorithmic problems.
 

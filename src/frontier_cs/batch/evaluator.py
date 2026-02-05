@@ -28,7 +28,7 @@ except ImportError:
     HAS_TQDM = False
 
 from ..runner.base import EvaluationResult, EvaluationStatus
-from ..runner.docker import DockerRunner
+from ..runner.research_docker import ResearchDockerRunner
 from ..config import get_problem_extension
 from .pair import Pair, expand_pairs, read_pairs_file, read_problems_file, read_models_file, read_variants_file
 from .state import EvaluationState, PairResult, hash_file, hash_directory
@@ -181,22 +181,22 @@ class BatchEvaluator:
                     idle_timeout=self.idle_timeout,
                 )
             else:
-                from ..runner.algorithmic import AlgorithmicRunner
-                return AlgorithmicRunner(
+                from ..runner.algorithmic_local import AlgorithmicLocalRunner
+                return AlgorithmicLocalRunner(
                     judge_url=self.judge_url,
                     problems_dir=self.problems_dir,
                 )
         else:
             # research track
             if self.backend == "docker":
-                return DockerRunner(
+                return ResearchDockerRunner(
                     base_dir=self.base_dir,
                     problems_dir=self.problems_dir,
                     timeout=self.timeout,
                 )
             else:
-                from ..runner.skypilot import SkyPilotRunner
-                return SkyPilotRunner(
+                from ..runner.research_skypilot import ResearchSkyPilotRunner
+                return ResearchSkyPilotRunner(
                     base_dir=self.base_dir,
                     problems_dir=self.problems_dir,
                     bucket_url=self.bucket_url,
@@ -477,7 +477,7 @@ class BatchEvaluator:
 
     def _create_cluster_pool(self) -> None:
         """Create a pool of SkyPilot clusters for parallel evaluation."""
-        from ..runner.skypilot import SkyPilotRunner
+        from ..runner.research_skypilot import ResearchSkyPilotRunner
 
         logger.info(f"Creating {self.clusters} SkyPilot clusters...")
 
@@ -512,8 +512,8 @@ class BatchEvaluator:
             return
 
         logger.info(f"Terminating {len(self._cluster_names)} clusters...")
-        from ..runner.skypilot import SkyPilotRunner
-        SkyPilotRunner.down_clusters(self._cluster_names)
+        from ..runner.research_skypilot import ResearchSkyPilotRunner
+        ResearchSkyPilotRunner.down_clusters(self._cluster_names)
         self._cluster_names = []
 
     def _get_default_solutions_dir(self) -> Path:

@@ -39,7 +39,7 @@ def _sanitize_name(name: str) -> str:
     return "".join(cleaned).strip("-") or "job"
 
 
-class SkyPilotRunner(ResearchRunner):
+class ResearchSkyPilotRunner(ResearchRunner):
     """
     Runner for research problems using SkyPilot.
 
@@ -68,7 +68,7 @@ class SkyPilotRunner(ResearchRunner):
         bucket_url: Optional[str] = None,
     ):
         """
-        Initialize SkyPilotRunner.
+        Initialize ResearchSkyPilotRunner.
 
         Args:
             base_dir: Base directory of Frontier-CS repo

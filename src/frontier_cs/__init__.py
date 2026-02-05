@@ -2,9 +2,9 @@
 Frontier-CS: Evaluation framework for frontier CS problems.
 
 Usage:
-    from frontier_cs import FrontierCSEvaluator
+    from frontier_cs import SingleEvaluator
 
-    evaluator = FrontierCSEvaluator()
+    evaluator = SingleEvaluator()
 
     # Algorithmic problems (uses Docker by default)
     score = evaluator.evaluate("algorithmic", problem_id=1, code=cpp_code)
@@ -31,12 +31,12 @@ Usage:
     batch.# Use batch.scan_solutions_dir() or evaluate_pairs()
 """
 
-from .evaluator import FrontierCSEvaluator
+from .single_evaluator import SingleEvaluator
 from .config import RuntimeConfig, ResourcesConfig, DockerConfig, ProblemConfig
 from .runner import EvaluationResult
 
 __all__ = [
-    "FrontierCSEvaluator",
+    "SingleEvaluator",
     "RuntimeConfig",
     "ResourcesConfig",
     "DockerConfig",

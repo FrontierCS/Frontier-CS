@@ -35,9 +35,9 @@ frontier batch research --status           # Check progress
 ## Python API
 
 ```python
-from frontier_cs import FrontierCSEvaluator
+from frontier_cs import SingleEvaluator
 
-evaluator = FrontierCSEvaluator()
+evaluator = SingleEvaluator()
 
 # Single problem (uses SkyPilot by default for research)
 result = evaluator.evaluate("research", problem_id="flash_attn", code=my_code)
