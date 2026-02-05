@@ -263,3 +263,42 @@ def get_problem_extension(problem_path: Optional[Path] = None) -> str:
         File extension without dot (e.g., "py", "cpp")
     """
     return get_language_config(problem_path).extension
+
+
+# =============================================================================
+# Resource Signature (for cluster pooling)
+# =============================================================================
+
+@dataclass(frozen=True)
+class ResourceSignature:
+    """
+    Unique identifier for cluster resource requirements.
+
+    Used to group problems by their resource needs so that separate cluster pools
+    can be created for each distinct resource configuration. Immutable and hashable
+    for use as dictionary keys.
+    """
+
+    cloud: str
+    accelerators: Optional[str] = None  # None means CPU-only
+    instance_type: Optional[str] = None
+
+    @classmethod
+    def from_resources(cls, res: ResourcesConfig, default_cloud: str) -> "ResourceSignature":
+        """Create a ResourceSignature from a ResourcesConfig."""
+        return cls(
+            cloud=res.cloud or default_cloud,
+            accelerators=res.accelerators,
+            instance_type=res.instance_type,
+        )
+
+    @property
+    def requires_gpu(self) -> bool:
+        """Check if this signature requires GPU."""
+        return self.accelerators is not None
+
+    def __str__(self) -> str:
+        """Human-readable string for logging."""
+        gpu_str = self.accelerators or "CPU-only"
+        instance_str = f", instance={self.instance_type}" if self.instance_type else ""
+        return f"{self.cloud}/{gpu_str}{instance_str}"

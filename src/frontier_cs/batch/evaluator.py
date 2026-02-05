@@ -21,15 +21,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
+from tqdm import tqdm
 
 from ..runner.base import EvaluationResult, EvaluationStatus
 from ..runner.research_docker import ResearchDockerRunner
-from ..config import get_problem_extension
+from ..config import get_problem_extension, ResourceSignature
 from .pair import Pair, expand_pairs, read_pairs_file, read_problems_file, read_models_file, read_variants_file
 from .state import EvaluationState, PairResult, hash_file, hash_directory
 
@@ -130,8 +126,8 @@ class BatchEvaluator:
         # Initialize runner based on track and backend
         self._runner = self._create_runner()
 
-        # For SkyPilot cluster pool
-        self._cluster_names: List[str] = []
+        # For SkyPilot cluster pools (keyed by ResourceSignature)
+        self._cluster_pools: Dict[ResourceSignature, List[str]] = {}
 
         # Lock for thread-safe state saving
         self._state_lock = threading.Lock()
@@ -168,6 +164,14 @@ class BatchEvaluator:
     def _build_problem_extensions(self, problems: List[str]) -> Dict[str, str]:
         """Build a mapping of problem -> extension for a list of problems."""
         return {problem: self._get_problem_extension(problem) for problem in problems}
+
+    def _group_pairs_by_resources(self, pairs: List[Pair]) -> Dict[ResourceSignature, List[Pair]]:
+        """Group pairs by their resource requirements (delegates to runner)."""
+        groups: Dict[ResourceSignature, List[Pair]] = {}
+        for pair in pairs:
+            sig = self._runner.get_resource_signature(pair.problem)
+            groups.setdefault(sig, []).append(pair)
+        return groups
 
     def _create_runner(self):
         """Create the appropriate runner based on track and backend."""
@@ -370,7 +374,8 @@ class BatchEvaluator:
 
         For Docker: Each worker is a thread that runs docker evaluations.
         For SkyPilot (research): Each worker uses a dedicated cluster. Clusters are created
-                     once at the start and reused for all evaluations.
+                     once at the start and reused for all evaluations. Pairs are grouped
+                     by resource requirements, with separate cluster pools for each group.
         For SkyPilot (algorithmic): All workers share a single go-judge cluster.
 
         When workers=1, this is equivalent to sequential evaluation.
@@ -382,17 +387,20 @@ class BatchEvaluator:
 
         # Setup progress bar
         pbar = None
-        if show_progress and HAS_TQDM:
+        if show_progress:
             pbar = tqdm(total=len(pairs), desc="Evaluating", unit="pair", dynamic_ncols=True)
 
-        # For SkyPilot research track with multiple clusters, create reusable cluster pool
+        # For SkyPilot research track with multiple clusters, create reusable cluster pools
         # Algorithmic track uses a single go-judge cluster with HTTP requests, no cluster pool needed
-        cluster_pool: queue.Queue[str] = queue.Queue()
+        # Each resource signature gets its own pool of clusters
+        cluster_pools: Dict[ResourceSignature, queue.Queue[str]] = {}
         if self.backend == "skypilot" and self.clusters > 1 and self.track != "algorithmic":
-            self._create_cluster_pool()
-            # Populate cluster pool for load-balancing
-            for cluster_name in self._cluster_names:
-                cluster_pool.put(cluster_name)
+            self._create_cluster_pool(pairs)
+            # Populate cluster pools for load-balancing
+            for sig, cluster_names in self._cluster_pools.items():
+                cluster_pools[sig] = queue.Queue()
+                for cluster_name in cluster_names:
+                    cluster_pools[sig].put(cluster_name)
 
         try:
             # Define worker function
@@ -406,13 +414,17 @@ class BatchEvaluator:
                     self.state.mark_running(pair)
                     self._save_state()
 
-                    # Acquire cluster from pool if using cluster pool
+                    # Acquire cluster from the appropriate pool based on pair's resource signature
                     cluster_name = None
-                    if not cluster_pool.empty() or self._cluster_names:
-                        try:
-                            cluster_name = cluster_pool.get(timeout=300)  # Wait up to 5 min for a cluster
-                        except queue.Empty:
-                            logger.warning(f"Worker {worker_id}: Timeout waiting for cluster, using direct eval")
+                    sig = None
+                    if cluster_pools:
+                        sig = self._runner.get_resource_signature(pair.problem)
+                        pool = cluster_pools.get(sig)
+                        if pool:
+                            try:
+                                cluster_name = pool.get(timeout=300)  # Wait up to 5 min for a cluster
+                            except queue.Empty:
+                                logger.warning(f"Worker {worker_id}: Timeout waiting for cluster ({sig}), using direct eval")
 
                     try:
                         # Execute evaluation
@@ -450,9 +462,9 @@ class BatchEvaluator:
                         if pbar:
                             pbar.write(f"  [ERROR] {pair.id}: {e}")
                     finally:
-                        # Return cluster to pool
-                        if cluster_name:
-                            cluster_pool.put(cluster_name)
+                        # Return cluster to its pool
+                        if cluster_name and sig and sig in cluster_pools:
+                            cluster_pools[sig].put(cluster_name)
                         self._save_state()
                         if pbar:
                             pbar.update(1)
@@ -472,49 +484,108 @@ class BatchEvaluator:
                 pbar.close()
 
             # Cleanup clusters if we created them
-            if self._cluster_names and not self.keep_cluster:
+            if self._cluster_pools and not self.keep_cluster:
                 self._cleanup_cluster_pool()
 
-    def _create_cluster_pool(self) -> None:
-        """Create a pool of SkyPilot clusters for parallel evaluation."""
-        from ..runner.research_skypilot import ResearchSkyPilotRunner
+    def _create_cluster_pool(self, pairs: List[Pair]) -> None:
+        """Create resource-grouped pools of SkyPilot clusters for parallel evaluation.
 
-        logger.info(f"Creating {self.clusters} SkyPilot clusters...")
+        Groups pairs by their resource requirements (cloud, accelerators, instance_type)
+        and creates separate cluster pools for each group. This ensures that:
+        - CPU-only problems (e.g., nbody_simulation) get CPU-only clusters
+        - GPU problems get GPU clusters
+        - Problems requiring specific instance types get those instances
+        """
+        # Group pairs by resource signature
+        resource_groups = self._group_pairs_by_resources(pairs)
+        num_groups = len(resource_groups)
+
+        logger.info(f"Found {num_groups} resource group(s) across {len(pairs)} pairs")
+        for sig, group_pairs in resource_groups.items():
+            logger.info(f"  - {sig}: {len(group_pairs)} pair(s)")
+
+        # Distribute clusters across resource groups proportionally
+        # (more pairs in a group = more clusters for that group)
+        total_pairs = len(pairs)
+        cluster_counts: Dict[ResourceSignature, int] = {}
+        remaining_clusters = self.clusters
+
+        for sig, group_pairs in resource_groups.items():
+            # Proportional allocation, minimum 1 cluster per group
+            proportion = len(group_pairs) / total_pairs
+            count = max(1, int(self.clusters * proportion))
+            cluster_counts[sig] = min(count, remaining_clusters)
+            remaining_clusters -= cluster_counts[sig]
+
+        # Distribute any remaining clusters to largest groups
+        if remaining_clusters > 0:
+            sorted_groups = sorted(resource_groups.keys(), key=lambda s: len(resource_groups[s]), reverse=True)
+            for sig in sorted_groups:
+                if remaining_clusters <= 0:
+                    break
+                cluster_counts[sig] += 1
+                remaining_clusters -= 1
 
         # Add date hash to cluster names to avoid reusing old clusters with stale config
         date_str = datetime.now().strftime("%m%d%H%M")
         digest = hashlib.md5(date_str.encode()).hexdigest()[:6]
-        self._cluster_names = [f"eval-worker-{i}-{digest}" for i in range(self.clusters)]
+
+        # Create clusters for each resource group
+        all_cluster_specs: List[tuple] = []  # (sig, cluster_name, ResourceSignature)
+        cluster_idx = 0
+        for sig, count in cluster_counts.items():
+            for i in range(count):
+                cluster_name = f"eval-worker-{cluster_idx}-{digest}"
+                all_cluster_specs.append((sig, cluster_name))
+                cluster_idx += 1
+
+        logger.info(f"Creating {len(all_cluster_specs)} SkyPilot cluster(s) across {num_groups} resource group(s)...")
 
         # Create clusters in parallel
-        def create_one(name: str) -> bool:
-            return self._runner.create_cluster(name)
+        def create_one(spec: tuple) -> tuple:
+            sig, cluster_name = spec
+            success = self._runner.create_cluster(cluster_name, sig)
+            return (sig, cluster_name, success)
 
-        with ThreadPoolExecutor(max_workers=self.clusters) as executor:
-            results = list(executor.map(create_one, self._cluster_names))
+        with ThreadPoolExecutor(max_workers=len(all_cluster_specs)) as executor:
+            results = list(executor.map(create_one, all_cluster_specs))
 
-        successful = sum(results)
-        if successful < self.clusters:
-            logger.warning(f"Only {successful}/{self.clusters} clusters created successfully")
-            # Keep only successful clusters
-            self._cluster_names = [
-                name for name, ok in zip(self._cluster_names, results) if ok
-            ]
+        # Organize results by signature
+        self._cluster_pools = {}
+        for sig, cluster_name, success in results:
+            if sig not in self._cluster_pools:
+                self._cluster_pools[sig] = []
+            if success:
+                self._cluster_pools[sig].append(cluster_name)
 
-        if not self._cluster_names:
+        # Report results
+        total_created = sum(len(clusters) for clusters in self._cluster_pools.values())
+        if total_created < len(all_cluster_specs):
+            logger.warning(f"Only {total_created}/{len(all_cluster_specs)} clusters created successfully")
+
+        if total_created == 0:
             raise RuntimeError("Failed to create any clusters")
 
-        logger.info(f"Created {len(self._cluster_names)} clusters")
+        for sig, clusters in self._cluster_pools.items():
+            logger.info(f"  - {sig}: {len(clusters)} cluster(s)")
 
     def _cleanup_cluster_pool(self) -> None:
-        """Terminate all clusters in the pool."""
-        if not self._cluster_names:
+        """Terminate all clusters in all pools."""
+        if not self._cluster_pools:
             return
 
-        logger.info(f"Terminating {len(self._cluster_names)} clusters...")
+        # Collect all cluster names from all pools
+        all_cluster_names = []
+        for clusters in self._cluster_pools.values():
+            all_cluster_names.extend(clusters)
+
+        if not all_cluster_names:
+            return
+
+        logger.info(f"Terminating {len(all_cluster_names)} cluster(s)...")
         from ..runner.research_skypilot import ResearchSkyPilotRunner
-        ResearchSkyPilotRunner.down_clusters(self._cluster_names)
-        self._cluster_names = []
+        ResearchSkyPilotRunner.down_clusters(all_cluster_names)
+        self._cluster_pools = {}
 
     def _get_default_solutions_dir(self) -> Path:
         """Get the solutions directory (explicit or default based on track)."""

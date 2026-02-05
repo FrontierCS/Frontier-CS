@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ..config import load_problem_config
+from ..config import load_problem_config, ResourceSignature
 from ..gen.solution_format import FAILED_EXTENSION
 
 class EvaluationStatus(Enum):
@@ -100,7 +100,11 @@ class ResearchRunner(Runner):
     Provides common functionality:
     - base_dir and problems_dir initialization
     - get_problem_path() implementation
+    - get_resource_signature() for cluster pooling
     """
+
+    # Default cloud provider. Subclasses (e.g., SkyPilot runner) can override.
+    cloud: str = "gcp"
 
     def __init__(
         self,
@@ -179,6 +183,22 @@ class ResearchRunner(Runner):
             "uv_project": uv_project,
             "timeout_seconds": runtime_config.timeout_seconds,
         }
+
+    def get_resource_signature(self, problem_id: str) -> ResourceSignature:
+        """Get the resource signature for a problem.
+
+        Used for cluster pooling in batch evaluation - problems with the same
+        signature can share clusters.
+
+        Args:
+            problem_id: Problem ID (e.g., "nbody_simulation/random_100k")
+
+        Returns:
+            ResourceSignature identifying the cluster resource requirements
+        """
+        problem_path = self.problems_dir / problem_id
+        settings = self._load_runtime_settings(problem_path)
+        return ResourceSignature.from_resources(settings["runtime"].resources, self.cloud)
 
     def _build_uv_install_cmd(self, uv_project: Optional[str]) -> str:
         if not uv_project:

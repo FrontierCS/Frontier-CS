@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
 from .cluster_cleanup import ActiveClusterRegistry
-from ..config import get_problem_extension
+from ..config import get_problem_extension, ResourceSignature
 
 
 def _sanitize_name(name: str) -> str:
@@ -519,34 +519,40 @@ class ResearchSkyPilotRunner(ResearchRunner):
     def create_cluster(
         self,
         cluster_name: str,
-        *,
-        accelerators: Optional[str] = None,
-        cpus: Optional[str] = None,
-        memory: Optional[str] = None,
-        disk_size: Optional[int] = None,
+        signature: Optional[ResourceSignature] = None,
     ) -> bool:
         """
         Create a cluster for reuse across multiple evaluations.
 
         Args:
             cluster_name: Name for the cluster
-            accelerators: GPU spec (e.g., "T4:1", "L4:1")
-            cpus: CPU spec (e.g., "8+")
-            memory: Memory spec (e.g., "16+")
-            disk_size: Disk size in GB
+            signature: Resource signature specifying cloud, accelerators, instance_type.
+                      If None, uses default GPU configuration.
 
         Returns:
             True if cluster was created successfully
         """
         import sky
+        from sky.utils import registry
+
+        # Use signature or fall back to defaults
+        if signature:
+            cloud = signature.cloud
+            accelerators = signature.accelerators
+            instance_type = signature.instance_type
+        else:
+            cloud = self.cloud
+            accelerators = self.DEFAULT_GPU
+            instance_type = None
 
         resources = sky.Resources(
-            cloud=self.cloud,
+            cloud=registry.CLOUD_REGISTRY.from_str(cloud),
             region=self.region,
-            cpus=cpus or self.DEFAULT_CPUS,
-            memory=memory or self.DEFAULT_MEMORY,
-            accelerators=accelerators or self.DEFAULT_GPU,
-            disk_size=disk_size or self.DEFAULT_DISK_SIZE,
+            cpus=self.DEFAULT_CPUS,
+            memory=self.DEFAULT_MEMORY,
+            accelerators=accelerators,
+            disk_size=self.DEFAULT_DISK_SIZE,
+            instance_type=instance_type,
         )
 
         task = sky.Task(
