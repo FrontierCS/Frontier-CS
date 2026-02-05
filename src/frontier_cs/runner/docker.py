@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
-from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE
+from ..config import load_problem_config, DockerConfig, DEFAULT_DOCKER_IMAGE, get_problem_extension
 from ..gen.solution_format import FAILED_EXTENSION
 
 
@@ -93,7 +93,8 @@ class DockerRunner(ResearchRunner):
         # Create temp directory with solution
         with tempfile.TemporaryDirectory(prefix="frontier_eval_") as temp_dir:
             temp_path = Path(temp_dir)
-            solution_path = temp_path / "solution.py"
+            ext = get_problem_extension(problem_path)
+            solution_path = temp_path / f"solution.{ext}"
             solution_path.write_text(solution_code, encoding="utf-8")
 
             return self._run_evaluation(problem_id, problem_path, solution_path)
@@ -244,10 +245,10 @@ class DockerRunner(ResearchRunner):
                 dest = workspace / "research" / parent / "common"
                 shutil.copytree(common_dir, dest)
 
-        # Create solution structure
+        # Create solution structure (preserve original extension)
         solution_dir = workspace / "solution"
         solution_dir.mkdir(parents=True)
-        shutil.copy2(solution_path, solution_dir / "solution.py")
+        shutil.copy2(solution_path, solution_dir / solution_path.name)
 
     def _run_docker(
         self,
@@ -342,7 +343,7 @@ find /work -name "*.sh" -exec chmod +x {{}} \\;
 # Create execution_env and copy solution BEFORE set_up_env.sh
 # (some scripts expect this structure to exist)
 mkdir -p /work/execution_env/solution_env
-cp /work/solution/solution.py /work/execution_env/solution_env/
+cp /work/solution/solution.* /work/execution_env/solution_env/
 
 # Find the problem directory
 PROBLEM_DIR=$(find research -mindepth 1 -maxdepth 4 -name "evaluator.py" -exec dirname {{}} \\; | head -1)

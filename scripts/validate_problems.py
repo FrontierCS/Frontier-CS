@@ -149,7 +149,8 @@ def validate_problem(
         print(f"  Result: {result}")
 
     # Check result
-    if result["success"] and result["score"] > 0:
+    # Accept score >= 0 for baseline references (score=0 means evaluation works, just no speedup)
+    if result["success"] and result["score"] is not None and result["score"] >= 0:
         print(f"  PASS: score = {result['score']}")
         return True
     else:

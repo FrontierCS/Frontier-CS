@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from .base import ResearchRunner, EvaluationResult, EvaluationStatus
-from ..config import load_problem_config
+from ..config import load_problem_config, get_problem_extension
 from ..gen.solution_format import FAILED_EXTENSION
 
 
@@ -118,7 +118,8 @@ class SkyPilotRunner(ResearchRunner):
         # Create temp directory with solution
         with tempfile.TemporaryDirectory(prefix="frontier_sky_") as temp_dir:
             temp_path = Path(temp_dir)
-            solution_path = temp_path / "solution.py"
+            ext = get_problem_extension(problem_path)
+            solution_path = temp_path / f"solution.{ext}"
             solution_path.write_text(solution_code, encoding="utf-8")
 
             return self._run_evaluation(problem_id, problem_path, solution_path, solution_id)
@@ -337,10 +338,10 @@ class SkyPilotRunner(ResearchRunner):
             if common_dir.is_dir():
                 mounts[f"{remote_base}/research/{parent}/common"] = str(common_dir.resolve())
 
-        # Mount solution
+        # Mount solution (preserve original extension)
         solution_dir = workspace / "solution"
         solution_dir.mkdir(parents=True)
-        shutil.copy2(solution_path, solution_dir / "solution.py")
+        shutil.copy2(solution_path, solution_dir / solution_path.name)
         mounts[f"{remote_base}/solution"] = str(solution_dir.resolve())
 
         return mounts
@@ -459,7 +460,7 @@ class SkyPilotRunner(ResearchRunner):
                     # Create execution_env and copy solution BEFORE set_up_env.sh
                     # (some scripts expect this structure to exist)
                     mkdir -p /work/execution_env/solution_env
-                    cp /work/solution/solution.py /work/execution_env/solution_env/
+                    cp /work/solution/solution.* /work/execution_env/solution_env/
                     echo "[framework] Evaluating: {pair_id or problem_id}"
 
                     cd /work/research/{problem_id}
