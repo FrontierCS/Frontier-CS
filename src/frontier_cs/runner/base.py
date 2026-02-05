@@ -179,3 +179,18 @@ class ResearchRunner(Runner):
             "uv_project": uv_project,
             "timeout_seconds": runtime_config.timeout_seconds,
         }
+
+    def _build_uv_install_cmd(self, uv_project: Optional[str]) -> str:
+        if not uv_project:
+            return "# No uv_project specified in config.yaml"
+
+        return (
+            f'if [ -d "{uv_project}" ] && [ -f "{uv_project}/pyproject.toml" ]; then\n'
+            f'    echo "[framework] Installing dependencies from {uv_project}"\n'
+            f'    if [ -f "{uv_project}/uv_overrides.txt" ]; then\n'
+            f'        uv pip install --system --overrides "{uv_project}/uv_overrides.txt" -e "{uv_project}"\n'
+            f'    else\n'
+            f'        uv pip install --system -e "{uv_project}"\n'
+            f'    fi\n'
+            f'fi'
+        )

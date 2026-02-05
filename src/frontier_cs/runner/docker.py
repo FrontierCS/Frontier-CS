@@ -274,17 +274,7 @@ class DockerRunner(ResearchRunner):
 
     def _get_run_script(self, uv_project: Optional[str] = None, dind: bool = False) -> str:
         """Get the bash script to run inside Docker."""
-        # Build uv install command if uv_project is specified
-        if uv_project:
-            uv_install_cmd = f'''
-# Install dependencies from uv_project
-if [ -d "{uv_project}" ] && [ -f "{uv_project}/pyproject.toml" ]; then
-    echo "[framework] Installing dependencies from {uv_project}"
-    uv pip install --system -e "{uv_project}"
-fi
-'''
-        else:
-            uv_install_cmd = "# No uv_project specified"
+        uv_install_cmd = self._build_uv_install_cmd(uv_project)
 
         # Build Docker CLI install command for DinD
         if dind:

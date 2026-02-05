@@ -396,20 +396,7 @@ class SkyPilotRunner(ResearchRunner):
         else:
             bucket_write = ""
 
-        # Build uv pip install command if uv_project is specified in config.yaml
-        # If uv_overrides.txt exists in the project, use it to protect system packages
-        if uv_project:
-            uv_sync_cmd = textwrap.dedent(f'''
-                    if [ -d "{uv_project}" ] && [ -f "{uv_project}/pyproject.toml" ]; then
-                        echo "[framework] Installing dependencies from {uv_project}"
-                        if [ -f "{uv_project}/uv_overrides.txt" ]; then
-                            uv pip install --system --overrides "{uv_project}/uv_overrides.txt" -e "{uv_project}"
-                        else
-                            uv pip install --system -e "{uv_project}"
-                        fi
-                    fi''').strip()
-        else:
-            uv_sync_cmd = "# No uv_project specified in config.yaml"
+        uv_sync_cmd = self._build_uv_install_cmd(uv_project)
 
         return textwrap.dedent(f"""\
             set -euo pipefail
