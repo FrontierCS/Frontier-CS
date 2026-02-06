@@ -1,18 +1,39 @@
 # Evaluation Architecture
 
-This document summarizes how evaluation flows through the codebase and names the
-key components introduced in the recent refactors.
+This document summarizes how evaluation flows through the codebase, who it is
+for, and the guiding design choices behind the current structure.
+
+## Audience
+
+- Contributors changing evaluation behavior, runners, or CI workflows.
+- Maintainers debugging evaluation failures or infra cleanup issues.
+
+## Goals
+
+- Clear separation between single-problem and batch evaluation.
+- Shared validation/config parsing across research backends.
+- Predictable cleanup to avoid orphaned cloud resources.
+- Explicit naming to avoid backend ambiguity.
+
+## Architecture at a Glance
+
+- **CLI**:
+  - `frontier eval` → `SingleEvaluator`
+  - `frontier batch` → `BatchEvaluator`
+- **CI**:
+  - Validate Problems → `scripts/validate_problems.py` → `SingleEvaluator`
+  - Weekly Batch Evaluation → `scripts/run_eval.sh` → `BatchEvaluator`
 
 ## Components
 
 ### SingleEvaluator
-`SingleEvaluator` is the unified API for **single-problem evaluation**. It:
+Unified API for **single-problem evaluation**. It:
 
 - Chooses a runner based on track and backend.
 - Registers cleanup hooks for SkyPilot clusters (SIGINT/atexit).
 
 ### BatchEvaluator
-`BatchEvaluator` orchestrates **batch evaluation** with parallel workers and
+Orchestrates **batch evaluation** with parallel workers and
 SkyPilot cluster pools. It handles:
 
 - Work queues, resumable state, and result aggregation.
@@ -53,18 +74,11 @@ The execution path diverges only at the backend:
 - Docker runner launches a local container.
 - SkyPilot runner provisions and executes on cloud resources.
 
-## Cleanup Behavior
+## Operations (Cleanup + CI)
 
-- `ResearchSkyPilotRunner` always downs the evaluation cluster unless
-  `keep_cluster=True`.
-- Active clusters are tracked in a registry so `SingleEvaluator` can clean up on
-  SIGINT/atexit.
-- `BatchEvaluator` uses its own cluster pool cleanup (independent of the
-  registry).
+- **Cleanup**: research evaluations down clusters by default unless
+  `keep_cluster=True`; `SingleEvaluator` also cleans up on SIGINT/atexit using an
+  active-cluster registry. `BatchEvaluator` owns its cluster pool lifecycle.
 
-## CI Mapping
-
-- **Validate Problems** uses `SingleEvaluator` through
-  `scripts/validate_problems.py`.
-- **Weekly Batch Evaluation** uses `BatchEvaluator` via `scripts/run_eval.sh`
-  and typically runs on SkyPilot (GCP by default).
+- **CI**: Validate Problems runs single evals; Weekly Batch Evaluation runs
+  batch evals (typically SkyPilot on GCP).
