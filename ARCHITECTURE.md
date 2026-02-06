@@ -5,8 +5,9 @@ for, and the guiding design choices behind the current structure.
 
 ## Audience
 
-- Researchers and engineers using Frontier-CS to evaluate solutions.
-- Contributors extending problems, runners, or evaluation workflows.
+- **Problem contributors** (see `CONTRIBUTING.md`)
+- **Model submitters** (see `SUBMIT.md`)
+- **General researchers** using Frontier-CS to evaluate solutions
 
 ## Goals
 
