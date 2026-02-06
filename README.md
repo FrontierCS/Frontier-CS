@@ -168,7 +168,7 @@ print(f"Score (bounded): {result.score}")
 print(f"Score (unbounded): {result.score_unbounded}")
 ```
 
-See `docs/evaluation-architecture.md` for an overview of the evaluation stack
+See `ARCHITECTURE.md` for an overview of the evaluation stack
 and runner mapping.
 
 ### Batch Evaluation
