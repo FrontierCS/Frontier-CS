@@ -26,6 +26,20 @@ Runners execute the actual evaluation. The mapping is:
 - **Algorithmic + docker** → `AlgorithmicLocalRunner`
 - **Algorithmic + skypilot** → `AlgorithmicSkyPilotRunner`
 
+## Design Decisions
+
+- **Single vs Batch**: `SingleEvaluator` stays focused on one-off evaluation
+  (simple API + cleanup hooks), while `BatchEvaluator` owns scheduling,
+  resumable state, and cluster pools. This keeps single-run paths lightweight
+  and batch runs scalable.
+- **Shared research helpers**: input validation and config parsing are shared
+  in `ResearchRunner` to avoid drift between Docker and SkyPilot backends.
+- **Cleanup strategy**: research SkyPilot evaluations down clusters by default
+  (cost/safety), with `keep_cluster` as the opt-out. Batch uses its own pool
+  cleanup because cluster lifecycle is managed at the scheduler level.
+- **Naming**: runner class names are explicit about track + backend
+  (e.g., `ResearchDockerRunner`) to remove ambiguity in logs and docs.
+
 ## Runner Flow (Research)
 
 Both research runners share the same input validation and config parsing:
@@ -55,4 +69,3 @@ The execution path diverges only at the backend:
   `scripts/validate_problems.py`.
 - **Weekly Batch Evaluation** uses `BatchEvaluator` via `scripts/run_eval.sh`
   and typically runs on SkyPilot (GCP by default).
-
