@@ -5,8 +5,8 @@ for, and the guiding design choices behind the current structure.
 
 ## Audience
 
-- Contributors changing evaluation behavior, runners, or CI workflows.
-- Maintainers debugging evaluation failures or infra cleanup issues.
+- Researchers and engineers using Frontier-CS to evaluate solutions.
+- Contributors extending problems, runners, or evaluation workflows.
 
 ## Goals
 
