@@ -34,9 +34,8 @@ Runners execute the actual evaluation. The mapping is:
   and batch runs scalable.
 - **Shared research helpers**: input validation and config parsing are shared
   in `ResearchRunner` to avoid drift between Docker and SkyPilot backends.
-- **Cleanup strategy**: research SkyPilot evaluations down clusters by default
-  (cost/safety), with `keep_cluster` as the opt-out. Batch uses its own pool
-  cleanup because cluster lifecycle is managed at the scheduler level.
+- **Cleanup strategy**: research evaluations down clusters by default unless
+  `keep_cluster` is set; batch handles its own pool cleanup.
 - **Naming**: runner class names are explicit about track + backend
   (e.g., `ResearchDockerRunner`) to remove ambiguity in logs and docs.
 
