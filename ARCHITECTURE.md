@@ -60,6 +60,18 @@ Runners execute the actual evaluation. The mapping is:
   `keep_cluster` is set; batch handles its own pool cleanup.
 - **Naming**: runner class names are explicit about track + backend
   (e.g., `ResearchDockerRunner`) to remove ambiguity in logs and docs.
+- **Score semantics**: a score of **0** can still mean the evaluator ran
+  successfully; failures are reported via status/metadata rather than relying
+  solely on score.
+- **Reference solutions**: problems include `reference.cpp`/`reference.py` so
+  CI can verify end-to-end evaluation without requiring model submissions.
+- **Results separation**: evaluation outputs are pushed to a dedicated results
+  repository to keep the main repo lean and auditable.
+- **Internal vs public**: internal test cases and tooling live in a private
+  repo, with public artifacts kept minimal but compatible.
+- **Weekly vs local**: weekly CI uses `scripts/run_eval.sh` with batch
+  scheduling, while local runs can use the same script or `frontier eval` for
+  quick iteration.
 
 ## Runner Flow (Research)
 
