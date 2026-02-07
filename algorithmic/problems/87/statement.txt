@@ -9,7 +9,7 @@ In one transformation, each node simultaneously changes its color to either:
 Your goal is to minimize the number of transformations needed. You can use at most 20,000 transformations.
 
 Input
-The first line contains two integers n (1 ≤ n ≤ 100) and m — the number of nodes and edges in the graph.
+The first line contains two integers n (1 ≤ n ≤ 1000) and m (1 ≤ m ≤ 1e5) — the number of nodes and edges in the graph.
 The second line contains n integers representing the initial state.
 The third line contains n integers representing the target state.
 The next m lines each contain two integers u and v, indicating an undirected edge between nodes u and v. The graph has no self-loops or multiple edges.
