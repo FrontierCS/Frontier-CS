@@ -1,3 +1,4 @@
+
 <p align="">
   <a href="https://frontier-cs.org">
     <img src="assets/logo.png" alt="Frontier-CS Logo" width="2000"/>
@@ -19,7 +20,19 @@ Evolving Challenges for Evolving Intelligence
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-68-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-172-green" alt="Algorithmic Problems">
+  <a href="https://github.com/FrontierCS/Frontier-CS/stargazers">
+    <img src="https://img.shields.io/github/stars/FrontierCS/Frontier-CS?style=social" alt="GitHub stars">
+  </a>
 </p>
+
+> **Frontier-CS is the benchmark underlying [IIMOC]([url](https://iimoc.org/)) and other open-ended algorithmic challenges.**
+>
+> It tracks best-known solutions over time on *unsolved* problems, enabling fair, continuous evaluation of both humans and AI systems.
+
+**Quick actions**
+- ⭐ Star the benchmark to follow progress
+- 🏁 Try a problem locally in under a minute
+- 📈 Submit an improved solution to the leaderboard
 
 ## What is Frontier-CS?
 
@@ -30,6 +43,8 @@ Think of it as an "exam" for AI, but instead of easy textbook questions, we give
 ## Why Frontier-CS?
 
 Current benchmarks are becoming too easy. Models score 90%+ on many existing coding benchmarks, but that doesn't mean they can actually do useful research or solve real-world engineering challenges.
+
+> ⭐ **If you find this benchmark useful, starring the repository helps keep it visible and actively maintained.**
 
 **Frontier-CS is different:**
 
@@ -43,7 +58,6 @@ Current benchmarks are becoming too easy. Models score 90%+ on many existing cod
 ## 🏆 Leaderboard Snapshot (01/29/2026)
 
 Score@k = best-of-k runs; Avg@k = average over k runs; Elo uses Bradley–Terry from single-attempt performance (difficulty-normalized).
-
 
 <a id="algorithmic-track"></a>
 ### Algorithmic Track (172 problems)
@@ -73,8 +87,17 @@ Score@k = best-of-k runs; Avg@k = average over k runs; Elo uses Bradley–Terry 
 | 6 | Grok 4 | 26.75 | 24.01 | 48.15 | 1149 |
 | 7 | DeepSeek 3.2 | 21.51 | 21.76 | 44.41 | 1146 |
 
+## Quick Start
 
-## Getting Started
+### 30-second demo (no setup beyond Python)
+
+```bash
+pip install frontier-cs
+frontier list algorithmic
+frontier eval algorithmic 0 examples/reference.cpp
+````
+
+> Algorithmic problems run fully locally. No cloud or credentials required.
 
 ### Installation
 
@@ -173,6 +196,7 @@ print(f"Score (unbounded): {result.score_unbounded}")
 For testing your solutions at scale with public test cases.
 
 **Solution directory structure:**
+
 ```
 {track}/solutions/
   {problem}/
@@ -182,6 +206,7 @@ For testing your solutions at scale with public test cases.
 ```
 
 Example for research track:
+
 ```
 research/solutions/
   flash_attn/
@@ -216,17 +241,22 @@ frontier batch research --solutions-dir ./my_solutions
 ```
 
 Results are saved to `./results/batch/{track}/` by default. The state file tracks which (solution, problem) pairs have been evaluated, so you can:
-- Resume interrupted evaluations automatically
-- Run multiple times with different `--solutions-dir` and results accumulate
+
+* Resume interrupted evaluations automatically
+* Run multiple times with different `--solutions-dir` and results accumulate
 
 See `--help` for all options.
 
 > **Note:** For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
 
-
 ## Evaluating and Submitting Results
 
-Reference solutions and full test cases are withheld. We release partial test cases so you can develop and debug locally. For the complete evaluation workflow (preparing solutions, running batch evaluation, viewing results, and submitting to the leaderboard), see [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.
+Frontier-CS is an **open benchmark**.
+We welcome external submissions that improve best-known results.
+
+Reference solutions and full test cases are withheld. We release partial test cases so you can develop and debug locally. For the complete evaluation workflow (preparing solutions, running batch evaluation, viewing results, and submitting to the leaderboard), see [SUBMIT.md](SUBMIT.md).
+
+To submit results, email your solutions to [qmang@berkeley.edu](mailto:qmang@berkeley.edu), [wenhao.chai@princeton.edu](mailto:wenhao.chai@princeton.edu), [huanzhimao@berkeley.edu](mailto:huanzhimao@berkeley.edu), or [zhifei.li@berkeley.edu](mailto:zhifei.li@berkeley.edu).
 
 Questions? Join our [Discord](https://discord.gg/k4hd2nU4UE)
 
@@ -234,7 +264,9 @@ Questions? Join our [Discord](https://discord.gg/k4hd2nU4UE)
 
 Some problems are adapted from [ALE-bench](https://github.com/SakanaAI/ALE-Bench) and [AI-Driven Research for Systems (ADRS)](https://ucbskyadrs.github.io/).
 
-## Citing Us
+## Using Frontier-CS in Research
+
+Frontier-CS is intended to be cited as the **evaluation benchmark** when reporting open-ended algorithmic or research performance.
 
 If you use Frontier-CS in your research, please cite:
 
