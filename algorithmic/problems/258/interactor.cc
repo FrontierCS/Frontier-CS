@@ -156,6 +156,7 @@ int main(int argc, char* argv[]) {
 
         // Calculate raw ratio
         double ratio = numerator / denominator;
+        ratio = max(0.0, ratio);
         double calculated_score = ratio * ratio;
 
         if (solved) {
