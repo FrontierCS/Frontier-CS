@@ -107,7 +107,7 @@ frontier eval algorithmic 0 <your_solution.cpp>
 ```
 
 <p align="center">
-  <img src="assets/teaser.png" alt="Example Problem" width="800"/>
+  <img src="assets/teaser.png" alt="Example polyomino packing solution visualized with scripts/viz.py" width="800"/>
 </p>
 
 ### Research Problems
