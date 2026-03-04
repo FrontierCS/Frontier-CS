@@ -20,10 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     pypy3 \
     openjdk-17-jdk \
-    kotlin \
-    rustc \
-    cargo \
-    golang \
     # Install Node.js 20.x
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \

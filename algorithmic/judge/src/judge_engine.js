@@ -320,23 +320,47 @@ export class JudgeEngine {
             const { checkerId } = await this.getOrCompileChecker(pid, problem);
 
             // Run all cases
-            let totalScore = 0;
-            let totalScoreUnbounded = 0;
-            const caseResults = [];
-            for (const c of problem.cases) {
-                const r = await this.judgeCase({ runSpec, caseItem: c, problem, checkerId });
+            // let totalScore = 0;
+            // let totalScoreUnbounded = 0;
+            // const caseResults = [];
+            // for (const c of problem.cases) {
+            //     const r = await this.judgeCase({ runSpec, caseItem: c, problem, checkerId });
                 
+            //     const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
+            //     const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
+                
+            //     r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
+            //     r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
+                
+            //     totalScore += r.scoreRatio;
+            //     totalScoreUnbounded += r.scoreRatioUnbounded;
+            //     caseResults.push(r);
+            // }
+            
+            const casePromises = problem.cases.map(async (c) => {
+                const r = await this.judgeCase({ runSpec, caseItem: c, problem, checkerId });
+
                 const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
                 const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-                
+
                 r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
                 r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-                
+
+                return r;
+            });
+
+            const caseResults = await Promise.all(casePromises);
+
+            // Aggregate
+            let totalScore = 0;
+            let totalScoreUnbounded = 0;
+            for (const r of caseResults) {
                 totalScore += r.scoreRatio;
                 totalScoreUnbounded += r.scoreRatioUnbounded;
-                caseResults.push(r);
             }
-            
+
+
+
             // The overall "passed" status depends on all cases achieving a perfect score ratio
             const passed = caseResults.every(r => r.scoreRatio === 1.0);
             const overallResult = passed ? 'Correct Answer' : 'Wrong Answer';
@@ -389,22 +413,43 @@ export class JudgeEngine {
             const { interactorId } = await this.getOrCompileInteractor(pid, problem);
 
             // Run all cases and calculate score
-            let totalScore = 0;
-            let totalScoreUnbounded = 0;
-            const caseResults = [];
-            for (const c of problem.cases) {
-                const r = await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId });
+            // let totalScore = 0;
+            // let totalScoreUnbounded = 0;
+            // const caseResults = [];
+            // for (const c of problem.cases) {
+            //     const r = await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId });
                 
-                // Parse score ratio from interactor message
+            //     // Parse score ratio from interactor message
+            //     const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
+            //     const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
+                
+            //     r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
+            //     r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
+                
+            //     totalScore += r.scoreRatio;
+            //     totalScoreUnbounded += r.scoreRatioUnbounded;
+            //     caseResults.push(r);
+            // }
+
+            const casePromises = problem.cases.map(async (c) => {
+                const r = await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId });
+
                 const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
                 const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-                
+
                 r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
                 r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-                
+
+                return r;
+            });
+
+            const caseResults = await Promise.all(casePromises);
+
+            let totalScore = 0;
+            let totalScoreUnbounded = 0;
+            for (const r of caseResults) {
                 totalScore += r.scoreRatio;
                 totalScoreUnbounded += r.scoreRatioUnbounded;
-                caseResults.push(r);
             }
 
             const passed = caseResults.every(r => r.scoreRatio === 1.0);
