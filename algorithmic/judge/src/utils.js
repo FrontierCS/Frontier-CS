@@ -115,23 +115,17 @@ export async function findTestCases(dir) {
         return validCases;
     }
 
-// Submission ID generation and path management
 export class SubmissionManager {
     constructor(dataRoot, submissionsRoot, bucketSize = 100) {
         this.dataRoot = dataRoot;
         this.submissionsRoot = submissionsRoot;
         this.bucketSize = bucketSize;
-        this.counterFile = path.join(dataRoot, 'counter.txt');
+        this.sid = null;
     }
 
-    async nextSubmissionId() {
-        let n = 0;
-        try { 
-            n = parseInt((await fs.readFile(this.counterFile, 'utf8')).trim(), 10) || 0; 
-        } catch { }
-        const next = n + 1;
-        await fs.writeFile(this.counterFile, String(next));
-        return next;
+    async init() {
+        this.sid = await this.getStartSid();
+        return this;
     }
 
     submissionPaths(sid) {
@@ -141,7 +135,51 @@ export class SubmissionManager {
         return { bucketDir, subDir };
     }
 
+    async getStartSid() {
+        await fs.mkdir(this.submissionsRoot, { recursive: true });
+        const buckets = await fs.readdir(this.submissionsRoot, { withFileTypes: true }).catch(() => []);
+        const numericBuckets = buckets
+            .filter(d => d.isDirectory())
+            .map(d => Number.parseInt(d.name, 10))
+            .filter(Number.isFinite)
+            .sort((a, b) => a - b);
+        if (numericBuckets.length === 0) return 0;
+
+        const lastBucket = numericBuckets.at(-1);
+        const lastDir = path.join(this.submissionsRoot, String(lastBucket));
+        const subs = await fs.readdir(lastDir, { withFileTypes: true }).catch(() => []);
+        const sids = subs
+            .filter(d => d.isDirectory())
+            .map(d => Number.parseInt(d.name, 10))
+            .filter(Number.isFinite);
+
+        const maxSid = sids.length ? Math.max(...sids) : lastBucket - 1;
+        return Math.max(0, maxSid);
+    }
+
+    async nextSubmissionId() {
+        if (typeof this.sid !== 'number') {
+            this.sid = await this.getStartSid();
+        }
+        for (; ;) {
+            const trySid = this.sid + 1;
+            const { bucketDir, subDir } = this.submissionPaths(trySid);
+            await fs.mkdir(bucketDir, { recursive: true });
+            try {
+                await fs.mkdir(subDir, { recursive: false });
+                this.sid = trySid;
+                return trySid;
+            } catch (e) {
+                if (e && e.code === 'EEXIST') {
+                    this.sid = trySid;
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
     async resetCounter() {
-        await fs.writeFile(this.counterFile, '0');
+        this.sid = await this.getStartSid();
     }
 }
