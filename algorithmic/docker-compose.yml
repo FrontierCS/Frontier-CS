@@ -5,6 +5,10 @@ services:
     container_name: Competitive-Programming
     privileged: true              # Required by go-judge
     shm_size: "4g"                # Recommended >= 2G
+    ulimits:
+      stack:
+        soft: -1
+        hard: -1
     environment:
       PORT: "8081"                # Orchestrator API port
       GJ_ADDR: "http://127.0.0.1:5050"
