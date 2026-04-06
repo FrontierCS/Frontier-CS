@@ -12,7 +12,9 @@ downstream.
 import asyncio
 import json
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,8 +153,13 @@ async def run_agent(
     from claude_agent_sdk import query, ClaudeAgentOptions
     from claude_agent_sdk.types import StreamEvent
 
-    prompt = build_agent_prompt(problem_dir)
-    workdir = Path(problem_dir)
+    # Copy problem dir to a temp working directory to avoid polluting the original.
+    # This also makes concurrent runs on the same problem safe.
+    tmpdir = tempfile.mkdtemp(prefix="agent_eval_")
+    workdir = Path(tmpdir) / "problem"
+    shutil.copytree(problem_dir, workdir)
+
+    prompt = build_agent_prompt(str(workdir))
 
     options = ClaudeAgentOptions(
         model=model,
@@ -200,6 +207,14 @@ async def run_agent(
                                 f"  [{elapsed:6.1f}s] [turn {num_turns}] {tool}",
                                 flush=True,
                             )
+
+                    # Track token usage from streaming message_delta events.
+                    # This is the only reliable source when timeout kills
+                    # the run before ResultMessage arrives.
+                    if event_type == "message_delta":
+                        delta_usage = event.get("usage", {})
+                        if delta_usage.get("output_tokens"):
+                            usage_out = delta_usage["output_tokens"]
 
                 elif isinstance(message, AssistantMessage):
                     num_turns += 1
@@ -267,6 +282,9 @@ async def run_agent(
     if not code and status == "success":
         status = "error"
         logger.error("Agent completed but no .cpp file found in %s", workdir)
+
+    # Clean up temp directory
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
     metadata = build_metadata(
         tokens_in=usage_in,
