@@ -17,6 +17,7 @@ import os
 import time
 import argparse
 import re
+import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -54,6 +55,7 @@ class GenerationTask:
     variant_index: int
     solution_name: str
     total_variants: int = 1
+    problem_dir: Optional[str] = None  # Set for agent models
 
 
 class AlgorithmicJudgeClient:
@@ -298,6 +300,12 @@ def main():
     parser.add_argument("--concurrency", type=int, default=4,
                         help="Maximum parallel generations")
 
+    # Agent-specific parameters
+    parser.add_argument("--agent-timeout", type=float, default=1200.0,
+                        help="Agent timeout in seconds (default: 1200 = 20 min)")
+    parser.add_argument("--agent-cost-limit", type=float, default=20.0,
+                        help="Agent max cost per problem in USD (default: 20)")
+
     args = parser.parse_args()
 
     # Output directory for algorithmic solutions
@@ -395,10 +403,14 @@ def main():
             print(f"{yellow('WARNING:')} Could not get statement for problem {problem_id}")
             continue
 
+        # Resolve problem directory for agent models
+        problem_dir_path = algo_dir / "problems" / problem_id
+
         for model in models_list:
             model_prefix = get_model_prefix(model)
             provider = detect_provider(model)
             reasoning = is_reasoning_model(model)
+            is_agent = model.endswith("-agent")
 
             for variant_idx in solution_indices:
                 # Nested format: {problem}/{model}.cpp or {problem}/{model}_{variant}.cpp
@@ -428,6 +440,7 @@ def main():
                     variant_index=variant_idx,
                     solution_name=sol_filename,
                     total_variants=len(solution_indices),
+                    problem_dir=str(problem_dir_path) if is_agent else None,
                 ))
 
     # Print plan
@@ -498,14 +511,40 @@ def main():
         failed_path = get_failed_path(sol_path)
 
         try:
-            code = generate_code(
-                task.statement,
-                model=task.model,
-                api_key=api_key,
-                log_file=log_file,
-                is_reasoning_model=task.reasoning_model,
-                timeout=args.timeout,
-            )
+            if task.problem_dir is not None:
+                # Agent mode
+                from frontier_cs.gen.agent_interface import generate_agent_solution
+
+                base_model = task.model.removesuffix("-agent")
+                transcript_path = logs_dir / task.solution_name.replace(".cpp", f"_{timestamp}.transcript.jsonl")
+                transcript_path.parent.mkdir(parents=True, exist_ok=True)
+
+                code, metadata = generate_agent_solution(
+                    problem_dir=task.problem_dir,
+                    model=base_model,
+                    cost_limit=args.agent_cost_limit,
+                    timeout=args.agent_timeout,
+                    transcript_path=transcript_path,
+                )
+
+                # Save metadata alongside solution
+                meta_path = sol_path.with_suffix(".meta.json")
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                print(f"  {dim('meta:')} {meta_path}")
+            else:
+                # Single-shot mode (existing)
+                code = generate_code(
+                    task.statement,
+                    model=task.model,
+                    api_key=api_key,
+                    log_file=log_file,
+                    is_reasoning_model=task.reasoning_model,
+                    timeout=args.timeout,
+                )
+
+            if not code:
+                raise RuntimeError("No solution code produced")
 
             # Save solution to nested directory
             sol_path.parent.mkdir(parents=True, exist_ok=True)
