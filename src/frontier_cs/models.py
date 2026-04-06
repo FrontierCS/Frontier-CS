@@ -42,6 +42,12 @@ def get_model_prefix(model: str) -> str:
     """
     original = model
 
+    # Strip and track -agent suffix
+    agent_suffix = ""
+    if model.endswith("-agent"):
+        agent_suffix = "agent"
+        model = model.removesuffix("-agent")
+
     # Remove provider prefix if present (e.g., 'gemini/gemini-2.5-pro' -> 'gemini-2.5-pro')
     if "/" in model:
         model = model.split("/", 1)[1]
@@ -51,21 +57,21 @@ def get_model_prefix(model: str) -> str:
     # Handle GPT-5 variants
     # Keep 'gpt-5.1', 'gpt-5.2' etc. distinct so their artifacts prefix correctly
     if model_lower.startswith("gpt-5.2") or model_lower.startswith("gpt5.2"):
-        return "gpt5.2"
+        return "gpt5.2" + agent_suffix
     if model_lower.startswith("gpt-5.1") or model_lower.startswith("gpt5.1"):
-        return "gpt5.1"
+        return "gpt5.1" + agent_suffix
     if model_lower.startswith("gpt-5") or model_lower.startswith("gpt5"):
-        return "gpt5"
+        return "gpt5" + agent_suffix
 
     # Handle Gemini 2.5 Pro variants
     if "gemini-2.5-pro" in model_lower or "gemini2.5pro" in model_lower:
-        return "gemini2.5pro"
+        return "gemini2.5pro" + agent_suffix
 
     # Handle other Gemini variants (e.g., gemini-1.5-pro -> gemini1.5pro)
     gemini_match = re.match(r"gemini-?(\d+\.?\d*)-?pro", model_lower)
     if gemini_match:
         version = gemini_match.group(1)
-        return f"gemini{version}pro"
+        return f"gemini{version}pro" + agent_suffix
 
     # Handle Claude variants (e.g., claude-sonnet-4-5-20250929 -> claude4.5sonnet)
     claude_match = re.match(r"claude-([a-z]+)-(\d+)-(\d+)", model_lower)
@@ -73,19 +79,19 @@ def get_model_prefix(model: str) -> str:
         family = claude_match.group(1)
         major = claude_match.group(2)
         minor = claude_match.group(3)
-        return f"claude{major}.{minor}{family}"
+        return f"claude{major}.{minor}{family}" + agent_suffix
 
     # Handle Grok variants - keep 'fast' and 'reasoning' in the prefix
     if "grok" in model_lower:
         sanitized = re.sub(r"[^a-zA-Z0-9]+", "", model_lower)
         if sanitized:
-            return sanitized
+            return sanitized + agent_suffix
 
     # Default: sanitize by removing all non-alphanumeric characters
     sanitized = re.sub(r"[^a-zA-Z0-9]+", "", model_lower)
     if not sanitized:
         raise ValueError(f"Unable to derive model prefix from '{original}'")
-    return sanitized
+    return sanitized + agent_suffix
 
 
 def normalize_solution_name(name: str) -> str:
@@ -217,6 +223,10 @@ def detect_provider(model: str) -> str:
     Returns:
         Provider name: 'openai', 'google', 'anthropic', 'xai', 'deepseek', 'openrouter'
     """
+    # Strip agent suffix before detection
+    if model.endswith("-agent"):
+        model = model.removesuffix("-agent")
+
     normalized = model.strip()
     if "/" in normalized:
         provider_hint, actual_model = normalized.split("/", 1)
