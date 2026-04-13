@@ -113,7 +113,10 @@ class SingleEvaluator:
     def algorithmic_runner(self) -> AlgorithmicLocalRunner:
         """Get or create the algorithmic runner."""
         if self._algorithmic_runner is None:
-            self._algorithmic_runner = AlgorithmicLocalRunner(judge_url=self.judge_url)
+            self._algorithmic_runner = AlgorithmicLocalRunner(
+                judge_url=self.judge_url,
+                base_dir=self.base_dir,
+            )
         return self._algorithmic_runner
 
     @property
