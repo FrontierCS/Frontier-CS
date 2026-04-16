@@ -15,7 +15,6 @@ import logging
 import os
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -587,19 +586,6 @@ def extract_solution_cpp(workdir: Path) -> str:
     return ""
 
 
-def _get_infra_git_hash() -> str:
-    """Get the current git commit hash of this repo (infra code)."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-            cwd=Path(__file__).parent,
-        )
-        return result.stdout.strip() if result.returncode == 0 else "unknown"
-    except Exception:
-        return "unknown"
-
-
 def build_metadata(
     *,
     tokens_in: int,
@@ -610,7 +596,6 @@ def build_metadata(
     status: str,
     model: str,
     prompt: str,
-    parity: bool = False,
 ) -> Dict[str, Any]:
     """Build the metadata dict for an agent run.
 
@@ -623,7 +608,6 @@ def build_metadata(
         status: One of "success", "timeout", "cost_limit", "error".
         model: The model name passed to the agent SDK.
         prompt: The full prompt sent to the agent.
-        parity: Whether this run used parity mode.
 
     Returns:
         Metadata dictionary.
@@ -637,9 +621,6 @@ def build_metadata(
         "time_seconds": round(time_seconds, 2),
         "turns": turns,
         "status": status,
-        "infra_git_hash": _get_infra_git_hash(),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "parity": parity,
     }
 
 
@@ -875,7 +856,6 @@ async def run_agent(
         status=status,
         model=model,
         prompt=prompt,
-        parity=parity,
     )
 
     return code, metadata
