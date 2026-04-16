@@ -25,22 +25,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from frontier_cs.gen.agent_constants import (
-    CLAUDE_MD_FOOTER,
-    CLAUDE_MD_FULL_INTERACTIVE,
-    CLAUDE_MD_FULL_STANDARD,
-    CLAUDE_MD_HEADER,
-    CLAUDE_MD_PARITY_INTERACTIVE,
-    CLAUDE_MD_PARITY_TESTING,
+    CLAUDE_MD_FULL_ACCESS,
+    CLAUDE_MD_PARITY,
+    CLAUDE_MD_PARITY_INTERACTIVE_ADDENDUM,
     FULL_ACCESS_INTERACTIVE_SECTION,
     FULL_ACCESS_PROMPT,
-    FULL_ACCESS_SCORING_SECTION,
     FULL_ACCESS_STANDARD_SECTION,
-    FULL_ACCESS_WORKFLOW,
+    FULL_ACCESS_TAIL,
     PARITY_INTERACTIVE_SECTION,
     PARITY_PROMPT,
-    PARITY_SCORING_AND_WORKFLOW,
     PARITY_SPJ_SECTION,
     PARITY_STANDARD_SECTION,
+    PARITY_TAIL,
     RUN_INTERACTIVE_SH,
     TEST_ALL_SH,
 )
@@ -148,16 +144,11 @@ def build_agent_prompt(problem_dir: str, *, parity: bool = True) -> str:
         checker_note = ""
         if has_checker:
             checker_note = ("\nNote: This problem has a SPECIAL JUDGE (chk.cc) — "
-                           "multiple valid outputs may be accepted.\n"
-                           "`test_all.sh` will automatically compile and use the "
-                           "checker for validation.\nIf the checker reports PASS but "
-                           "the output looks different from the .ans file, that's fine.")
+                           "multiple valid outputs may be accepted.")
         problem_type = "SPECIAL JUDGE (multiple valid outputs accepted)" if has_checker else "STANDARD"
         parts.append(FULL_ACCESS_STANDARD_SECTION.format(
             problem_type=problem_type, checker_note=checker_note,
         ))
-
-    parts.append(FULL_ACCESS_SCORING_SECTION.format(total_cases=total_cases))
 
     sample_text = _format_samples(samples, is_interactive)
     if sample_text:
@@ -165,7 +156,7 @@ def build_agent_prompt(problem_dir: str, *, parity: bool = True) -> str:
     elif samples:
         parts.append("\n(Sample inputs are large — read them from testdata/ directory.)\n")
 
-    parts.append(FULL_ACCESS_WORKFLOW)
+    parts.append(FULL_ACCESS_TAIL)
 
     return "\n".join(parts)
 
@@ -196,7 +187,7 @@ def _build_parity_prompt(
     else:
         parts.append(PARITY_STANDARD_SECTION)
 
-    parts.append(PARITY_SCORING_AND_WORKFLOW.format(total_cases=total_cases))
+    parts.append(PARITY_TAIL)
 
     return "\n".join(parts)
 
@@ -215,17 +206,13 @@ def _write_helper_scripts(workdir: Path, is_interactive: bool) -> None:
 
 def _write_workdir_claude_md(workdir: Path, is_interactive: bool, *, parity: bool = True) -> None:
     """Write a CLAUDE.md to the workdir so Claude Code picks up behavioral guidance."""
-    parts = [CLAUDE_MD_HEADER]
     if parity:
-        parts.append(CLAUDE_MD_PARITY_TESTING)
+        content = CLAUDE_MD_PARITY
         if is_interactive:
-            parts.append(CLAUDE_MD_PARITY_INTERACTIVE)
-    elif is_interactive:
-        parts.append(CLAUDE_MD_FULL_INTERACTIVE)
+            content += CLAUDE_MD_PARITY_INTERACTIVE_ADDENDUM
     else:
-        parts.append(CLAUDE_MD_FULL_STANDARD)
-    parts.append(CLAUDE_MD_FOOTER)
-    (workdir / "CLAUDE.md").write_text("\n".join(parts), encoding="utf-8")
+        content = CLAUDE_MD_FULL_ACCESS
+    (workdir / "CLAUDE.md").write_text(content, encoding="utf-8")
 
 
 def extract_solution_cpp(workdir: Path) -> str:

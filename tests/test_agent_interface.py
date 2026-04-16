@@ -75,23 +75,20 @@ def test_build_agent_prompt_standard():
         prompt = build_agent_prompt(str(pdir), parity=False)
         assert "test_all.sh" in prompt
         assert "STANDARD" in prompt or "SPECIAL JUDGE" in prompt
-        assert "solution.cpp" in prompt
-        assert "Scoring" in prompt
-        assert "fraction" in prompt.lower() or "partial" in prompt.lower()
+        assert "partial" in prompt.lower()
         # Samples should be embedded (they're tiny)
         assert "Sample 1" in prompt
 
 
 def test_build_agent_prompt_interactive():
-    """Interactive problem prompt includes interactor guidance and run_interactive.sh."""
+    """Interactive problem prompt includes interactor guidance."""
     from frontier_cs.gen.agent_interface import build_agent_prompt
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdir = _make_problem_dir(tmpdir, interactive=True)
         prompt = build_agent_prompt(str(pdir), parity=False)
         assert "INTERACTIVE" in prompt
-        assert "run_interactive.sh" in prompt
-        assert "flush" in prompt.lower() or "pipe" in prompt.lower()
+        assert "interactor.cc" in prompt
 
 
 def test_build_agent_prompt_embeds_small_samples():
@@ -132,20 +129,19 @@ def test_build_agent_prompt_parity_no_test_refs():
         assert "Sample 1" not in prompt
         assert "chk.cc" not in prompt
         assert "interactor.cc" not in prompt
-        # Should mention self-testing
-        assert "brute-force" in prompt.lower() or "brute force" in prompt.lower()
-        assert "solution.cpp" in prompt
+        # Prompt is lean — delegates to CLAUDE.md
+        assert "CLAUDE.md" in prompt
+        assert "statement.txt" in prompt
 
 
 def test_build_agent_prompt_parity_interactive():
-    """Parity mode interactive prompt mentions flush but not interactor source."""
+    """Parity mode interactive prompt identifies type but delegates details to CLAUDE.md."""
     from frontier_cs.gen.agent_interface import build_agent_prompt
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdir = _make_problem_dir(tmpdir, interactive=True)
         prompt = build_agent_prompt(str(pdir), parity=True)
         assert "INTERACTIVE" in prompt
-        assert "flush" in prompt.lower()
         assert "run_interactive.sh" not in prompt
         assert "interactor.cc" not in prompt
 
@@ -247,16 +243,41 @@ def test_write_workdir_claude_md_standard():
         _write_workdir_claude_md(workdir, is_interactive=False, parity=False)
         content = (workdir / "CLAUDE.md").read_text()
         assert "test_all.sh" in content
-        assert "run_interactive.sh" not in content
+        assert "solution.cpp" in content
 
 
 def test_write_workdir_claude_md_interactive():
-    """CLAUDE.md for interactive problems mentions flush and run_interactive.sh."""
+    """CLAUDE.md for interactive problems mentions flush."""
     from frontier_cs.gen.agent_interface import _write_workdir_claude_md
 
     with tempfile.TemporaryDirectory() as tmpdir:
         workdir = Path(tmpdir)
         _write_workdir_claude_md(workdir, is_interactive=True, parity=False)
         content = (workdir / "CLAUDE.md").read_text()
-        assert "run_interactive.sh" in content
         assert "flush" in content
+
+
+def test_write_workdir_claude_md_parity():
+    """Parity CLAUDE.md has self-testing guidance, no test script refs."""
+    from frontier_cs.gen.agent_interface import _write_workdir_claude_md
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workdir = Path(tmpdir)
+        _write_workdir_claude_md(workdir, is_interactive=False, parity=True)
+        content = (workdir / "CLAUDE.md").read_text()
+        assert "brute-force" in content.lower() or "brute force" in content.lower()
+        assert "solution.cpp" in content
+        assert "test_all.sh" not in content
+        assert "run_interactive.sh" not in content
+
+
+def test_write_workdir_claude_md_parity_interactive():
+    """Parity interactive CLAUDE.md has flush guidance."""
+    from frontier_cs.gen.agent_interface import _write_workdir_claude_md
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workdir = Path(tmpdir)
+        _write_workdir_claude_md(workdir, is_interactive=True, parity=True)
+        content = (workdir / "CLAUDE.md").read_text()
+        assert "flush" in content
+        assert "run_interactive.sh" not in content
