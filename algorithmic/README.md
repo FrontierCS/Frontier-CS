@@ -97,6 +97,107 @@ sky launch -c algo-judge algorithmic/sky-judge.yaml --idle-minutes-to-autostop 1
 frontier eval algorithmic 1 solution.cpp --judge-url http://$(sky status --ip algo-judge):8081
 ```
 
+### Agent Evaluation
+
+Agent mode lets an AI agent solve problems iteratively — reading the statement, writing code, compiling, testing against samples, and refining — rather than generating a single-shot solution.
+
+Agents use the [Claude Agent SDK](https://github.com/anthropic/claude-agent-sdk) (Claude Code as a library). The agent gets a temporary copy of the problem directory with full tool access (shell, file I/O, compilation).
+
+#### Model naming convention
+
+Append `-agent` to any Claude model name to trigger agent mode:
+
+```
+claude-sonnet-4-5-20250514-agent   # Agent mode with Sonnet 4.5
+claude-opus-4-6-20250610-agent     # Agent mode with Opus 4.6
+```
+
+The `-agent` suffix is stripped before passing the model to the SDK. The model prefix for output files includes `agent` (e.g., `claude4.5sonnetagent.cpp`), so agent and single-shot results never collide.
+
+#### Running agent evaluation
+
+```bash
+cd algorithmic/scripts
+
+# Single model, all problems
+python generate_solutions.py \
+  --model claude-sonnet-4-5-20250514-agent \
+  --judge-url http://localhost:8081
+
+# Subset of problems, custom budget
+python generate_solutions.py \
+  --model claude-sonnet-4-5-20250514-agent \
+  --problems 0,1,2,3 \
+  --agent-timeout 1800 \
+  --agent-cost-limit 30 \
+  --judge-url http://localhost:8081
+
+# Multiple variants per problem
+python generate_solutions.py \
+  --model claude-sonnet-4-5-20250514-agent \
+  --indices 3 \
+  --judge-url http://localhost:8081
+```
+
+**Agent-specific CLI flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--agent-timeout` | 1200 (20 min) | Wall-clock timeout per problem in seconds |
+| `--agent-cost-limit` | 20.0 | Max cost per problem in USD |
+
+#### Output files
+
+For each problem/variant, agent mode produces three files:
+
+```
+solutions/{problem_id}/
+├── claude4.5sonnetagent.cpp           # Extracted C++ solution
+├── claude4.5sonnetagent.meta.json     # Run metadata (cost, tokens, turns, status)
+└── (in generation_logs/)
+    └── claude4.5sonnetagent_*.transcript.jsonl  # Full agent transcript
+```
+
+**meta.json** fields:
+- `tokens_in` / `tokens_out` — total token usage
+- `cost_usd` — total API cost
+- `time_seconds` — wall-clock time
+- `turns` — number of agentic turns (tool-use round trips)
+- `status` — `success`, `timeout`, `cost_limit`, or `error`
+
+#### Prerequisites
+
+1. **Claude Agent SDK**: `pip install claude-agent-sdk` (or `uv sync` if already in project deps)
+2. **Claude Code CLI**: Must be installed and authenticated (`claude --version`)
+3. **Judge server**: Running and accessible (see [Judge Server Configuration](#judge-server-configuration))
+4. **g++**: Available in PATH for the agent to compile solutions
+
+#### How it works
+
+1. The problem directory is copied to a temp working directory (concurrent-safe)
+2. `testlib.h` is automatically copied from `judge/include/` if present (needed for interactive problems)
+3. The agent receives a structured prompt with the problem path and workflow guidance
+4. The agent iterates: reads the problem, writes code, compiles, tests against samples, and refines
+5. On completion (or timeout), `solution.cpp` is extracted from the working directory
+6. The temp directory is cleaned up; solution + metadata are saved
+
+#### Interactive problems
+
+Problems with `interactor.cc` (instead of `chk.cc`) are interactive — the solution communicates with a judge interactor via stdin/stdout. The agent prompt instructs it to:
+
+1. Compile the interactor using `g++ -std=gnu++17 -I. interactor.cc -o interactor`
+2. Test locally via pipes (e.g., `mkfifo pipe; ./solution < pipe | ./interactor > pipe`)
+3. `testlib.h` is provided automatically in the working directory
+
+Interactive problems are harder for agents because local testing requires building a pipe harness, which agents sometimes skip or get wrong.
+
+#### Known limitations
+
+- **No extended thinking**: The Claude Agent SDK does not currently expose extended thinking controls. Enabling it may improve complex algorithmic reasoning.
+- **Rewrite tendency**: Agents sometimes rewrite solutions from scratch after failures, losing working logic. The prompt mitigates this but doesn't eliminate it.
+- **Interactive testing**: Agents frequently skip local testing for interactive problems, submitting untested code.
+- **Algorithm ceiling**: For problems requiring non-trivial algorithmic insight (advanced DP, flow, geometry), agent iteration doesn't compensate for model capability gaps.
+
 ### Creating Problems
 
 > For contributing problems to Frontier-CS (detailed file formats, CI requirements), see [CONTRIBUTING.md](../CONTRIBUTING.md#algorithmic-problems).

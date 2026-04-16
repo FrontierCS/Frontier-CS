@@ -12,13 +12,17 @@ downstream.
 import asyncio
 import json
 import logging
+import os
 import shutil
+import stat
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +30,209 @@ logger = logging.getLogger(__name__)
 DEFAULT_COST_LIMIT_USD = 20.0
 DEFAULT_TIMEOUT_SECONDS = 1200  # 20 minutes
 
+# Max size of sample I/O to embed directly in the prompt (bytes).
+# Larger inputs are left for the agent to read from disk.
+_MAX_EMBED_SIZE = 4096
+
+
+def _read_problem_config(problem_dir: str) -> Dict[str, Any]:
+    """Read and parse config.yaml from a problem directory."""
+    config_path = Path(problem_dir) / "config.yaml"
+    if config_path.is_file():
+        return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def _collect_samples(problem_dir: str) -> List[Dict[str, str]]:
+    """Collect sample test cases from testdata/, sorted by number.
+
+    Returns list of dicts with keys 'id', 'input', 'answer'.
+    Only includes samples where both .in and .ans exist and are small enough to embed.
+    """
+    testdata = Path(problem_dir) / "testdata"
+    if not testdata.is_dir():
+        return []
+
+    samples = []
+    in_files = sorted(testdata.glob("*.in"), key=lambda p: int(p.stem) if p.stem.isdigit() else 0)
+    for in_file in in_files:
+        ans_file = in_file.with_suffix(".ans")
+        if not ans_file.is_file():
+            continue
+        if in_file.stat().st_size > _MAX_EMBED_SIZE or ans_file.stat().st_size > _MAX_EMBED_SIZE:
+            continue
+        samples.append({
+            "id": in_file.stem,
+            "input": in_file.read_text(encoding="utf-8"),
+            "answer": ans_file.read_text(encoding="utf-8"),
+        })
+    return samples
+
+
+def _format_samples(samples: List[Dict[str, str]], is_interactive: bool) -> str:
+    """Format sample test cases for inclusion in the prompt."""
+    if not samples:
+        return ""
+    parts = ["\n## Sample test cases (embedded for convenience)\n"]
+    note = " (interactor judge input — NOT your stdin)" if is_interactive else ""
+    for s in samples:
+        parts.append(f"### Sample {s['id']}{note}")
+        parts.append(f"Input:\n```\n{s['input'].rstrip()}\n```")
+        parts.append(f"Expected output:\n```\n{s['answer'].rstrip()}\n```\n")
+    return "\n".join(parts)
+
+
+# Shell script: compile solution.cpp and test against all sample cases.
+# If chk.cc exists (special judge), uses it for verification instead of diff.
+_TEST_ALL_SH = r"""#!/bin/bash
+set -e
+echo "=== Compiling solution.cpp ==="
+g++ -std=gnu++17 -O2 -o solution solution.cpp
+echo "=== Compilation OK ==="
+
+# Compile checker if available (special judge)
+USE_CHECKER=0
+if [ -f "chk.cc" ]; then
+    echo "=== Compiling special judge (chk.cc) ==="
+    if g++ -std=gnu++17 -O2 -I. chk.cc -o checker 2>/dev/null; then
+        USE_CHECKER=1
+        echo "=== Checker compiled OK — using it instead of diff ==="
+    else
+        echo "=== Checker compilation failed — falling back to diff ==="
+    fi
+fi
+
+passed=0; failed=0; total=0
+for inf in testdata/*.in; do
+    [ -f "$inf" ] || continue
+    id=$(basename "$inf" .in)
+    ans="testdata/${id}.ans"
+    [ -f "$ans" ] || continue
+    total=$((total + 1))
+
+    # Run with timeout
+    if timeout 15 ./solution < "$inf" > "my_${id}.out" 2>"my_${id}.err"; then
+        if [ "$USE_CHECKER" -eq 1 ]; then
+            # Special judge: ./checker <input> <output> <answer>
+            checker_out=$(./checker "$inf" "my_${id}.out" "$ans" 2>&1) && chk_rc=$? || chk_rc=$?
+            if [ $chk_rc -eq 0 ]; then
+                echo "  Sample $id: PASS (checker: $checker_out)"
+                passed=$((passed + 1))
+            else
+                echo "  Sample $id: WRONG ANSWER (checker exit $chk_rc)"
+                echo "    Checker output: $checker_out"
+                failed=$((failed + 1))
+            fi
+        else
+            # Diff-based comparison (normalize whitespace)
+            if diff -q <(tr -s '[:space:]' '\n' < "my_${id}.out" | sed '/^$/d') \
+                        <(tr -s '[:space:]' '\n' < "$ans" | sed '/^$/d') >/dev/null 2>&1; then
+                echo "  Sample $id: PASS"
+                passed=$((passed + 1))
+            else
+                echo "  Sample $id: WRONG ANSWER"
+                echo "    Expected (first 5 lines):"
+                head -5 "$ans" | sed 's/^/      /'
+                echo "    Got (first 5 lines):"
+                head -5 "my_${id}.out" | sed 's/^/      /'
+                failed=$((failed + 1))
+            fi
+        fi
+    else
+        rc=$?
+        echo "  Sample $id: RUNTIME ERROR or TLE (exit $rc)"
+        [ -s "my_${id}.err" ] && head -3 "my_${id}.err" | sed 's/^/    stderr: /'
+        failed=$((failed + 1))
+    fi
+done
+
+echo "=== Results: $passed/$total passed ==="
+[ "$failed" -eq 0 ] && exit 0 || exit 1
+"""
+
+# Shell script: test solution against an interactor using named pipes.
+_RUN_INTERACTIVE_SH = r"""#!/bin/bash
+# Usage: ./run_interactive.sh [sample_id]  (default: 1)
+# Compiles solution.cpp and interactor.cc, then tests via pipe.
+# Exit codes: 0=accepted, 1=wrong answer, 2=presentation error, 3=build error, 4=timeout/crash
+
+SAMPLE=${1:-1}
+INF="testdata/${SAMPLE}.in"
+ANSF="testdata/${SAMPLE}.ans"
+
+if [ ! -f "$INF" ]; then
+    echo "Error: $INF not found"
+    exit 3
+fi
+
+# Compile only if binaries are missing or sources are newer
+if [ ! -f ./solution ] || [ solution.cpp -nt ./solution ]; then
+    echo "=== Compiling solution.cpp ==="
+    g++ -std=gnu++17 -O2 -o solution solution.cpp || { echo "Compilation failed"; exit 3; }
+fi
+
+if [ ! -f ./interactor ] || [ interactor.cc -nt ./interactor ]; then
+    echo "=== Compiling interactor ==="
+    g++ -std=gnu++17 -O2 -I. interactor.cc -o interactor || { echo "Interactor compilation failed"; exit 3; }
+fi
+
+# Create named pipes in current dir (avoids /tmp permission issues)
+PIPE_S2I=".pipe_s2i_$$"
+PIPE_I2S=".pipe_i2s_$$"
+rm -f "$PIPE_S2I" "$PIPE_I2S"
+mkfifo "$PIPE_S2I" "$PIPE_I2S"
+
+cleanup() { rm -f "$PIPE_S2I" "$PIPE_I2S" inter_stderr.tmp sol_stderr.tmp; }
+trap cleanup EXIT
+
+echo "=== Running sample $SAMPLE ==="
+
+# interactor: reads from solution's stdout via pipe, writes to solution's stdin via pipe
+# testlib interactors: argv = <inf> <ouf> [ans]
+# We use /dev/null for ouf (output file) since we only care about exit code
+timeout 120 ./interactor "$INF" /dev/null "$ANSF" < "$PIPE_S2I" > "$PIPE_I2S" 2>inter_stderr.tmp &
+INTER_PID=$!
+
+timeout 120 ./solution < "$PIPE_I2S" > "$PIPE_S2I" 2>sol_stderr.tmp &
+SOL_PID=$!
+
+# Wait for both processes
+INTER_EXIT=0; SOL_EXIT=0
+wait $INTER_PID 2>/dev/null || INTER_EXIT=$?
+wait $SOL_PID 2>/dev/null || SOL_EXIT=$?
+
+# Report results
+if [ $INTER_EXIT -eq 0 ]; then
+    echo "  Sample $SAMPLE: ACCEPTED (interactor exit 0)"
+    [ -s inter_stderr.tmp ] && head -2 inter_stderr.tmp | sed 's/^/    interactor: /'
+    exit 0
+elif [ $INTER_EXIT -eq 1 ]; then
+    echo "  Sample $SAMPLE: WRONG ANSWER (interactor exit 1)"
+    [ -s inter_stderr.tmp ] && head -3 inter_stderr.tmp | sed 's/^/    interactor: /'
+    exit 1
+elif [ $INTER_EXIT -eq 2 ]; then
+    echo "  Sample $SAMPLE: PRESENTATION ERROR (interactor exit 2)"
+    [ -s inter_stderr.tmp ] && head -3 inter_stderr.tmp | sed 's/^/    interactor: /'
+    exit 2
+elif [ $INTER_EXIT -eq 124 ] || [ $INTER_EXIT -eq 137 ]; then
+    echo "  Sample $SAMPLE: TIMEOUT (120s exceeded)"
+    echo "    This usually means your solution deadlocked (missing flush? wrong protocol?)"
+    [ -s sol_stderr.tmp ] && head -3 sol_stderr.tmp | sed 's/^/    solution stderr: /'
+    exit 4
+else
+    echo "  Sample $SAMPLE: UNKNOWN (interactor exit $INTER_EXIT, solution exit $SOL_EXIT)"
+    [ -s inter_stderr.tmp ] && head -3 inter_stderr.tmp | sed 's/^/    interactor: /'
+    [ -s sol_stderr.tmp ] && head -3 sol_stderr.tmp | sed 's/^/    solution: /'
+    exit 4
+fi
+"""
+
 
 def build_agent_prompt(problem_dir: str) -> str:
-    """Construct the prompt given to the agent.
+    """Construct a problem-aware prompt for the agent.
+
+    Reads config.yaml to detect problem type (interactive vs standard, SPJ),
+    embeds small sample I/O directly, and provides tailored workflow guidance.
 
     Args:
         problem_dir: Absolute path to the problem directory.
@@ -36,40 +240,237 @@ def build_agent_prompt(problem_dir: str) -> str:
     Returns:
         The prompt string for the agent.
     """
-    return f"""You are solving a competitive programming problem.
+    config = _read_problem_config(problem_dir)
+    is_interactive = config.get("type") == "interactive"
+    has_checker = "checker" in config
+    time_limit = config.get("time", "?")
+    memory_limit = config.get("memory", "?")
+    subtasks = config.get("subtasks", [])
+    total_cases = sum(s.get("n_cases", 0) for s in subtasks) if subtasks else "?"
+    samples = _collect_samples(problem_dir)
+
+    # Base info
+    parts = [f"""You are solving a competitive programming problem.
 
 Problem directory: {problem_dir}
-- Read statement.txt for the problem description
-- testdata/ contains sample test cases (*.in, *.ans), but these are only a subset
-- Your solution will be evaluated against a larger hidden test suite
-- You can compile with g++, run against the available samples, and iterate
-- config.yaml has time/memory limits — respect them in your solution
+- Read statement.txt for the full problem description
+- Time limit: {time_limit}, Memory limit: {memory_limit}
+- Total hidden test cases: {total_cases} (your score = fraction passed)
+- testdata/ contains sample test cases — these are a SUBSET of the hidden tests"""]
 
-Submit your final solution as solution.cpp in the current working directory."""
+    # Problem type specific guidance
+    if is_interactive:
+        parts.append("""
+## Problem type: INTERACTIVE
+
+This is an interactive problem. Your solution communicates with a judge interactor
+via stdin/stdout. You do NOT read from files — you read responses from the interactor
+and write queries/answers to stdout.
+
+Key files provided:
+- interactor.cc — the judge interactor (uses testlib.h, both provided)
+- testdata/*.in — interactor input seeds (NOT your stdin)
+
+**CRITICAL for interactive problems:**
+- You MUST flush stdout after EVERY output line: use `cout << endl;` or `cout << flush;`
+- Read the interactor source code to understand the exact protocol (what it sends, what it expects)
+- Count your queries carefully against the stated limit
+
+**Testing interactive solutions locally:**
+Use the provided `./run_interactive.sh` script:
+```bash
+./run_interactive.sh 1    # Test with sample 1
+./run_interactive.sh 2    # Test with sample 2
+# Run all samples:
+for i in testdata/*.in; do ./run_interactive.sh $(basename $i .in); done
+```
+
+If `run_interactive.sh` times out (exit code 4), it usually means a deadlock:
+- Missing `flush` / `endl` on your output
+- Reading when the interactor expects you to write, or vice versa
+- Exceeding the query limit (interactor stops responding)
+
+**Fallback testing:** If the shell script doesn't work, write a Python wrapper:
+```python
+import subprocess, os
+proc_sol = subprocess.Popen(['./solution'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+proc_int = subprocess.Popen(['./interactor', 'testdata/1.in', '/dev/null', 'testdata/1.ans'],
+                             stdin=proc_sol.stdout, stdout=proc_sol.stdin)
+proc_int.wait(); proc_sol.wait()
+print(f"interactor exit: {proc_int.returncode}")
+```
+
+IMPORTANT: You MUST test your solution locally before finalizing. Do NOT submit untested code.""")
+    else:
+        checker_note = ""
+        if has_checker:
+            checker_note = """
+Note: This problem has a SPECIAL JUDGE (chk.cc) — multiple valid outputs may be accepted.
+`test_all.sh` will automatically compile and use the checker for validation.
+If the checker reports PASS but the output looks different from the .ans file, that's fine."""
+
+        parts.append(f"""
+## Problem type: {"SPECIAL JUDGE (multiple valid outputs accepted)" if has_checker else "STANDARD"}
+
+**Testing your solution locally:**
+Use the provided `./test_all.sh` script:
+```bash
+./test_all.sh    # Compiles solution.cpp and runs against ALL samples
+```
+This compiles, runs each sample, and compares output. Always run this before finalizing.{checker_note}""")
+
+    # Scoring context
+    parts.append(f"""
+## Scoring
+
+Your score is the fraction of hidden test cases passed (0-100%).
+- There are {total_cases} hidden test cases total
+- Partial credit counts — passing 7/10 cases = 70% score
+- A correct-but-slow solution that passes small cases is MUCH better than a broken fast one
+- Prioritize CORRECTNESS over optimality. Get a working solution first, then optimize.""")
+
+    # Embed samples if small enough
+    sample_text = _format_samples(samples, is_interactive)
+    if sample_text:
+        parts.append(sample_text)
+    elif samples:
+        parts.append("\n(Sample inputs are large — read them from testdata/ directory.)\n")
+
+    # Workflow
+    parts.append("""## Workflow
+
+1. Read the FULL problem statement carefully. Re-read the constraints and edge cases.
+2. Read ALL sample test cases and understand the expected I/O format.
+3. Design your algorithm. Think about time complexity vs the constraints.
+4. Write a SIMPLE correct solution first — brute force is fine for a first version.
+5. Compile and test against ALL samples using the provided test script.
+6. If samples fail: debug by examining the diff, don't just rewrite everything.
+7. Once samples pass: think about edge cases and whether your algorithm handles large inputs.
+8. Optimize only after correctness is established.
+
+**Critical rules:**
+- Do NOT rewrite your solution from scratch more than once. Incremental edits preserve working logic.
+- Do NOT skip local testing. Every change must be tested before you move on.
+- Do NOT submit without running test_all.sh (or run_interactive.sh for interactive).
+- If you TLE on large cases, profile the bottleneck — don't simplify the entire algorithm.
+
+**Retreat strategy — know when to simplify:**
+- If you've been debugging the SAME bug for more than 5 edit-test cycles without progress,
+  STOP and switch to a fundamentally simpler approach. A correct brute-force that passes
+  small cases is worth more than a broken optimized solution that passes nothing.
+- If your approach is off by a small constant (e.g., exceeding a limit by 1), consider whether
+  a completely different algorithm would avoid the issue rather than patching endlessly.
+- Remember: partial credit exists. A solution scoring 30% is infinitely better than 0%.
+  When in doubt, submit what works even if it's suboptimal.
+
+Submit your final solution as solution.cpp in the current working directory.""")
+
+    return "\n".join(parts)
+
+
+def _write_helper_scripts(workdir: Path, is_interactive: bool) -> None:
+    """Write test helper scripts to the agent's working directory."""
+    # Always provide test_all.sh for non-interactive
+    test_all = workdir / "test_all.sh"
+    test_all.write_text(_TEST_ALL_SH, encoding="utf-8")
+    test_all.chmod(test_all.stat().st_mode | stat.S_IEXEC)
+
+    if is_interactive:
+        run_inter = workdir / "run_interactive.sh"
+        run_inter.write_text(_RUN_INTERACTIVE_SH, encoding="utf-8")
+        run_inter.chmod(run_inter.stat().st_mode | stat.S_IEXEC)
+
+
+def _write_workdir_claude_md(workdir: Path, is_interactive: bool) -> None:
+    """Write a CLAUDE.md to the workdir so Claude Code picks up behavioral guidance."""
+    lines = [
+        "# Agent Eval — Working Directory",
+        "",
+        "You are solving a competitive programming problem in this directory.",
+        "",
+        "## Rules",
+        "",
+        "- Your ONLY deliverable is `solution.cpp` in this directory.",
+        "- Use C++17 (g++ -std=gnu++17).",
+        "- Always compile with `-O2` for performance testing.",
+        "- Test against ALL sample cases before considering your solution done.",
+        "- Read the problem statement COMPLETELY before writing any code.",
+        "",
+        "## Testing",
+        "",
+    ]
+    if is_interactive:
+        lines += [
+            "This is an INTERACTIVE problem. Use `./run_interactive.sh N` to test sample N.",
+            "Do NOT skip interactive testing — protocol bugs are the #1 failure mode.",
+            "",
+            "### Interactive protocol checklist",
+            "- `cout << endl;` or `cout << flush;` after EVERY line you output",
+            "- Read the interactor source code to know the exact send/receive order",
+            "- Count queries against the stated limit",
+            "- If run_interactive.sh times out: you likely have a deadlock (missing flush or wrong protocol)",
+            "- Fallback: write a Python subprocess wrapper if the shell script fails",
+            "",
+        ]
+    else:
+        lines += [
+            "Use `./test_all.sh` to compile and test against all samples.",
+            "If chk.cc exists, test_all.sh uses it as a special judge automatically.",
+            "Fix any failing samples before moving on to optimization.",
+            "",
+        ]
+    lines += [
+        "## Common mistakes to avoid",
+        "",
+        "- Forgetting to flush stdout in interactive problems",
+        "- Off-by-one errors in array indexing (0-indexed vs 1-indexed)",
+        "- Integer overflow — use `long long` for anything that could exceed 2^31",
+        "- Reading input in the wrong order or format",
+        "- Not handling the edge case where N=1 or the input is minimal",
+        "- Rewriting the entire solution when a small fix would work",
+        "",
+        "## When to retreat",
+        "",
+        "- If you've edited and tested 5+ times for the same bug without progress, STOP.",
+        "- Switch to a simpler algorithm that is guaranteed correct, even if slower.",
+        "- A correct brute-force scoring 30% beats a broken clever solution scoring 0%.",
+        "- Partial credit is real: every test case you pass counts.",
+        "",
+    ]
+    (workdir / "CLAUDE.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def extract_solution_cpp(workdir: Path) -> str:
     """Extract solution.cpp from the agent working directory.
 
-    Looks for solution.cpp first, then falls back to any .cpp file.
+    Searches for solution.cpp in the workdir, its parent (the tmpdir root),
+    and recursively. Falls back to any .cpp file that looks like a solution.
 
     Args:
-        workdir: The agent's working directory.
+        workdir: The agent's working directory (typically tmpdir/problem).
 
     Returns:
         The C++ source code, or empty string if not found.
     """
-    # Primary: solution.cpp
-    sol = workdir / "solution.cpp"
-    if sol.is_file():
-        return sol.read_text(encoding="utf-8")
+    # Search these directories in priority order
+    search_dirs = [workdir, workdir.parent]
 
-    # Fallback: any .cpp file (agent might have used a different name)
-    cpp_files = list(workdir.glob("*.cpp"))
-    if cpp_files:
-        # Pick the most recently modified one
-        newest = max(cpp_files, key=lambda p: p.stat().st_mtime)
-        return newest.read_text(encoding="utf-8")
+    for d in search_dirs:
+        sol = d / "solution.cpp"
+        if sol.is_file():
+            return sol.read_text(encoding="utf-8")
+
+    # Fallback: any .cpp file in workdir or parent (excluding problem-provided files)
+    problem_files = {p.name for p in workdir.glob("**/*.cpp")
+                     if p.stat().st_mtime < workdir.stat().st_mtime}
+    for d in search_dirs:
+        cpp_files = [
+            p for p in d.glob("*.cpp")
+            if p.name not in problem_files and p.name != "chk.cc"
+        ]
+        if cpp_files:
+            newest = max(cpp_files, key=lambda p: p.stat().st_mtime)
+            return newest.read_text(encoding="utf-8")
 
     return ""
 
@@ -82,6 +483,8 @@ def build_metadata(
     time_seconds: float,
     turns: int,
     status: str,
+    model: str,
+    prompt: str,
 ) -> Dict[str, Any]:
     """Build the metadata dict for an agent run.
 
@@ -92,11 +495,15 @@ def build_metadata(
         time_seconds: Wall-clock time in seconds.
         turns: Number of agentic turns (tool-use round trips).
         status: One of "success", "timeout", "cost_limit", "error".
+        model: The model name passed to the agent SDK.
+        prompt: The full prompt sent to the agent.
 
     Returns:
         Metadata dictionary.
     """
     return {
+        "model": model,
+        "prompt": prompt,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "cost_usd": round(cost_usd, 4),
@@ -153,11 +560,34 @@ async def run_agent(
     from claude_agent_sdk import query, ClaudeAgentOptions
     from claude_agent_sdk.types import StreamEvent
 
+    # Claude Code CLI uses short model names, not full API model IDs.
+    # Map common API IDs to CLI-accepted names.
+    CLI_MODEL_MAP = {
+        "claude-sonnet-4-5-20250514": "claude-sonnet-4-5",
+        "claude-sonnet-4-6-20250610": "claude-sonnet-4-6",
+        "claude-opus-4-6-20250610": "claude-opus-4-6",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+    }
+    model = CLI_MODEL_MAP.get(model, model)
+
+    # Read problem config before copying to detect type.
+    config = _read_problem_config(problem_dir)
+    is_interactive = config.get("type") == "interactive"
+
     # Copy problem dir to a temp working directory to avoid polluting the original.
     # This also makes concurrent runs on the same problem safe.
     tmpdir = tempfile.mkdtemp(prefix="agent_eval_")
     workdir = Path(tmpdir) / "problem"
     shutil.copytree(problem_dir, workdir)
+
+    # Provide testlib.h so agents can compile interactors/checkers for local testing.
+    testlib_src = Path(problem_dir).parent.parent / "judge" / "include" / "testlib.h"
+    if testlib_src.is_file():
+        shutil.copy2(testlib_src, workdir / "testlib.h")
+
+    # Write helper scripts and CLAUDE.md into workdir.
+    _write_helper_scripts(workdir, is_interactive)
+    _write_workdir_claude_md(workdir, is_interactive)
 
     prompt = build_agent_prompt(str(workdir))
 
@@ -248,9 +678,12 @@ async def run_agent(
                 elif isinstance(message, ResultMessage):
                     total_cost = message.total_cost_usd
                     if message.usage:
-                        usage_in = message.usage.get("input_tokens", usage_in)
-                        usage_out = message.usage.get("output_tokens", usage_out)
-                    num_turns = message.num_turns
+                        usage_in = max(usage_in, message.usage.get("input_tokens", 0))
+                        usage_out = max(usage_out, message.usage.get("output_tokens", 0))
+                    # SDK may send multiple ResultMessages (main run + follow-ups).
+                    # Keep the highest turn count to avoid a follow-up (turns=1)
+                    # clobbering the real value.
+                    num_turns = max(num_turns, message.num_turns)
                     if transcript:
                         transcript.log({
                             "type": "result",
@@ -267,8 +700,14 @@ async def run_agent(
         status = "timeout"
         logger.warning("Agent timed out after %.0fs", timeout)
     except Exception as e:
-        status = "error"
-        logger.error("Agent error: %s", e)
+        # Claude CLI often exits with code 1 after a successful run.
+        # If we already received a ResultMessage (total_cost is set),
+        # treat this as a successful completion, not an error.
+        if total_cost is not None:
+            logger.info("Agent completed (post-result CLI exit: %s)", e)
+        else:
+            status = "error"
+            logger.error("Agent error: %s", e)
         if transcript:
             transcript.log({"type": "error", "error": str(e)})
     finally:
@@ -293,6 +732,8 @@ async def run_agent(
         time_seconds=elapsed,
         turns=num_turns,
         status=status,
+        model=model,
+        prompt=prompt,
     )
 
     return code, metadata
