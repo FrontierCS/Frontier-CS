@@ -119,6 +119,37 @@ def test_build_agent_prompt_skips_large_samples():
         assert "Sample 1" not in prompt
 
 
+def test_build_agent_prompt_parity_no_test_refs():
+    """Parity mode prompt has no references to test scripts or test data."""
+    from frontier_cs.gen.agent_interface import build_agent_prompt
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdir = _make_problem_dir(tmpdir, samples=2)
+        prompt = build_agent_prompt(str(pdir), parity=True)
+        assert "test_all.sh" not in prompt
+        assert "run_interactive.sh" not in prompt
+        assert "testdata/" not in prompt
+        assert "Sample 1" not in prompt
+        assert "chk.cc" not in prompt
+        assert "interactor.cc" not in prompt
+        # Should mention self-testing
+        assert "brute-force" in prompt.lower() or "brute force" in prompt.lower()
+        assert "solution.cpp" in prompt
+
+
+def test_build_agent_prompt_parity_interactive():
+    """Parity mode interactive prompt mentions flush but not interactor source."""
+    from frontier_cs.gen.agent_interface import build_agent_prompt
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdir = _make_problem_dir(tmpdir, interactive=True)
+        prompt = build_agent_prompt(str(pdir), parity=True)
+        assert "INTERACTIVE" in prompt
+        assert "flush" in prompt.lower()
+        assert "run_interactive.sh" not in prompt
+        assert "interactor.cc" not in prompt
+
+
 def test_extract_cpp_from_workdir():
     """Extract solution.cpp from agent working directory."""
     from frontier_cs.gen.agent_interface import extract_solution_cpp

@@ -41,6 +41,7 @@ berkeley-function-call-leaderboard/bfcl_eval/scripts/ground_truth_conversation/
 # Ignore lock files
 berkeley-function-call-leaderboard/**/*.lock
 
+.claude/
 .direnv/
 .venv
 

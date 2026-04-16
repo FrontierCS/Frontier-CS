@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -228,14 +229,18 @@ fi
 """
 
 
-def build_agent_prompt(problem_dir: str) -> str:
+def build_agent_prompt(problem_dir: str, *, parity: bool = False) -> str:
     """Construct a problem-aware prompt for the agent.
 
     Reads config.yaml to detect problem type (interactive vs standard, SPJ),
     embeds small sample I/O directly, and provides tailored workflow guidance.
 
+    In parity mode, no test data or helper scripts are referenced — the agent
+    must write its own tests. This matches the Harbor adapter setup.
+
     Args:
         problem_dir: Absolute path to the problem directory.
+        parity: If True, build a prompt that assumes no test data or scripts.
 
     Returns:
         The prompt string for the agent.
@@ -247,6 +252,13 @@ def build_agent_prompt(problem_dir: str) -> str:
     memory_limit = config.get("memory", "?")
     subtasks = config.get("subtasks", [])
     total_cases = sum(s.get("n_cases", 0) for s in subtasks) if subtasks else "?"
+
+    if parity:
+        return _build_parity_prompt(
+            problem_dir, config, is_interactive, has_checker,
+            time_limit, memory_limit, total_cases,
+        )
+
     samples = _collect_samples(problem_dir)
 
     # Base info
@@ -368,6 +380,92 @@ Submit your final solution as solution.cpp in the current working directory.""")
     return "\n".join(parts)
 
 
+def _build_parity_prompt(
+    problem_dir: str,
+    config: Dict[str, Any],
+    is_interactive: bool,
+    has_checker: bool,
+    time_limit: str,
+    memory_limit: str,
+    total_cases: Any,
+) -> str:
+    """Build a prompt for parity mode (no test data, no helper scripts).
+
+    Matches the Harbor adapter setup: agent gets only the problem statement
+    and must write its own tests.
+    """
+    parts = [f"""You are solving a competitive programming problem.
+
+Problem directory: {problem_dir}
+- Read statement.txt for the full problem description
+- Time limit: {time_limit}, Memory limit: {memory_limit}
+- Total test cases: {total_cases} (your score = fraction passed)
+- Scoring is partial: 0-100% based on test cases passed"""]
+
+    if is_interactive:
+        parts.append("""
+## Problem type: INTERACTIVE
+
+This is an interactive problem. Your solution communicates with a hidden judge
+via stdin/stdout. You do NOT read from files.
+
+**CRITICAL:**
+- Flush stdout after EVERY output line: `cout << endl;` or `cout << flush;`
+- Read the problem statement carefully for the exact query/response protocol
+- Count your queries against the stated limit""")
+    elif has_checker:
+        parts.append("""
+## Problem type: SPECIAL JUDGE
+
+This problem accepts multiple valid outputs. Your solution will be checked by
+a special judge, not by exact string matching.""")
+    else:
+        parts.append("""
+## Problem type: STANDARD
+
+Your output must match the expected output exactly (whitespace-normalized).""")
+
+    parts.append(f"""
+## Scoring
+
+Your score is the fraction of test cases passed (0-100%).
+- There are {total_cases} test cases total
+- Partial credit counts — passing 7/10 cases = 70% score
+- A correct-but-slow solution that passes small cases is MUCH better than a broken fast one
+- Prioritize CORRECTNESS over optimality
+
+## Self-testing
+
+No test data or test scripts are provided. You must validate your own solution:
+
+1. **Write a brute-force reference solution** (even if O(n!) or exponential) that you are
+   confident is correct for small inputs.
+2. **Write a random test generator** that produces valid inputs within the problem constraints.
+3. **Cross-validate (对拍):** Run both solutions on hundreds of random small inputs and compare
+   outputs. Fix any discrepancies by debugging your main solution against the brute-force.
+4. **Stress test:** Generate larger random inputs to check for TLE, MLE, or crashes.
+5. **Edge cases:** Manually test minimum inputs (N=1, empty, etc.) and boundary values.
+
+This self-testing approach is standard competitive programming practice. Do NOT skip it.
+
+## Workflow
+
+1. Read the FULL problem statement carefully. Re-read the constraints and edge cases.
+2. Understand the I/O format from the examples in the problem statement.
+3. Design your algorithm. Think about time complexity vs the constraints.
+4. Write a SIMPLE correct solution first — brute force is fine for a first version.
+5. Write a separate brute-force and test generator, then cross-validate.
+6. Once confident in correctness: optimize for performance if needed.
+7. Stress test with larger inputs before finalizing.
+
+**Retreat strategy:** If stuck on the same bug for 5+ cycles, switch to a simpler
+algorithm. A correct brute-force scoring 30% beats a broken solution scoring 0%.
+
+Submit your final solution as solution.cpp in the current working directory.""")
+
+    return "\n".join(parts)
+
+
 def _write_helper_scripts(workdir: Path, is_interactive: bool) -> None:
     """Write test helper scripts to the agent's working directory."""
     # Always provide test_all.sh for non-interactive
@@ -381,7 +479,7 @@ def _write_helper_scripts(workdir: Path, is_interactive: bool) -> None:
         run_inter.chmod(run_inter.stat().st_mode | stat.S_IEXEC)
 
 
-def _write_workdir_claude_md(workdir: Path, is_interactive: bool) -> None:
+def _write_workdir_claude_md(workdir: Path, is_interactive: bool, *, parity: bool = False) -> None:
     """Write a CLAUDE.md to the workdir so Claude Code picks up behavioral guidance."""
     lines = [
         "# Agent Eval — Working Directory",
@@ -393,13 +491,27 @@ def _write_workdir_claude_md(workdir: Path, is_interactive: bool) -> None:
         "- Your ONLY deliverable is `solution.cpp` in this directory.",
         "- Use C++17 (g++ -std=gnu++17).",
         "- Always compile with `-O2` for performance testing.",
-        "- Test against ALL sample cases before considering your solution done.",
         "- Read the problem statement COMPLETELY before writing any code.",
         "",
         "## Testing",
         "",
     ]
-    if is_interactive:
+    if parity:
+        lines += [
+            "No test data or test scripts are provided.",
+            "Write your own brute-force solution + random test generator to cross-validate.",
+            "This is standard competitive programming practice (对拍).",
+            "",
+        ]
+        if is_interactive:
+            lines += [
+                "This is an INTERACTIVE problem.",
+                "- `cout << endl;` or `cout << flush;` after EVERY line you output",
+                "- Read the problem statement to understand the exact protocol",
+                "- Count queries against the stated limit",
+                "",
+            ]
+    elif is_interactive:
         lines += [
             "This is an INTERACTIVE problem. Use `./run_interactive.sh N` to test sample N.",
             "Do NOT skip interactive testing — protocol bugs are the #1 failure mode.",
@@ -475,6 +587,19 @@ def extract_solution_cpp(workdir: Path) -> str:
     return ""
 
 
+def _get_infra_git_hash() -> str:
+    """Get the current git commit hash of this repo (infra code)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=Path(__file__).parent,
+        )
+        return result.stdout.strip() if result.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def build_metadata(
     *,
     tokens_in: int,
@@ -485,6 +610,7 @@ def build_metadata(
     status: str,
     model: str,
     prompt: str,
+    parity: bool = False,
 ) -> Dict[str, Any]:
     """Build the metadata dict for an agent run.
 
@@ -497,6 +623,7 @@ def build_metadata(
         status: One of "success", "timeout", "cost_limit", "error".
         model: The model name passed to the agent SDK.
         prompt: The full prompt sent to the agent.
+        parity: Whether this run used parity mode.
 
     Returns:
         Metadata dictionary.
@@ -510,6 +637,9 @@ def build_metadata(
         "time_seconds": round(time_seconds, 2),
         "turns": turns,
         "status": status,
+        "infra_git_hash": _get_infra_git_hash(),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "parity": parity,
     }
 
 
@@ -544,6 +674,7 @@ async def run_agent(
     cost_limit: float = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
+    parity: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     """Run the agent to solve a problem.
 
@@ -553,6 +684,7 @@ async def run_agent(
         cost_limit: Maximum cost in USD.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log. None to skip.
+        parity: If True, strip test data and helper scripts (Harbor parity mode).
 
     Returns:
         Tuple of (cpp_code, metadata_dict).
@@ -578,18 +710,27 @@ async def run_agent(
     # This also makes concurrent runs on the same problem safe.
     tmpdir = tempfile.mkdtemp(prefix="agent_eval_")
     workdir = Path(tmpdir) / "problem"
-    shutil.copytree(problem_dir, workdir)
 
-    # Provide testlib.h so agents can compile interactors/checkers for local testing.
-    testlib_src = Path(problem_dir).parent.parent / "judge" / "include" / "testlib.h"
-    if testlib_src.is_file():
-        shutil.copy2(testlib_src, workdir / "testlib.h")
+    if parity:
+        # Parity mode: only copy statement.txt and config.yaml — no test data,
+        # no checker, no interactor. Agent must self-test.
+        workdir.mkdir(parents=True)
+        for fname in ("statement.txt", "config.yaml", "tag.txt"):
+            src = Path(problem_dir) / fname
+            if src.is_file():
+                shutil.copy2(src, workdir / fname)
+    else:
+        shutil.copytree(problem_dir, workdir)
+        # Provide testlib.h so agents can compile interactors/checkers for local testing.
+        testlib_src = Path(problem_dir).parent.parent / "judge" / "include" / "testlib.h"
+        if testlib_src.is_file():
+            shutil.copy2(testlib_src, workdir / "testlib.h")
+        # Write helper scripts for local testing.
+        _write_helper_scripts(workdir, is_interactive)
 
-    # Write helper scripts and CLAUDE.md into workdir.
-    _write_helper_scripts(workdir, is_interactive)
-    _write_workdir_claude_md(workdir, is_interactive)
+    _write_workdir_claude_md(workdir, is_interactive, parity=parity)
 
-    prompt = build_agent_prompt(str(workdir))
+    prompt = build_agent_prompt(str(workdir), parity=parity)
 
     options = ClaudeAgentOptions(
         model=model,
@@ -734,6 +875,7 @@ async def run_agent(
         status=status,
         model=model,
         prompt=prompt,
+        parity=parity,
     )
 
     return code, metadata
@@ -746,6 +888,7 @@ def generate_agent_solution(
     cost_limit: float = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
+    parity: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     """Synchronous wrapper for run_agent.
 
@@ -757,6 +900,7 @@ def generate_agent_solution(
         cost_limit: Maximum cost in USD.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log.
+        parity: If True, strip test data and helper scripts (Harbor parity mode).
 
     Returns:
         Tuple of (cpp_code, metadata_dict).
@@ -768,5 +912,6 @@ def generate_agent_solution(
             cost_limit=cost_limit,
             timeout=timeout,
             transcript_path=transcript_path,
+            parity=parity,
         )
     )

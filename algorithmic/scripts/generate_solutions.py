@@ -305,6 +305,8 @@ def main():
                         help="Agent timeout in seconds (default: 1200 = 20 min)")
     parser.add_argument("--agent-cost-limit", type=float, default=20.0,
                         help="Agent max cost per problem in USD (default: 20)")
+    parser.add_argument("--parity", action="store_true",
+                        help="Harbor parity mode: no test data or helper scripts given to agent")
 
     args = parser.parse_args()
 
@@ -525,6 +527,7 @@ def main():
                     cost_limit=args.agent_cost_limit,
                     timeout=args.agent_timeout,
                     transcript_path=transcript_path,
+                    parity=args.parity,
                 )
 
                 # Save metadata alongside solution
