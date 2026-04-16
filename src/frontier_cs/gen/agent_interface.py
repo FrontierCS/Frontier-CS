@@ -228,7 +228,7 @@ fi
 """
 
 
-def build_agent_prompt(problem_dir: str, *, parity: bool = False) -> str:
+def build_agent_prompt(problem_dir: str, *, parity: bool = True) -> str:
     """Construct a problem-aware prompt for the agent.
 
     Reads config.yaml to detect problem type (interactive vs standard, SPJ),
@@ -478,7 +478,7 @@ def _write_helper_scripts(workdir: Path, is_interactive: bool) -> None:
         run_inter.chmod(run_inter.stat().st_mode | stat.S_IEXEC)
 
 
-def _write_workdir_claude_md(workdir: Path, is_interactive: bool, *, parity: bool = False) -> None:
+def _write_workdir_claude_md(workdir: Path, is_interactive: bool, *, parity: bool = True) -> None:
     """Write a CLAUDE.md to the workdir so Claude Code picks up behavioral guidance."""
     lines = [
         "# Agent Eval — Working Directory",
@@ -655,7 +655,7 @@ async def run_agent(
     cost_limit: float = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
-    parity: bool = False,
+    parity: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """Run the agent to solve a problem.
 
@@ -868,7 +868,7 @@ def generate_agent_solution(
     cost_limit: float = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
-    parity: bool = False,
+    parity: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """Synchronous wrapper for run_agent.
 

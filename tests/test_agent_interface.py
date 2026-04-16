@@ -72,7 +72,7 @@ def test_build_agent_prompt_standard():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdir = _make_problem_dir(tmpdir)
-        prompt = build_agent_prompt(str(pdir))
+        prompt = build_agent_prompt(str(pdir), parity=False)
         assert "test_all.sh" in prompt
         assert "STANDARD" in prompt or "SPECIAL JUDGE" in prompt
         assert "solution.cpp" in prompt
@@ -88,7 +88,7 @@ def test_build_agent_prompt_interactive():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdir = _make_problem_dir(tmpdir, interactive=True)
-        prompt = build_agent_prompt(str(pdir))
+        prompt = build_agent_prompt(str(pdir), parity=False)
         assert "INTERACTIVE" in prompt
         assert "run_interactive.sh" in prompt
         assert "flush" in prompt.lower() or "pipe" in prompt.lower()
@@ -100,7 +100,7 @@ def test_build_agent_prompt_embeds_small_samples():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdir = _make_problem_dir(tmpdir, samples=2)
-        prompt = build_agent_prompt(str(pdir))
+        prompt = build_agent_prompt(str(pdir), parity=False)
         # The sample content should appear in the prompt
         assert "Sample 1" in prompt
         assert "Sample 2" in prompt
@@ -114,7 +114,7 @@ def test_build_agent_prompt_skips_large_samples():
         pdir = _make_problem_dir(tmpdir, samples=1)
         # Make the input file larger than the embed threshold
         (pdir / "testdata" / "1.in").write_text("x" * (_MAX_EMBED_SIZE + 1))
-        prompt = build_agent_prompt(str(pdir))
+        prompt = build_agent_prompt(str(pdir), parity=False)
         # Should NOT contain the embedded content
         assert "Sample 1" not in prompt
 
@@ -244,7 +244,7 @@ def test_write_workdir_claude_md_standard():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         workdir = Path(tmpdir)
-        _write_workdir_claude_md(workdir, is_interactive=False)
+        _write_workdir_claude_md(workdir, is_interactive=False, parity=False)
         content = (workdir / "CLAUDE.md").read_text()
         assert "test_all.sh" in content
         assert "run_interactive.sh" not in content
@@ -256,7 +256,7 @@ def test_write_workdir_claude_md_interactive():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         workdir = Path(tmpdir)
-        _write_workdir_claude_md(workdir, is_interactive=True)
+        _write_workdir_claude_md(workdir, is_interactive=True, parity=False)
         content = (workdir / "CLAUDE.md").read_text()
         assert "run_interactive.sh" in content
         assert "flush" in content
