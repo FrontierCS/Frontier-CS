@@ -301,10 +301,10 @@ def main():
                         help="Maximum parallel generations")
 
     # Agent-specific parameters
-    parser.add_argument("--agent-timeout", type=float, default=1200.0,
-                        help="Agent timeout in seconds (default: 1200 = 20 min)")
-    parser.add_argument("--agent-cost-limit", type=float, default=20.0,
-                        help="Agent max cost per problem in USD (default: 20)")
+    parser.add_argument("--agent-timeout", type=float, default=3600.0,
+                        help="Agent timeout in seconds (default: 3600 = 1 hour)")
+    parser.add_argument("--agent-cost-limit", type=float, default=None,
+                        help="Agent max cost per problem in USD (default: no limit)")
 
 
     args = parser.parse_args()
