@@ -233,8 +233,7 @@ g++ -std=gnu++17 -O2 -o solution solution.cpp
 
 Your score = fraction of test cases passed (0-100%).
 - Partial credit counts — passing 7/10 cases = 70%
-- A correct-but-slow solution passing small cases is MUCH better than a broken fast one
-- Prioritize CORRECTNESS over optimality
+- Start with a correct solution, then optimize. A working brute-force is a good fallback, but aim for the efficient solution when you can.
 
 ## Self-testing (no test data provided)
 
@@ -268,8 +267,7 @@ Do NOT skip self-testing. This is standard competitive programming practice.
 
 ## When to retreat
 
-- If you've been debugging the SAME bug for 5+ edit-test cycles, STOP.
-- Switch to a simpler algorithm that is guaranteed correct, even if slower.
+- If you're going in circles on the same bug with no new insight, consider falling back to a simpler algorithm.
 - A correct brute-force scoring 30% beats a broken optimized solution scoring 0%.
 - Do NOT rewrite from scratch more than once. Incremental edits preserve working logic.
 """
@@ -299,8 +297,7 @@ g++ -std=gnu++17 -O2 -o solution solution.cpp
 
 Your score = fraction of hidden test cases passed (0-100%).
 - Partial credit counts — passing 7/10 cases = 70%
-- A correct-but-slow solution passing small cases is MUCH better than a broken fast one
-- Prioritize CORRECTNESS over optimality
+- Start with a correct solution, then optimize. A working brute-force is a good fallback, but aim for the efficient solution when you can.
 
 ## Testing
 
@@ -342,8 +339,7 @@ If chk.cc exists, test_all.sh uses it as a special judge automatically.
 
 ## When to retreat
 
-- If you've been debugging the SAME bug for 5+ edit-test cycles, STOP.
-- Switch to a simpler algorithm that is guaranteed correct, even if slower.
+- If you're going in circles on the same bug with no new insight, consider falling back to a simpler algorithm.
 - A correct brute-force scoring 30% beats a broken optimized solution scoring 0%.
 - Do NOT rewrite from scratch more than once. Incremental edits preserve working logic.
 """
