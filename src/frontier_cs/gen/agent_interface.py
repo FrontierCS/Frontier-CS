@@ -43,9 +43,9 @@ from frontier_cs.gen.agent_constants import (
 
 logger = logging.getLogger(__name__)
 
-# Default budget limits
-DEFAULT_COST_LIMIT_USD = 20.0
-DEFAULT_TIMEOUT_SECONDS = 1200  # 20 minutes
+# Default budget limits — aligned with Harbor adapter (task.toml agent.timeout_sec=3600)
+DEFAULT_COST_LIMIT_USD = None  # None = no limit; Harbor relies on timeout, not cost cap
+DEFAULT_TIMEOUT_SECONDS = 3600  # 1 hour, matching Harbor
 
 # Max size of sample I/O to embed directly in the prompt (bytes).
 # Larger inputs are left for the agent to read from disk.
@@ -316,7 +316,7 @@ async def run_agent(
     problem_dir: str,
     model: str,
     *,
-    cost_limit: float = DEFAULT_COST_LIMIT_USD,
+    cost_limit: Optional[float] = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
     parity: bool = True,
@@ -326,7 +326,7 @@ async def run_agent(
     Args:
         problem_dir: Absolute path to the problem directory.
         model: Base model name (without -agent suffix).
-        cost_limit: Maximum cost in USD.
+        cost_limit: Maximum cost in USD. None = no limit.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log. None to skip.
         parity: If True, strip test data and helper scripts (Harbor parity mode).
@@ -529,7 +529,7 @@ def generate_agent_solution(
     problem_dir: str,
     model: str,
     *,
-    cost_limit: float = DEFAULT_COST_LIMIT_USD,
+    cost_limit: Optional[float] = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
     parity: bool = True,
@@ -541,7 +541,7 @@ def generate_agent_solution(
     Args:
         problem_dir: Absolute path to the problem directory.
         model: Base model name (without -agent suffix).
-        cost_limit: Maximum cost in USD.
+        cost_limit: Maximum cost in USD. None = no limit.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log.
         parity: If True, strip test data and helper scripts (Harbor parity mode).
