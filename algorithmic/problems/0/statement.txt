@@ -91,9 +91,9 @@ Input
 Output
 ```
 3 3
+2 0 0 0
+2 2 2 0
 0 0 0 0
-2 0 1 0
-1 1 0 0
 ```
 
 This places the monomino at (0,0), rotates the triomino by 90° (R=1), and fits all shapes into a 3×3 rectangle. (Reflections are allowed, but not used in this example: F=0.)
