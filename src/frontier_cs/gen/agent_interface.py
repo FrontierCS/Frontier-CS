@@ -316,6 +316,7 @@ async def run_agent(
     problem_dir: str,
     model: str,
     *,
+    api_key: Optional[str] = None,
     cost_limit: Optional[float] = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
@@ -326,6 +327,9 @@ async def run_agent(
     Args:
         problem_dir: Absolute path to the problem directory.
         model: Base model name (without -agent suffix).
+        api_key: Anthropic API key. If provided, passed to the SDK subprocess
+            via env (per-run), allowing pool-managed key rotation. If None,
+            the SDK falls back to inheriting ANTHROPIC_API_KEY from the parent.
         cost_limit: Maximum cost in USD. None = no limit.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log. None to skip.
@@ -377,9 +381,14 @@ async def run_agent(
 
     prompt = build_agent_prompt(str(workdir), parity=parity)
 
+    sdk_env: Dict[str, str] = {}
+    if api_key:
+        sdk_env["ANTHROPIC_API_KEY"] = api_key
+
     options = ClaudeAgentOptions(
         model=model,
         cwd=str(workdir),
+        env=sdk_env,
         max_budget_usd=cost_limit,
         permission_mode="bypassPermissions",
         include_partial_messages=True,
@@ -529,6 +538,7 @@ def generate_agent_solution(
     problem_dir: str,
     model: str,
     *,
+    api_key: Optional[str] = None,
     cost_limit: Optional[float] = DEFAULT_COST_LIMIT_USD,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     transcript_path: Optional[Path] = None,
@@ -541,6 +551,8 @@ def generate_agent_solution(
     Args:
         problem_dir: Absolute path to the problem directory.
         model: Base model name (without -agent suffix).
+        api_key: Anthropic API key (passed to SDK subprocess env, per-run).
+            If None, the SDK inherits ANTHROPIC_API_KEY from the parent process.
         cost_limit: Maximum cost in USD. None = no limit.
         timeout: Maximum wall-clock time in seconds.
         transcript_path: Path for JSONL transcript log.
@@ -553,6 +565,7 @@ def generate_agent_solution(
         run_agent(
             problem_dir,
             model,
+            api_key=api_key,
             cost_limit=cost_limit,
             timeout=timeout,
             transcript_path=transcript_path,

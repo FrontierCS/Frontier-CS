@@ -312,10 +312,13 @@ def main():
     # Output directory for algorithmic solutions
     output_dir = algo_dir / "solutions"
 
+    # Detect if all models are agent-only (no judge needed)
+    all_agent = args.models and all(m.endswith("-agent") for m in args.models)
+
     # Initialize judge client
     judge = AlgorithmicJudgeClient(args.judge_url)
 
-    if not judge.is_available():
+    if not all_agent and not judge.is_available():
         print(f"{red('ERROR:')} Judge server not available at {args.judge_url}")
         print("Start the judge with: cd algorithmic && docker compose up -d")
         sys.exit(1)
@@ -399,13 +402,18 @@ def main():
     skipped: List[str] = []
 
     for problem_id in problem_ids:
-        statement = judge.get_problem_statement(problem_id)
+        # Resolve problem directory
+        problem_dir_path = algo_dir / "problems" / problem_id
+
+        if all_agent:
+            # Agent mode reads statement from local file; no judge needed
+            stmt_path = problem_dir_path / "statement.txt"
+            statement = stmt_path.read_text(encoding="utf-8") if stmt_path.exists() else ""
+        else:
+            statement = judge.get_problem_statement(problem_id)
         if not statement:
             print(f"{yellow('WARNING:')} Could not get statement for problem {problem_id}")
             continue
-
-        # Resolve problem directory for agent models
-        problem_dir_path = algo_dir / "problems" / problem_id
 
         for model in models_list:
             model_prefix = get_model_prefix(model)
@@ -523,6 +531,7 @@ def main():
                 code, metadata = generate_agent_solution(
                     problem_dir=task.problem_dir,
                     model=base_model,
+                    api_key=api_key,
                     cost_limit=args.agent_cost_limit,
                     timeout=args.agent_timeout,
                     transcript_path=transcript_path,

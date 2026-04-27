@@ -114,23 +114,37 @@ class APIKeyPool:
                 state["backoff_until"] = 0.0
 
     def report_failure(self, idx: Optional[int], error: Optional[str]) -> None:
-        """Report failed API call for a key."""
+        """Report failed task that used this key.
+
+        Only API-key-related errors (auth, rate limit, server-side) trigger
+        disable/backoff. Application-level errors (e.g. agent timeout, no
+        solution produced) leave the key untouched, since they say nothing
+        about key health.
+        """
         if idx is None:
             return
         with self._lock:
             if not (0 <= idx < len(self._states)):
                 return
             state = self._states[idx]
-            state["failures"] += 1
             reason = (error or "").lower()
+
             fatal_markers = ("invalid", "unauthorized", "forbidden", "permission", "auth")
             if any(marker in reason for marker in fatal_markers):
                 if not state["disabled"]:
                     logger.warning(f"Disabling API key for {self.name}: invalid/unauthorized")
                 state["disabled"] = True
                 state["backoff_until"] = float("inf")
+                state["failures"] += 1
                 return
 
+            api_markers = ("rate limit", "rate_limit", "429", "503", "502", "500",
+                           "overloaded", "quota", "throttle", "connection")
+            if not any(marker in reason for marker in api_markers):
+                # Not an API/key issue — leave key state unchanged.
+                return
+
+            state["failures"] += 1
             delay: int = min(600, 60 * state["failures"])
             state["backoff_until"] = max(state["backoff_until"], time.time() + delay)
             logger.info(f"Backing off {delay:.0f}s for {self.name} key (failures={state['failures']})")
