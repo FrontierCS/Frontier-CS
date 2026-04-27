@@ -43,9 +43,9 @@ from frontier_cs.gen.agent_constants import (
 
 logger = logging.getLogger(__name__)
 
-# Default budget limits — aligned with Harbor adapter (task.toml agent.timeout_sec=3600)
+# Default budget limits — aligned with Harbor adapter (task.toml agent.timeout_sec=10800)
 DEFAULT_COST_LIMIT_USD = None  # None = no limit; Harbor relies on timeout, not cost cap
-DEFAULT_TIMEOUT_SECONDS = 3600  # 1 hour, matching Harbor
+DEFAULT_TIMEOUT_SECONDS = 10800  # 3 hours, matching Harbor
 
 # Max size of sample I/O to embed directly in the prompt (bytes).
 # Larger inputs are left for the agent to read from disk.

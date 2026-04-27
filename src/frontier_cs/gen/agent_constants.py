@@ -180,7 +180,7 @@ PARITY_STANDARD_SECTION = """
 Your output must match the expected output exactly (whitespace-normalized)."""
 
 PARITY_TAIL = """
-Read the CLAUDE.md in this directory for compilation, testing, and workflow guidance.
+Read CLAUDE.md in this directory for compilation, testing, and workflow guidance.
 Begin by reading the full problem statement in statement.txt."""
 
 # Full-access prompt (parity=False): agent gets test data and helper scripts
@@ -210,7 +210,7 @@ FULL_ACCESS_STANDARD_SECTION = """
 Use `./test_all.sh` to compile and test against all samples.{checker_note}"""
 
 FULL_ACCESS_TAIL = """
-Read the CLAUDE.md in this directory for compilation, testing, and workflow guidance.
+Read CLAUDE.md in this directory for compilation, testing, and workflow guidance.
 Begin by reading the full problem statement in statement.txt."""
 
 # ---------------------------------------------------------------------------
