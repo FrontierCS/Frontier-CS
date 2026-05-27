@@ -1399,28 +1399,32 @@ def run_harbor(args: argparse.Namespace) -> int:
         return 1
 
     task_name = _harbor_task_name(args.track, args.problem_id)
+    using_default_task_path = args.task_path is None
     task_path = args.task_path
     dataset_dir = args.dataset_dir or _default_harbor_dataset_dir(args.track)
     if task_path is None:
         task_path = dataset_dir / task_name
 
-    if not task_path.exists():
-        if task_path == dataset_dir / task_name and not args.no_generate:
-            _progress(f"Generating task {task_name}")
-            try:
-                _generate_harbor_task(args.track, args.problem_id, dataset_dir)
-            except RuntimeError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-        if task_path.exists():
-            pass
-        else:
-            print(
-                f"Error: Harbor task path not found: {task_path}\n"
-                "Generate Harbor tasks first, or pass --task-path / --dataset-dir.",
-                file=sys.stderr,
-            )
+    should_generate = (
+        using_default_task_path
+        and task_path == dataset_dir / task_name
+        and not args.no_generate
+    )
+    if should_generate:
+        _progress(f"Generating task {task_name}")
+        try:
+            _generate_harbor_task(args.track, args.problem_id, dataset_dir)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
             return 1
+
+    if not task_path.exists():
+        print(
+            f"Error: Harbor task path not found: {task_path}\n"
+            "Generate Harbor tasks first, or pass --task-path / --dataset-dir.",
+            file=sys.stderr,
+        )
+        return 1
 
     trials_dir = args.trials_dir or _default_harbor_trials_dir()
     trials_dir.mkdir(parents=True, exist_ok=True)
