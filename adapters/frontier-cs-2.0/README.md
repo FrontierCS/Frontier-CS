@@ -28,11 +28,22 @@ uv run frontier-cs-2-0 \
   --overwrite
 ```
 
+Generate only the small Erdos demo task:
+
+```bash
+uv run frontier-cs-2-0 \
+  --source ../.. \
+  --output-dir ../../datasets/frontier-cs-2.0 \
+  --task-ids erdos_demo \
+  --overwrite
+```
+
 ## Run with Harbor
 
 ```bash
 uv run harbor run -p datasets/frontier-cs-2.0
 uv run harbor trial start -p datasets/frontier-cs-2.0/frontier-cs-2-0-erdos-unit-distance
+uv run harbor trial start -p datasets/frontier-cs-2.0/frontier-cs-2-0-erdos-demo
 ```
 
 ## Task Contract

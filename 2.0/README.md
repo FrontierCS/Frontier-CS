@@ -12,3 +12,10 @@ that as many pairs as possible have distance exactly `1`. Its problem ID is
 `erdos_unit_distance`, matching the problem directory name. It is inspired by
 the planar unit distance problem highlighted by OpenAI's May 2026 unit-distance
 result.
+
+## Erdos Unit Distance Demo
+
+The demo variant uses the same interface and scoring rule with only `N = 10`
+points. Its problem ID is `erdos_demo`. It is intended as a quick visual sanity
+check for Harborized agent workflows before running the larger
+`erdos_unit_distance` task.
