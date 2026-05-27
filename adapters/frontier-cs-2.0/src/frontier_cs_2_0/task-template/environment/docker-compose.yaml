@@ -1,0 +1,17 @@
+services:
+  main:
+    depends_on:
+      judge:
+        condition: service_started
+    environment:
+      JUDGE_URL: "http://judge:8082"
+
+  judge:
+    build:
+      context: ${CONTEXT_DIR}
+      dockerfile: Dockerfile.judge
+    command: ["python3", "/judge/judge_server.py"]
+    expose:
+      - "8082"
+    environment:
+      PORT: "8082"

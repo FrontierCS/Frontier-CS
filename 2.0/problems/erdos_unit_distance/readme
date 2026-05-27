@@ -41,7 +41,7 @@ A solution is valid if:
 
 1. It returns exactly 65536 points.
 2. Every coordinate is a finite real number.
-3. No two points are closer than `1e-6`.
+3. No two points are closer than `1e-3`.
 
 The objective is translation-invariant. Very large coordinates are allowed as
 long as pairwise squared distances remain finite.
@@ -49,7 +49,7 @@ long as pairwise squared distances remain finite.
 ## Objective
 
 For all unordered point pairs, count those whose squared Euclidean distance is
-equal to `1` within a small floating-point tolerance. Let `M` be that count.
+equal to `1` within a strict floating-point tolerance. Let `M` be that count.
 
 Maximize `M`.
 

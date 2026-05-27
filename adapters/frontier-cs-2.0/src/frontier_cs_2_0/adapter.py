@@ -133,11 +133,11 @@ class FrontierCS20Adapter:
     def _write_instruction(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         instruction = (
             "You are solving a Frontier-CS 2.0 open-ended optimization problem.\n\n"
-            "Create a Python solution at `/app/solution.py`. The verifier will run "
-            "the source Frontier-CS evaluator and convert its 0-100 score into a "
-            "Harbor reward in [0, 1]. You can call `bash /app/submit.sh` at any "
-            "time to grade the current solution with the same evaluator and get "
-            "feedback before the final verifier run.\n\n"
+            "Create a Python solution at `/app/solution.py`. You can call "
+            "`bash /app/submit.sh` at any time to grade the current solution "
+            "with the same black-box judge used by the final verifier and get "
+            "score feedback. The evaluator implementation is intentionally not "
+            "available in the agent workspace.\n\n"
             f"Problem id: `{problem.problem_id}`\n"
             f"Language: `{problem.language}`\n"
             f"Time limit: `{problem.timeout_seconds}s`\n\n"
@@ -161,8 +161,19 @@ class FrontierCS20Adapter:
             src = problem.problem_dir / name
             if src.exists():
                 shutil.copy2(src, env_dir / name)
+
+        judge_dockerfile = (
+            self.template_dir / "environment" / "Dockerfile.judge"
+        ).read_text(encoding="utf-8")
+        env_dir.joinpath("Dockerfile.judge").write_text(
+            judge_dockerfile.replace("{base_image}", image),
+            encoding="utf-8",
+        )
+        for name in ("docker-compose.yaml", "judge_server.py", "submit.py"):
+            shutil.copy2(self.template_dir / "environment" / name, env_dir / name)
+        # Kept in the build context for the judge image only; the main agent
+        # image's Dockerfile does not copy this into /app.
         shutil.copy2(problem.problem_dir / "evaluator.py", env_dir / "problem_evaluator.py")
-        shutil.copy2(self.template_dir / "environment" / "submit.py", env_dir / "submit.py")
         submit_sh = env_dir / "submit.sh"
         shutil.copy2(self.template_dir / "environment" / "submit.sh", submit_sh)
         submit_sh.chmod(0o755)

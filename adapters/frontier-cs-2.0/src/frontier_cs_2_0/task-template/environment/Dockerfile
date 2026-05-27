@@ -23,5 +23,5 @@ ENV CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
 
 WORKDIR /app
 
-COPY readme config.yaml problem_evaluator.py submit.py submit.sh /app/
+COPY readme config.yaml submit.py submit.sh /app/
 RUN chmod +x /app/submit.sh

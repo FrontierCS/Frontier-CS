@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import os
 import sys
 import time
 import traceback
@@ -12,9 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 SOLUTION_PATH = Path("/app/solution.py")
-PROBLEM_EVALUATOR_PATH = Path("/app/problem_evaluator.py")
 SUBMISSIONS_LOG = Path("/logs/agent/submissions.jsonl")
+JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
+JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800"))
 
 
 def now_iso() -> str:
@@ -31,15 +34,36 @@ def log_record(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def load_problem_evaluator():
-    spec = importlib.util.spec_from_file_location(
-        "frontier_cs_2_0_problem_evaluator", PROBLEM_EVALUATOR_PATH
+def wait_for_judge() -> None:
+    deadline = time.time() + 60
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            response = requests.get(f"{JUDGE_URL}/health", timeout=5)
+            if response.status_code == 200:
+                return
+        except Exception as exc:
+            last_error = exc
+        time.sleep(1)
+    raise RuntimeError(f"judge service is not ready at {JUDGE_URL}: {last_error}")
+
+
+def evaluate_with_judge(code: str) -> tuple[float, float, str]:
+    wait_for_judge()
+    response = requests.post(
+        f"{JUDGE_URL}/evaluate",
+        json={"code": code},
+        timeout=JUDGE_TIMEOUT_SECONDS,
     )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load evaluator from {PROBLEM_EVALUATOR_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("status") != "done":
+        raise RuntimeError(str(payload.get("message") or payload.get("error") or payload))
+    return (
+        float(payload.get("score", 0.0)),
+        float(payload.get("score_unbounded", payload.get("score", 0.0))),
+        str(payload.get("message", "")),
+    )
 
 
 def main() -> int:
@@ -88,8 +112,7 @@ def main() -> int:
 
     try:
         start = time.time()
-        evaluator = load_problem_evaluator()
-        score, score_unbounded, message = evaluator.evaluate(str(solution_path))
+        score, score_unbounded, message = evaluate_with_judge(code)
         elapsed_seconds = time.time() - start
         reward = float(score) / 100.0
 

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import pickle
+import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,9 +19,40 @@ N_POINTS = 65536
 BASELINE_EDGES = N_POINTS
 TIMEOUT_SECONDS = 10800
 UNIT_DISTANCE = 1.0
-DISTANCE_REL_TOL = 1e-7
-DISTANCE_ABS_TOL = 1e-9
-MIN_SEPARATION = 1e-6
+DISTANCE_REL_TOL = 1e-10
+DISTANCE_ABS_TOL = 1e-10
+MIN_SEPARATION = 1e-3
+
+
+def _protect_evaluator_source() -> None:
+    """Hide evaluator source from unprivileged submitted solutions in containers."""
+    try:
+        evaluator_path = Path(__file__).resolve()
+        if str(evaluator_path).startswith(("/judge/", "/tests/")) and os.geteuid() == 0:
+            evaluator_path.chmod(0o600)
+    except Exception:
+        pass
+
+
+_protect_evaluator_source()
+
+
+def _solution_preexec():
+    """Return a preexec_fn that runs submitted code as nobody when possible."""
+    if os.name != "posix":
+        return None
+    try:
+        if os.geteuid() != 0:
+            return None
+        nobody = pwd.getpwnam("nobody")
+    except Exception:
+        return None
+
+    def demote() -> None:
+        os.setgid(nobody.pw_gid)
+        os.setuid(nobody.pw_uid)
+
+    return demote
 
 
 def _is_number(value: Any) -> bool:
@@ -72,50 +106,76 @@ def _load_points(solution_path: str) -> Any:
 
 def _run_solution(solution_path: str) -> tuple[Any, str]:
     with tempfile.TemporaryDirectory(prefix="erdos_unit_distance_") as tmp:
+        tmp_path = Path(tmp)
+        isolated_solution_path = tmp_path / "solution.py"
         result_path = Path(tmp) / "result.pkl"
         runner_path = Path(tmp) / "runner.py"
+        shutil.copy2(solution_path, isolated_solution_path)
         runner_path.write_text(
             """
+import importlib.util
 import pickle
-import traceback
 from pathlib import Path
 
 solution_path = __SOLUTION_PATH__
 result_path = Path(__RESULT_PATH__)
+n_points = __N_POINTS__
+
+
+def load_points():
+    spec = importlib.util.spec_from_file_location("solution", solution_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not import solution")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    for name in ("solve", "generate_points", "run"):
+        fn = getattr(module, name, None)
+        if callable(fn):
+            return fn(n_points)
+
+    points = getattr(module, "POINTS", None)
+    if points is not None:
+        return points
+
+    raise RuntimeError("solution must define solve(n), generate_points(n), run(n), or POINTS")
 
 try:
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("evaluator", __EVALUATOR_PATH__)
-    evaluator = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(evaluator)
-    points = evaluator._load_points(solution_path)
+    points = load_points()
     with result_path.open("wb") as f:
         pickle.dump({"points": points}, f)
-except Exception as exc:
+except Exception:
     with result_path.open("wb") as f:
-        pickle.dump({"error": str(exc), "trace": traceback.format_exc()}, f)
-""".replace("__SOLUTION_PATH__", repr(solution_path))
+        pickle.dump({"error": "solution failed while generating points"}, f)
+""".replace("__SOLUTION_PATH__", repr(str(isolated_solution_path)))
             .replace("__RESULT_PATH__", repr(str(result_path)))
-            .replace("__EVALUATOR_PATH__", repr(str(Path(__file__).resolve()))),
+            .replace("__N_POINTS__", repr(N_POINTS)),
             encoding="utf-8",
         )
+        preexec_fn = _solution_preexec()
+        if preexec_fn is not None:
+            nobody = pwd.getpwnam("nobody")
+            os.chown(tmp, nobody.pw_uid, nobody.pw_gid)
+            os.chown(isolated_solution_path, nobody.pw_uid, nobody.pw_gid)
+            os.chown(runner_path, nobody.pw_uid, nobody.pw_gid)
+        os.chmod(tmp, 0o700 if preexec_fn is not None else 0o755)
 
         proc = subprocess.run(
             [sys.executable, str(runner_path)],
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
+            preexec_fn=preexec_fn,
         )
-        logs = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0:
-            raise RuntimeError(f"solution runner exited with code {proc.returncode}\n{logs}")
+            raise RuntimeError(f"solution runner exited with code {proc.returncode}")
         if not result_path.exists():
             raise RuntimeError("solution did not produce a result")
         with result_path.open("rb") as f:
             payload = pickle.load(f)
         if "error" in payload:
-            raise RuntimeError(payload["error"] + "\n" + payload.get("trace", ""))
-        return payload["points"], logs
+            raise RuntimeError("solution failed while generating points")
+        return payload["points"], ""
 
 
 def _validate_points(points: list[tuple[float, float]]) -> None:
@@ -162,7 +222,7 @@ def _count_unit_distance_pairs(points: list[tuple[float, float]]) -> int:
 
 
 def evaluate(solution_path: str) -> tuple[float, float, str]:
-    raw_points, logs = _run_solution(solution_path)
+    raw_points, _ = _run_solution(solution_path)
     points = _to_points(raw_points)
     _validate_points(points)
     unit_pairs = _count_unit_distance_pairs(points)
@@ -177,8 +237,6 @@ def evaluate(solution_path: str) -> tuple[float, float, str]:
         f"baseline={BASELINE_EDGES}; "
         f"score={score:.6f}; score_unbounded={score_unbounded:.6f}"
     )
-    if logs:
-        message += "\n" + logs.strip()
     return score, score_unbounded, message
 
 
