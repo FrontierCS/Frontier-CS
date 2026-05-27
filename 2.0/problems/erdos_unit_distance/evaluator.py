@@ -22,6 +22,7 @@ UNIT_DISTANCE = 1.0
 DISTANCE_REL_TOL = 1e-10
 DISTANCE_ABS_TOL = 1e-10
 MIN_SEPARATION = 1e-3
+SCORE_POWER = 3.0
 
 
 def _protect_evaluator_source() -> None:
@@ -227,14 +228,16 @@ def evaluate(solution_path: str) -> tuple[float, float, str]:
     _validate_points(points)
     unit_pairs = _count_unit_distance_pairs(points)
 
-    if unit_pairs <= 0:
-        score = 0.0
+    if unit_pairs <= BASELINE_EDGES:
+        raw_score = 0.0
     else:
-        score = max(0.0, 100.0 * (unit_pairs - BASELINE_EDGES) / unit_pairs)
+        raw_score = 100.0 * (unit_pairs - BASELINE_EDGES) / unit_pairs
+    score = 100.0 * (raw_score / 100.0) ** SCORE_POWER
     score_unbounded = score
     message = (
         f"N={N_POINTS}; unit_pairs={unit_pairs}; unit_distance={UNIT_DISTANCE:.12g}; "
-        f"baseline={BASELINE_EDGES}; "
+        f"baseline={BASELINE_EDGES}; score_power={SCORE_POWER:.12g}; "
+        f"raw_score={raw_score:.6f}; "
         f"score={score:.6f}; score_unbounded={score_unbounded:.6f}"
     )
     return score, score_unbounded, message

@@ -1097,6 +1097,56 @@ def _find_harbor_trial_dir(
     return None
 
 
+def _trial_dir_matches_task(candidate: Path, task_name: str) -> bool:
+    if candidate.name.startswith(f"{task_name}__"):
+        return True
+    if candidate.name.startswith(f"{task_name[:32]}__"):
+        return True
+
+    config = _load_json_file(candidate / "config.json") or {}
+    task = config.get("task") or {}
+    task_path = task.get("path")
+    if task_path and Path(str(task_path)).name == task_name:
+        return True
+
+    result = _load_json_file(candidate / "result.json") or {}
+    return result.get("task_name") in {task_name, f"frontier-cs/{task_name}"}
+
+
+def _find_live_harbor_trial_dir(
+    *,
+    trials_dir: Path,
+    task_name: str,
+    harbor_stdout: str,
+    known_trial_dirs: set[Path],
+    started_at: float,
+) -> Path | None:
+    for line in harbor_stdout.splitlines():
+        if line.startswith("Trial name:"):
+            trial_name = line.split(":", 1)[1].strip()
+            candidate = trials_dir / trial_name
+            if candidate.exists():
+                return candidate
+
+    candidates = []
+    for candidate in trials_dir.iterdir() if trials_dir.exists() else ():
+        if not candidate.is_dir():
+            continue
+        if candidate.resolve() in known_trial_dirs:
+            continue
+        try:
+            if candidate.stat().st_mtime + 5 < started_at:
+                continue
+        except OSError:
+            continue
+        if _trial_dir_matches_task(candidate, task_name):
+            candidates.append(candidate)
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def _get_harbor_trial_rewards(trial_dir: Path) -> dict[str, float | int] | None:
     result = _load_json_file(trial_dir / "result.json")
     if result is None:
@@ -1134,6 +1184,22 @@ def _count_successful_submissions(trial_dir: Path) -> tuple[int, float | None]:
     return successful, best
 
 
+def _summarize_agent_exception(exception: dict) -> str | None:
+    exception_type = exception.get("exception_type")
+    message = str(exception.get("exception_message") or "").strip()
+    if not exception_type and not message:
+        return None
+    if exception_type == "NonZeroAgentExitCodeError":
+        if "exit 143" in message:
+            return "agent exited with code 143 after producing a score"
+        return "agent exited non-zero after producing a score"
+    if exception_type == "AgentTimeoutError":
+        return message or "agent timed out after producing a score"
+    if message:
+        return message.splitlines()[0][:240]
+    return str(exception_type)
+
+
 def _harbor_trial_summary_payload(trial_dir: Path) -> dict:
     result = _load_json_file(trial_dir / "result.json") or {}
     rewards = _get_harbor_trial_rewards(trial_dir) or {}
@@ -1149,13 +1215,21 @@ def _harbor_trial_summary_payload(trial_dir: Path) -> dict:
     successful_submissions, best_submission_reward = _count_successful_submissions(
         trial_dir
     )
+    has_reward = rewards.get("reward") is not None
+    agent_status = exception.get("exception_type") if exception else "completed"
 
     payload = {
         "reward": rewards.get("reward"),
         "score": rewards.get("score"),
         "score_unbounded": rewards.get("score_unbounded"),
-        "trial_status": exception.get("exception_type") if exception else "completed",
-        "error_message": exception.get("exception_message") if exception else None,
+        "trial_status": "scored" if has_reward else agent_status,
+        "agent_status": agent_status,
+        "agent_error_summary": _summarize_agent_exception(exception)
+        if exception and has_reward
+        else None,
+        "error_message": exception.get("exception_message")
+        if exception and not has_reward
+        else None,
         "trial_name": result.get("trial_name"),
         "task_name": result.get("task_name"),
         "trial_dir": str(trial_dir),
@@ -1223,38 +1297,52 @@ def _print_harbor_trial_summary(trial_dir: Path) -> None:
             print(f"Best iterative reward: {payload['best_iterative_reward']}")
 
 
-_SUBMIT_STATUS_RE = re.compile(
-    r"\[submit\]\s+status=(?P<status>\S+)\s+"
-    r"score=(?P<reward>[0-9.]+)\s+\(raw=(?P<score>[-+0-9.eE]+)(?:/100)?\)"
-    r"(?:\s+code_chars=(?P<code_chars>\d+))?"
-)
+def _harbor_submission_event_key(event: dict) -> tuple[str, str, str, str]:
+    submission_uuid = event.get("submission_uuid")
+    if submission_uuid:
+        return ("uuid", str(submission_uuid), "", "")
+    return (
+        str(event.get("timestamp") or ""),
+        str(event.get("status") or ""),
+        str(event.get("reward") or ""),
+        str(event.get("code_chars") or ""),
+    )
 
 
-def _extract_submission_events(line: str) -> list[dict]:
-    timestamp = None
+def _read_new_text(path: Path, file_offsets: dict[Path, int]) -> str:
     try:
-        payload = json.loads(line)
-        timestamp = payload.get("timestamp")
-        item = payload.get("item") or {}
-        text = "\n".join(
-            str(value)
-            for value in (
-                item.get("aggregated_output"),
-                payload.get("observation"),
-                payload.get("message"),
-                item.get("text"),
-            )
-            if value
-        )
-    except json.JSONDecodeError:
-        text = line
+        size = path.stat().st_size
+        offset = file_offsets.get(path, 0)
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return ""
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            f.seek(offset)
+            chunk = f.read()
+            file_offsets[path] = f.tell()
+            return chunk
+    except OSError:
+        return ""
 
-    events = []
-    for match in _SUBMIT_STATUS_RE.finditer(text):
-        event = match.groupdict()
-        event["timestamp"] = timestamp
-        events.append(event)
-    return events
+
+def _submission_log_event(line: str) -> dict | None:
+    if not line.strip():
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if record.get("status") != "done":
+        return None
+    return {
+        "timestamp": record.get("ts"),
+        "status": record.get("status"),
+        "reward": record.get("score"),
+        "score": record.get("score_raw", record.get("score")),
+        "code_chars": record.get("code_chars"),
+        "submission_uuid": record.get("submission_uuid"),
+    }
 
 
 def _poll_harbor_submission_events(
@@ -1267,47 +1355,77 @@ def _poll_harbor_submission_events(
         return []
 
     events = []
-    for path in sorted((trial_dir / "agent").glob("*.txt")):
-        try:
-            size = path.stat().st_size
-            offset = file_offsets.get(path, 0)
-            if size < offset:
-                offset = 0
-            if size == offset:
+    submissions_log = trial_dir / "agent" / "submissions.jsonl"
+    if submissions_log.exists():
+        for line in _read_new_text(submissions_log, file_offsets).splitlines():
+            event = _submission_log_event(line)
+            if event is None:
                 continue
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                f.seek(offset)
-                chunk = f.read()
-                file_offsets[path] = f.tell()
-        except OSError:
-            continue
-
-        for line in chunk.splitlines():
-            for event in _extract_submission_events(line):
-                key = (
-                    event.get("timestamp") or "",
-                    event.get("status") or "",
-                    event.get("reward") or "",
-                    event.get("code_chars") or "",
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                events.append(event)
+            key = _harbor_submission_event_key(event)
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(event)
     return events
 
 
-def _print_harbor_submission_event(index: int, event: dict) -> None:
+def _parse_float(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_score(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
+
+
+def _format_reward(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.4f}"
+
+
+def _score_bar(scores: list[float]) -> str:
+    if not scores:
+        return ""
+    blocks = "▁▂▃▄▅▆▇█"
+    lo = min(scores)
+    hi = max(scores)
+    if hi <= lo:
+        return blocks[-1] * len(scores)
+    return "".join(
+        blocks[min(len(blocks) - 1, int((score - lo) / (hi - lo) * (len(blocks) - 1)))]
+        for score in scores
+    )
+
+
+def _print_harbor_submission_event(
+    index: int, event: dict, scores: list[float]
+) -> None:
     timestamp = event.get("timestamp") or time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
     )
+    score = _parse_float(event.get("score"))
+    reward = _parse_float(event.get("reward"))
+    best = max(scores) if scores else score
     code_chars = event.get("code_chars")
     suffix = f" code_chars={code_chars}" if code_chars is not None else ""
     print(
         "[frontier harbor] "
         f"submission #{index} {timestamp} "
-        f"status={event.get('status')} score={event.get('score')} "
-        f"reward={event.get('reward')}{suffix}",
+        f"status={event.get('status')} score={_format_score(score)} "
+        f"best={_format_score(best)} reward={_format_reward(reward)}{suffix}",
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[frontier harbor] "
+        f"score bar: {_score_bar(scores)} "
+        f"({_format_score(scores[0] if scores else None)} -> "
+        f"{_format_score(scores[-1] if scores else None)})",
         file=sys.stderr,
         flush=True,
     )
@@ -1321,6 +1439,12 @@ def _run_harbor_command_live(
     trials_dir: Path,
     task_name: str,
 ) -> tuple[int, str]:
+    started_at = time.time()
+    known_trial_dirs = {
+        path.resolve()
+        for path in trials_dir.iterdir()
+        if path.is_dir()
+    }
     process = subprocess.Popen(
         command,
         env=env,
@@ -1347,6 +1471,7 @@ def _run_harbor_command_live(
     trial_dir: Path | None = None
     file_offsets: dict[Path, int] = {}
     seen_events: set[tuple[str, str, str, str]] = set()
+    scores: list[float] = []
     submission_count = 0
     stdout_closed = False
 
@@ -1360,21 +1485,25 @@ def _run_harbor_command_live(
                 if args.verbose:
                     print(line, end="")
                 stdout_text = "".join(stdout_parts)
-                if trial_dir is None and "Trial name:" in stdout_text:
-                    trial_dir = _find_harbor_trial_dir(
+                if trial_dir is None:
+                    trial_dir = _find_live_harbor_trial_dir(
                         trials_dir=trials_dir,
                         task_name=task_name,
                         harbor_stdout=stdout_text,
+                        known_trial_dirs=known_trial_dirs,
+                        started_at=started_at,
                     )
         except queue.Empty:
             pass
 
         stdout_text = "".join(stdout_parts)
-        if trial_dir is None and "Trial name:" in stdout_text:
-            trial_dir = _find_harbor_trial_dir(
+        if trial_dir is None:
+            trial_dir = _find_live_harbor_trial_dir(
                 trials_dir=trials_dir,
                 task_name=task_name,
                 harbor_stdout=stdout_text,
+                known_trial_dirs=known_trial_dirs,
+                started_at=started_at,
             )
 
         for event in _poll_harbor_submission_events(
@@ -1383,7 +1512,10 @@ def _run_harbor_command_live(
             seen=seen_events,
         ):
             submission_count += 1
-            _print_harbor_submission_event(submission_count, event)
+            score = _parse_float(event.get("score"))
+            if score is not None:
+                scores.append(score)
+            _print_harbor_submission_event(submission_count, event, scores)
 
         if stdout_closed and process.poll() is not None:
             break

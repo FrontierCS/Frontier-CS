@@ -63,11 +63,20 @@ baseline = N
 X = M
 ```
 
-If the point set is invalid, or if `X <= baseline`, the score is `0`. Otherwise:
+If the point set is invalid, or if `X <= baseline`, the score is `0`. Otherwise
+the raw score is:
 
 ```text
-score = 100 * (X - baseline) / X
+raw_score = 100 * (X - baseline) / X
+```
+
+The reported score applies a cubic scale:
+
+```text
+score = 100 * (raw_score / 100)^3
 ```
 
 This makes the simple `N`-pair baseline worth `0`, rewards every improvement
-above the baseline, and avoids saturating the benchmark at a finite target.
+above the baseline, and keeps high-scoring constructions from saturating the
+benchmark too quickly. The bounded and unbounded score fields both report this
+cubic-scaled score; evaluator messages also include `raw_score` for reference.
