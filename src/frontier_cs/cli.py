@@ -31,9 +31,13 @@ import contextlib
 import json
 import logging
 import os
+import queue
+import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
@@ -1219,6 +1223,175 @@ def _print_harbor_trial_summary(trial_dir: Path) -> None:
             print(f"Best iterative reward: {payload['best_iterative_reward']}")
 
 
+_SUBMIT_STATUS_RE = re.compile(
+    r"\[submit\]\s+status=(?P<status>\S+)\s+"
+    r"score=(?P<reward>[0-9.]+)\s+\(raw=(?P<score>[-+0-9.eE]+)(?:/100)?\)"
+    r"(?:\s+code_chars=(?P<code_chars>\d+))?"
+)
+
+
+def _extract_submission_events(line: str) -> list[dict]:
+    timestamp = None
+    try:
+        payload = json.loads(line)
+        timestamp = payload.get("timestamp")
+        item = payload.get("item") or {}
+        text = "\n".join(
+            str(value)
+            for value in (
+                item.get("aggregated_output"),
+                payload.get("observation"),
+                payload.get("message"),
+                item.get("text"),
+            )
+            if value
+        )
+    except json.JSONDecodeError:
+        text = line
+
+    events = []
+    for match in _SUBMIT_STATUS_RE.finditer(text):
+        event = match.groupdict()
+        event["timestamp"] = timestamp
+        events.append(event)
+    return events
+
+
+def _poll_harbor_submission_events(
+    *,
+    trial_dir: Path | None,
+    file_offsets: dict[Path, int],
+    seen: set[tuple[str, str, str, str]],
+) -> list[dict]:
+    if trial_dir is None:
+        return []
+
+    events = []
+    for path in sorted((trial_dir / "agent").glob("*.txt")):
+        try:
+            size = path.stat().st_size
+            offset = file_offsets.get(path, 0)
+            if size < offset:
+                offset = 0
+            if size == offset:
+                continue
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                f.seek(offset)
+                chunk = f.read()
+                file_offsets[path] = f.tell()
+        except OSError:
+            continue
+
+        for line in chunk.splitlines():
+            for event in _extract_submission_events(line):
+                key = (
+                    event.get("timestamp") or "",
+                    event.get("status") or "",
+                    event.get("reward") or "",
+                    event.get("code_chars") or "",
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                events.append(event)
+    return events
+
+
+def _print_harbor_submission_event(index: int, event: dict) -> None:
+    timestamp = event.get("timestamp") or time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+    )
+    code_chars = event.get("code_chars")
+    suffix = f" code_chars={code_chars}" if code_chars is not None else ""
+    print(
+        "[frontier harbor] "
+        f"submission #{index} {timestamp} "
+        f"status={event.get('status')} score={event.get('score')} "
+        f"reward={event.get('reward')}{suffix}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _run_harbor_command_live(
+    *,
+    command: list[str],
+    env: dict[str, str],
+    args: argparse.Namespace,
+    trials_dir: Path,
+    task_name: str,
+) -> tuple[int, str]:
+    process = subprocess.Popen(
+        command,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read_stdout() -> None:
+        try:
+            for line in process.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    reader = threading.Thread(target=read_stdout, daemon=True)
+    reader.start()
+
+    stdout_parts: list[str] = []
+    trial_dir: Path | None = None
+    file_offsets: dict[Path, int] = {}
+    seen_events: set[tuple[str, str, str, str]] = set()
+    submission_count = 0
+    stdout_closed = False
+
+    while True:
+        try:
+            line = lines.get(timeout=0.5)
+            if line is None:
+                stdout_closed = True
+            else:
+                stdout_parts.append(line)
+                if args.verbose:
+                    print(line, end="")
+                stdout_text = "".join(stdout_parts)
+                if trial_dir is None and "Trial name:" in stdout_text:
+                    trial_dir = _find_harbor_trial_dir(
+                        trials_dir=trials_dir,
+                        task_name=task_name,
+                        harbor_stdout=stdout_text,
+                    )
+        except queue.Empty:
+            pass
+
+        stdout_text = "".join(stdout_parts)
+        if trial_dir is None and "Trial name:" in stdout_text:
+            trial_dir = _find_harbor_trial_dir(
+                trials_dir=trials_dir,
+                task_name=task_name,
+                harbor_stdout=stdout_text,
+            )
+
+        for event in _poll_harbor_submission_events(
+            trial_dir=trial_dir,
+            file_offsets=file_offsets,
+            seen=seen_events,
+        ):
+            submission_count += 1
+            _print_harbor_submission_event(submission_count, event)
+
+        if stdout_closed and process.poll() is not None:
+            break
+
+    reader.join(timeout=1)
+    return process.returncode or 0, "".join(stdout_parts)
+
+
 def run_harbor(args: argparse.Namespace) -> int:
     """Run Harbor wrapper commands."""
     if args.harbor_command != "trial":
@@ -1279,26 +1452,23 @@ def run_harbor(args: argparse.Namespace) -> int:
     if args.verbose:
         print("Running Harbor trial...")
         print(" ".join(command))
-    completed = subprocess.run(
-        command,
+    returncode, harbor_stdout = _run_harbor_command_live(
+        command=command,
         env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
+        args=args,
+        trials_dir=trials_dir,
+        task_name=task_name,
     )
-    if args.verbose and completed.stdout:
-        print(completed.stdout, end="")
 
     _progress("Reading trial artifacts")
     trial_dir = _find_harbor_trial_dir(
         trials_dir=trials_dir,
         task_name=task_name,
-        harbor_stdout=completed.stdout or "",
+        harbor_stdout=harbor_stdout,
     )
     if trial_dir is None:
         print("Error: could not locate Harbor trial directory.", file=sys.stderr)
-        return completed.returncode or 1
+        return returncode or 1
 
     rewards = _get_harbor_trial_rewards(trial_dir)
     if rewards and "reward" in rewards:
@@ -1315,7 +1485,7 @@ def run_harbor(args: argparse.Namespace) -> int:
     else:
         print(f"Error: no reward found in {trial_dir}", file=sys.stderr)
 
-    return completed.returncode or 1
+    return returncode or 1
 
 
 def run_eval(args: argparse.Namespace) -> int:

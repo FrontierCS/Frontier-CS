@@ -45,6 +45,7 @@ def load_problem_evaluator():
 def main() -> int:
     solution_path = Path(sys.argv[1] if len(sys.argv) > 1 else SOLUTION_PATH)
     sub_uuid = str(uuid.uuid4())
+    code_chars = 0
 
     log_record(
         {
@@ -52,6 +53,7 @@ def main() -> int:
             "ts": now_iso(),
             "status": "started",
             "solution_path": str(solution_path),
+            "code_chars": code_chars,
         }
     )
 
@@ -68,7 +70,9 @@ def main() -> int:
         )
         return 2
 
-    if not solution_path.read_text(encoding="utf-8").strip():
+    code = solution_path.read_text(encoding="utf-8")
+    code_chars = len(code)
+    if not code.strip():
         msg = f"Solution file {solution_path} is empty"
         print(f"[submit] ERROR: {msg}", file=sys.stderr)
         log_record(
@@ -77,6 +81,7 @@ def main() -> int:
                 "ts": now_iso(),
                 "status": "error",
                 "error": msg,
+                "code_chars": code_chars,
             }
         )
         return 2
@@ -98,11 +103,15 @@ def main() -> int:
                 "score_unbounded": score_unbounded,
                 "elapsed_seconds": elapsed_seconds,
                 "detail": message,
+                "code_chars": code_chars,
             }
         )
 
         print(f"[submit] uuid={sub_uuid}")
-        print(f"[submit] status=done score={reward:.4f} (raw={score}/100)")
+        print(
+            f"[submit] status=done score={reward:.4f} "
+            f"(raw={score}/100) code_chars={code_chars}"
+        )
         if score_unbounded != score:
             print(f"[submit] unbounded={score_unbounded}")
         if message:
@@ -119,6 +128,7 @@ def main() -> int:
                 "status": "error",
                 "error": str(exc),
                 "detail": detail,
+                "code_chars": code_chars,
             }
         )
         return 5

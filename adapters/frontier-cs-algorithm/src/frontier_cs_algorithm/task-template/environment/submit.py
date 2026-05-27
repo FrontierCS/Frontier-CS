@@ -57,6 +57,7 @@ def log_record(record: dict) -> None:
 def main() -> int:
     solution_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/app/solution.cpp")
     sub_uuid = str(uuid.uuid4())
+    code_chars = 0
 
     log_record(
         {
@@ -65,6 +66,7 @@ def main() -> int:
             "status": "started",
             "problem_id": PROBLEM_ID,
             "solution_path": str(solution_path),
+            "code_chars": code_chars,
         }
     )
 
@@ -82,6 +84,7 @@ def main() -> int:
         return 2
 
     code = solution_path.read_text()
+    code_chars = len(code)
     if not code.strip():
         msg = f"Solution file {solution_path} is empty"
         print(f"[submit] ERROR: {msg}", file=sys.stderr)
@@ -91,6 +94,7 @@ def main() -> int:
                 "ts": now_iso(),
                 "status": "error",
                 "error": msg,
+                "code_chars": code_chars,
             }
         )
         return 2
@@ -165,11 +169,15 @@ def main() -> int:
             "score_raw": score_raw,
             "detail": detail,
             "raw_result": result,
+            "code_chars": code_chars,
         }
     )
 
     print(f"[submit] uuid={sub_uuid} sid={sid}")
-    print(f"[submit] status={status} score={score:.4f} (raw={score_raw}/100)")
+    print(
+        f"[submit] status={status} score={score:.4f} "
+        f"(raw={score_raw}/100) code_chars={code_chars}"
+    )
     if detail:
         snippet = detail if len(detail) <= 500 else detail[:500] + "..."
         print(f"[submit] detail: {snippet}")
