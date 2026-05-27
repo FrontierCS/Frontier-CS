@@ -4,10 +4,10 @@
 # Replicates CI logic, can run locally
 #
 # Usage:
-#   ./scripts/run_eval.sh --track research    # Auto-clones internal + results repos
+#   ./scripts/run_eval.sh --track research    # Auto-clones results repo
 #   ./scripts/run_eval.sh --track algorithmic --workers 10
 #   ./scripts/run_eval.sh --check-overlap
-#   ./scripts/run_eval.sh --track research --internal-dir /custom/path  # Use existing clone
+#   ./scripts/run_eval.sh --check-overlap --internal-dir /custom/path  # Optional legacy check
 #
 
 set -e
@@ -55,14 +55,14 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Auto-clones internal and results repos if not provided.
+Auto-clones the results repo if not provided. Internal is only used for --check-overlap.
 Default locations: ../Frontier-CS-internal and ../Frontier-CS-Result
 
 Options:
     --track TYPE          Track to evaluate: research or algorithmic (required)
                           research: uses SkyPilot (GPU required)
                           algorithmic: uses Docker
-    --internal-dir DIR    Path to internal repo (default: auto-clone)
+    --internal-dir DIR    Path to internal repo (only used by --check-overlap)
     --results-repo DIR    Path to results repo for incremental state (default: auto-clone)
     -j N                  Parallelism: clusters for research, workers for algorithmic (default: 10)
     --push                Auto-push results to remote (for CI)
@@ -82,7 +82,7 @@ Examples:
     # Custom parallelism
     ./scripts/run_eval.sh --track research -j 20
 
-    # Check internal ⊇ public
+    # Optional legacy check: internal ⊇ public
     ./scripts/run_eval.sh --check-overlap
 EOF
     exit 1
@@ -337,12 +337,6 @@ trap cleanup_on_exit EXIT
 
 # Main
 
-# Auto-clone internal repo if not provided
-if [[ -z "$INTERNAL_DIR" ]] && $AUTO_CLONE; then
-    INTERNAL_DIR="$DEFAULT_INTERNAL_DIR"
-    ensure_repo "$INTERNAL_REPO_URL" "$INTERNAL_DIR" "internal repo"
-fi
-
 # Auto-clone results repo if not provided
 if [[ -z "$RESULTS_REPO" ]] && $AUTO_CLONE; then
     RESULTS_REPO="$DEFAULT_RESULTS_REPO"
@@ -401,8 +395,13 @@ if [[ -z "$RESULTS_REPO" ]] && $AUTO_CLONE; then
     fi
 fi
 
-# Check overlap mode
+# Check overlap mode is kept as an optional legacy sanity check. Normal
+# evaluation now uses public problem data, which includes the released tests.
 if $CHECK_OVERLAP; then
+    if [[ -z "$INTERNAL_DIR" ]] && $AUTO_CLONE; then
+        INTERNAL_DIR="$DEFAULT_INTERNAL_DIR"
+        ensure_repo "$INTERNAL_REPO_URL" "$INTERNAL_DIR" "internal repo"
+    fi
     if [[ -z "$INTERNAL_DIR" ]] || [[ ! -d "$INTERNAL_DIR" ]]; then
         echo "ERROR: Internal repo not found"
         exit 1
@@ -426,34 +425,19 @@ if [[ "$TRACK" == "research" ]]; then
     SKYPILOT=true
 fi
 
-# Validate internal dir
-if [[ -z "$INTERNAL_DIR" ]] || [[ ! -d "$INTERNAL_DIR" ]]; then
-    echo "ERROR: Internal directory not found: $INTERNAL_DIR"
-    echo "       Clone it manually or ensure you have access to FrontierCS/Frontier-CS-internal"
-    exit 1
-fi
-
-# Check that internal is superset of public
 echo ""
-echo "Checking internal ⊇ public..."
-if ! check_superset "$PUBLIC_DIR" "$INTERNAL_DIR"; then
-    echo ""
-    echo "WARNING: Continuing despite check failure..."
-fi
-
-echo ""
-echo "Using internal data from: $INTERNAL_DIR"
+echo "Using public problem data from: $PUBLIC_DIR"
 echo "Running tools from: $PUBLIC_DIR"
 
-# Set paths based on track
-# Solutions always from public, problems from internal (more test cases)
-# Results saved directly to results repo (CLI adds track subdir automatically)
+# Set paths based on track. Solutions and problems now both come from public;
+# released test cases are checked into this repository.
+# Results saved directly to results repo (CLI adds track subdir automatically).
 if [[ "$TRACK" == "algorithmic" ]]; then
     SOLUTIONS_DIR="$PUBLIC_DIR/algorithmic/solutions"
-    PROBLEMS_DIR="$INTERNAL_DIR/algorithmic/problems"
+    PROBLEMS_DIR="$PUBLIC_DIR/algorithmic/problems"
 else
     SOLUTIONS_DIR="$PUBLIC_DIR/research/solutions"
-    PROBLEMS_DIR="$INTERNAL_DIR/research/problems"
+    PROBLEMS_DIR="$PUBLIC_DIR/research/problems"
 fi
 RESULTS_DIR="$RESULTS_REPO/batch"
 

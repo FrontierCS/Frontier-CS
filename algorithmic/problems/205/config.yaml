@@ -11,5 +11,5 @@ memory: 256m
 # The subtasks section
 subtasks:
   - score: 100
-    n_cases: 3 # Looks for 1.in/1.ans, 2.in/2.ans, ... 10.in/10.ans in testdata/
+    n_cases: 10 # Looks for 1.in/1.ans, 2.in/2.ans, ... 10.in/10.ans in testdata/
 

@@ -6,5 +6,5 @@ checker: chk.cc
 
 subtasks:
   - score: 100
-    n_cases: 3     # auto-picks 1.in…10.in and (logically) 1.out…10.out,
+    n_cases: 10     # auto-picks 1.in…10.in and (logically) 1.out…10.out,
                     # but your JudgeEngine first tries "X.ans" before "X.out".

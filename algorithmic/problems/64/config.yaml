@@ -6,4 +6,4 @@ memory: 1024m # 1GB should be enough for checkpointing backtrack
 checker: chk.cc
 subtasks:
   - score: 100
-    n_cases: 3
+    n_cases: 20

@@ -9,5 +9,5 @@ memory: 256m
 # The subtasks section works the same way
 subtasks:
 - score: 100
-  n_cases: 3 
+  n_cases: 75 
     

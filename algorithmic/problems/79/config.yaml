@@ -3,6 +3,6 @@ time: 10s
 memory: 128m
 subtasks:
   - score: 100
-    n_cases: 3
+    n_cases: 10
 interactor: interactor.cc
 checker_type: testlib

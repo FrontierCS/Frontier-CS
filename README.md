@@ -21,6 +21,11 @@
   <img src="https://img.shields.io/badge/Algorithmic_Problems-188-green" alt="Algorithmic Problems">
 </p>
 
+
+## News
+
+- **May 2026:** The formerly private algorithmic test cases are now public, making full local, batch, and agent-based evaluation possible without internal repository access.
+
 ## What is Frontier-CS?
 
 **Frontier-CS** is an _unsolved_, _open-ended_, _verifiable_, and _diverse_ benchmark for evaluating AI on challenging computer science problems.
@@ -173,7 +178,7 @@ and runner mapping.
 
 ### Batch Evaluation
 
-For testing your solutions at scale with public test cases.
+For testing your solutions at scale with the released public test cases.
 
 **Solution directory structure:**
 ```
@@ -224,12 +229,12 @@ Results are saved to `./results/batch/{track}/` by default. The state file track
 
 See `--help` for all options.
 
-> **Note:** For maintainers, `./scripts/run_eval.sh` is used for full evaluation with private test cases.
+> **Note:** For maintainers, `./scripts/run_eval.sh` runs full evaluation using the released public problem data in this repository.
 
 
 ## Evaluating and Submitting Results
 
-Reference solutions and full test cases are withheld. We release partial test cases so you can develop and debug locally. For the complete evaluation workflow (preparing solutions, running batch evaluation, viewing results, and submitting to the leaderboard), see [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.
+Reference solutions are withheld, while the algorithmic test cases are now released for local and batch evaluation. For the complete evaluation workflow (preparing solutions, running batch evaluation, viewing results, and submitting to the leaderboard), see [SUBMIT.md](SUBMIT.md) and submit your solutions to qmang@berkeley.edu, wenhao.chai@princeton.edu, huanzhimao@berkeley.edu, or zhifei.li@berkeley.edu.
 
 Questions? Join our [Discord](https://discord.gg/k4hd2nU4UE)
 

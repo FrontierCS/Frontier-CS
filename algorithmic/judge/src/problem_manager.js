@@ -80,6 +80,29 @@ export class ProblemConfig {
                 throw new Error(`Subtask ${si} must define either 'n_cases' or 'cases'`);
             }
         }
+
+        // Some released public packages contain additional numbered testdata
+        // files beyond the historical n_cases value. Treat the config as the
+        // minimum declared set and include every complete .in/.ans or .in/.out
+        // pair that is present in testdata/. This lets public evaluation use
+        // the released former-internal cases without requiring a private repo.
+        const configuredInputs = new Set(cases.map(c => c.input));
+        const discoveredCases = await findTestCases(path.join(this.pdir, 'testdata'));
+        const fallbackSubtask = Math.max(0, cfg.subtasks.length - 1);
+        const fallback = cfg.subtasks[fallbackSubtask] || {};
+        const fallbackTime = fallback.time_limit || fallback.time || globalTime;
+        const fallbackMemory = fallback.memory_limit || fallback.memory || globalMemory;
+        for (const c of discoveredCases) {
+            if (!configuredInputs.has(c.input)) {
+                cases.push({
+                    subtask: fallbackSubtask,
+                    input: c.input,
+                    output: c.output,
+                    time: fallbackTime,
+                    memory: fallbackMemory
+                });
+            }
+        }
         
         this.cases = cases;
     }

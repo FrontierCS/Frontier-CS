@@ -4,4 +4,4 @@ time: 15s
 memory: 1024m
 subtasks:
   - score: 100
-    n_cases: 4
+    n_cases: 27

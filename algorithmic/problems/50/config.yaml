@@ -3,7 +3,7 @@ time: 10s
 memory: 1024m
 subtasks:
   - score: 100
-    n_cases: 3
+    n_cases: 40
 checker: chk.cc
 checker_type: testlib
 filename: std.cc

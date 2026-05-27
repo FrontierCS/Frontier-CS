@@ -7,4 +7,4 @@ checker: chk.cc
 cheker_type: SPJ
 subtasks:
   - score: 100
-    n_cases: 3
+    n_cases: 10
