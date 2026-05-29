@@ -1217,11 +1217,17 @@ def _harbor_trial_summary_payload(trial_dir: Path) -> dict:
     )
     has_reward = rewards.get("reward") is not None
     agent_status = exception.get("exception_type") if exception else "completed"
+    reward_metrics = {
+        key: value
+        for key, value in rewards.items()
+        if key not in {"reward", "score", "score_unbounded"}
+    }
 
     payload = {
         "reward": rewards.get("reward"),
         "score": rewards.get("score"),
         "score_unbounded": rewards.get("score_unbounded"),
+        "metrics": reward_metrics or None,
         "trial_status": "scored" if has_reward else agent_status,
         "agent_status": agent_status,
         "agent_error_summary": _summarize_agent_exception(exception)
@@ -1403,7 +1409,7 @@ def _score_bar(scores: list[float]) -> str:
 
 
 def _print_harbor_submission_event(
-    index: int, event: dict, scores: list[float]
+    index: int, event: dict, scores: list[float], previous_score: float | None
 ) -> None:
     timestamp = event.get("timestamp") or time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
@@ -1424,8 +1430,8 @@ def _print_harbor_submission_event(
     print(
         "[frontier harbor] "
         f"score bar: {_score_bar(scores)} "
-        f"({_format_score(scores[0] if scores else None)} -> "
-        f"{_format_score(scores[-1] if scores else None)})",
+        f"({_format_score(previous_score if previous_score is not None else 0.0)} -> "
+        f"{_format_score(score)})",
         file=sys.stderr,
         flush=True,
     )
@@ -1513,9 +1519,12 @@ def _run_harbor_command_live(
         ):
             submission_count += 1
             score = _parse_float(event.get("score"))
+            previous_score = scores[-1] if scores else 0.0
             if score is not None:
                 scores.append(score)
-            _print_harbor_submission_event(submission_count, event, scores)
+            _print_harbor_submission_event(
+                submission_count, event, scores, previous_score
+            )
 
         if stdout_closed and process.poll() is not None:
             break
@@ -1585,6 +1594,8 @@ def run_harbor(args: argparse.Namespace) -> int:
         env["FRONTIER_CS_ALGORITHMIC_PATH"] = str(_repo_root() / "algorithmic")
 
     _progress(f"Starting Harbor trial {task_name}")
+    if args.track == "2.0":
+        _progress("Building/preparing Harbor environment; judge readiness appears at submission time")
     if args.verbose:
         print("Running Harbor trial...")
         print(" ".join(command))

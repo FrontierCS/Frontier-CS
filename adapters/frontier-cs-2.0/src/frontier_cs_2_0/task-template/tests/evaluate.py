@@ -6,10 +6,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import sys
 import traceback
 from pathlib import Path
 
 SOLUTION_PATH = Path("/app/solution.py")
+APP_PATH = Path("/app")
+SUBMISSION_CONFIG_PATH = Path("/app/submission_config.json")
 PROBLEM_EVALUATOR_PATH = Path("/tests/problem_evaluator.py")
 REWARD_TXT = Path("/logs/verifier/reward.txt")
 REWARD_JSON = Path("/logs/verifier/reward.json")
@@ -69,8 +72,30 @@ def load_problem_evaluator():
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load evaluator from {PROBLEM_EVALUATOR_PATH}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def normalize_result(result):
+    if not isinstance(result, tuple) or len(result) not in (3, 4):
+        raise TypeError("evaluator must return (score, score_unbounded, message[, metrics])")
+    score = float(result[0])
+    score_unbounded = float(result[1])
+    message = str(result[2])
+    metrics = result[3] if len(result) == 4 else {}
+    if not isinstance(metrics, dict):
+        raise TypeError("evaluator metrics must be a dict")
+    return score, score_unbounded, message, metrics
+
+
+def load_submission_path() -> Path:
+    if not SUBMISSION_CONFIG_PATH.exists():
+        return SOLUTION_PATH
+    config = json.loads(SUBMISSION_CONFIG_PATH.read_text(encoding="utf-8"))
+    if config.get("kind") == "directory":
+        return Path(config.get("path") or APP_PATH)
+    return Path(config.get("path") or SOLUTION_PATH)
 
 
 def main() -> None:
@@ -83,6 +108,9 @@ def main() -> None:
         reward = float(best.get("score", 0.0))
         score_raw = best.get("score_raw", reward * 100.0)
         score_unbounded = best.get("score_unbounded", score_raw)
+        metrics = best.get("metrics", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
         print(f"Using best iterative submission after {reason}: reward={reward:.4f}")
         write_reward(
             reward,
@@ -92,17 +120,19 @@ def main() -> None:
                 "score_unbounded": score_unbounded,
                 "best_submission_reward": reward,
                 "used_best_submission": 1,
+                **metrics,
             },
         )
         return True
 
-    if not SOLUTION_PATH.exists():
-        print("ERROR: /app/solution.py not found")
-        if write_best_submission_reward("solution.py not found"):
+    solution_path = load_submission_path()
+    if not solution_path.exists():
+        print(f"ERROR: {solution_path} not found")
+        if write_best_submission_reward(f"{solution_path} not found"):
             return
-        write_reward(0.0, "solution.py not found")
+        write_reward(0.0, f"{solution_path} not found")
         return
-    if not SOLUTION_PATH.read_text(encoding="utf-8").strip():
+    if solution_path.is_file() and not solution_path.read_text(encoding="utf-8").strip():
         print("ERROR: /app/solution.py is empty")
         if write_best_submission_reward("solution.py is empty"):
             return
@@ -111,7 +141,9 @@ def main() -> None:
 
     try:
         evaluator = load_problem_evaluator()
-        score, score_unbounded, message = evaluator.evaluate(str(SOLUTION_PATH))
+        score, score_unbounded, message, metrics = normalize_result(
+            evaluator.evaluate(str(solution_path))
+        )
         reward = float(score) / 100.0
         if best is not None and float(best.get("score", 0.0)) > reward:
             write_best_submission_reward("final solution scored below best submission")
@@ -126,6 +158,7 @@ def main() -> None:
             {
                 "score": score,
                 "score_unbounded": score_unbounded,
+                **metrics,
             },
         )
     except Exception as exc:

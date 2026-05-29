@@ -20,6 +20,7 @@ class FrontierCS20Problem:
     language: str
     timeout_seconds: int
     docker_image: str
+    config: dict[str, Any]
 
 
 def load_problem_config(config_path: Path) -> dict[str, Any]:

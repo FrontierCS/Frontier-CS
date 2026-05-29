@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,6 +64,7 @@ def discover_problems(frontier_cs_root: Path) -> list[FrontierCS20Problem]:
                 language=str(runtime.get("language", "python")),
                 timeout_seconds=int(runtime.get("timeout_seconds", 10800)),
                 docker_image=str(docker.get("image", "ubuntu:24.04")),
+                config=config,
             )
         )
 
@@ -131,13 +133,32 @@ class FrontierCS20Adapter:
         return task_paths.task_dir
 
     def _write_instruction(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
+        submission = problem.config.get("submission", {}) or {}
+        submission_kind = str(submission.get("kind", "file"))
+        submission_path = str(submission.get("path", "/app/solution.py"))
+        if submission_kind == "directory":
+            workflow = (
+                "Create or modify the project under `/app`. You can call "
+                "`bash /app/submit.sh` at any time to package `/app`, grade it "
+                "with the same black-box judge used by the final verifier, and "
+                "get score feedback. The evaluator implementation and hidden "
+                "benchmark data are intentionally not available in the agent "
+                "workspace. The task statement defines the required build and "
+                "runtime contract.\n\n"
+                f"Final submission path: `{submission_path}`\n"
+            )
+        else:
+            workflow = (
+                f"Create a {problem.language} solution at `{submission_path}`. "
+                "You can call `bash /app/submit.sh` at any time to grade the "
+                "current solution with the same black-box judge used by the final "
+                "verifier and get score feedback. The evaluator implementation is "
+                "intentionally not available in the agent workspace.\n"
+            )
+
         instruction = (
             "You are solving a Frontier-CS 2.0 open-ended optimization problem.\n\n"
-            "Create a Python solution at `/app/solution.py`. You can call "
-            "`bash /app/submit.sh` at any time to grade the current solution "
-            "with the same black-box judge used by the final verifier and get "
-            "score feedback. The evaluator implementation is intentionally not "
-            "available in the agent workspace.\n\n"
+            f"{workflow}\n"
             f"Problem id: `{problem.problem_id}`\n"
             f"Language: `{problem.language}`\n"
             f"Time limit: `{problem.timeout_seconds}s`\n\n"
@@ -152,8 +173,35 @@ class FrontierCS20Adapter:
             encoding="utf-8"
         )
         image = self.docker_image or problem.docker_image
+        runtime = problem.config.get("runtime", {}) or {}
+        apt_package_names = [
+            str(pkg)
+            for pkg in [
+                *(runtime.get("apt_packages", []) or []),
+                *(runtime.get("judge_apt_packages", []) or []),
+            ]
+        ]
+        apt_packages = " ".join(dict.fromkeys(apt_package_names))
+        extra_apt_install = (
+            f"apt-get install -y --no-install-recommends {apt_packages} &&"
+            if apt_packages
+            else ": &&"
+        )
+        pip_package_names = [
+            str(pkg) for pkg in runtime.get("judge_pip_packages", []) or []
+        ]
+        pip_packages = " ".join(dict.fromkeys(pip_package_names))
+        extra_pip_install = (
+            f"pip3 install --break-system-packages {pip_packages} &&"
+            if pip_packages
+            else ": &&"
+        )
         env_dir.joinpath("Dockerfile").write_text(
-            dockerfile.replace("{base_image}", image),
+            dockerfile.replace("{base_image}", image).replace(
+                "{extra_apt_install}", extra_apt_install
+            ).replace(
+                "{extra_pip_install}", extra_pip_install
+            ),
             encoding="utf-8",
         )
 
@@ -161,12 +209,28 @@ class FrontierCS20Adapter:
             src = problem.problem_dir / name
             if src.exists():
                 shutil.copy2(src, env_dir / name)
+        self._write_submission_config(env_dir, problem)
+        harbor_app_dir = problem.problem_dir / "harbor" / "app"
+        generated_harbor_app_dir = env_dir / "harbor_app"
+        generated_harbor_app_dir.mkdir(parents=True, exist_ok=True)
+        if harbor_app_dir.exists():
+            shutil.copytree(
+                harbor_app_dir, generated_harbor_app_dir, dirs_exist_ok=True
+            )
 
         judge_dockerfile = (
             self.template_dir / "environment" / "Dockerfile.judge"
         ).read_text(encoding="utf-8")
+        judge_apt_packages = " ".join(
+            str(pkg) for pkg in runtime.get("judge_apt_packages", []) or []
+        )
         env_dir.joinpath("Dockerfile.judge").write_text(
-            judge_dockerfile.replace("{base_image}", image),
+            judge_dockerfile.replace("{base_image}", image).replace(
+                "{judge_apt_packages_line}",
+                f" {judge_apt_packages}" if judge_apt_packages else "",
+            ).replace(
+                "{judge_pip_install}", extra_pip_install
+            ),
             encoding="utf-8",
         )
         for name in ("docker-compose.yaml", "judge_server.py", "submit.py"):
@@ -177,6 +241,15 @@ class FrontierCS20Adapter:
         submit_sh = env_dir / "submit.sh"
         shutil.copy2(self.template_dir / "environment" / "submit.sh", submit_sh)
         submit_sh.chmod(0o755)
+
+    def _write_submission_config(self, env_dir: Path, problem: FrontierCS20Problem) -> None:
+        submission = dict(problem.config.get("submission", {}) or {})
+        submission.setdefault("kind", "file")
+        submission.setdefault("path", "/app/solution.py")
+        submission.setdefault("exclude", [])
+        (env_dir / "submission_config.json").write_text(
+            json.dumps(submission, indent=2), encoding="utf-8"
+        )
 
     def _write_tests(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         tests_dir = task_paths.tests_dir
@@ -196,12 +269,19 @@ class FrontierCS20Adapter:
 
     def _write_task_config(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         template = (self.template_dir / "task.toml").read_text(encoding="utf-8")
+        environment = problem.config.get("environment", {}) or {}
         text = template.format(
             task_id=problem.task_id,
             problem_id=problem.problem_id,
             tag=problem.tag,
             timeout_sec=problem.timeout_seconds,
             agent_timeout_sec=max(10800, problem.timeout_seconds),
+            environment_build_timeout_sec=float(
+                environment.get("build_timeout_seconds", 600)
+            ),
+            cpus=int(environment.get("cpus", 2)),
+            memory_mb=int(environment.get("memory_mb", 4096)),
+            storage_mb=int(environment.get("storage_mb", 4096)),
         )
         try:
             from harbor.models.task.config import TaskConfig

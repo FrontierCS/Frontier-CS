@@ -1,7 +1,8 @@
 FROM {base_image}
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 ca-certificates && \
+    apt-get install -y --no-install-recommends python3 ca-certificates {judge_apt_packages_line} && \
+    {judge_pip_install} \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /judge

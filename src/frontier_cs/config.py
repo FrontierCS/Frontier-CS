@@ -213,6 +213,11 @@ LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
         extension="cpp",
         code_block_tag="cpp",
     ),
+    "rust": LanguageConfig(
+        name="rust",
+        extension="rs",
+        code_block_tag="rust",
+    ),
 }
 
 DEFAULT_LANGUAGE = "python"

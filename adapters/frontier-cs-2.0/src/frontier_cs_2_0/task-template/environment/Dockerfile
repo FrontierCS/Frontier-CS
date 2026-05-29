@@ -3,7 +3,9 @@ FROM {base_image}
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 python3-pip ca-certificates bash curl ripgrep && \
+    {extra_apt_install} \
     pip3 install --break-system-packages requests && \
+    {extra_pip_install} \
     rm -rf /var/lib/apt/lists/*
 
 # Pre-install Claude Code so the agent setup does not need apt at trial time.
@@ -23,5 +25,6 @@ ENV CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
 
 WORKDIR /app
 
-COPY readme config.yaml submit.py submit.sh /app/
+COPY readme config.yaml submission_config.json submit.py submit.sh /app/
+COPY harbor_app/ /app/
 RUN chmod +x /app/submit.sh

@@ -2,7 +2,7 @@ services:
   main:
     depends_on:
       judge:
-        condition: service_started
+        condition: service_healthy
     environment:
       JUDGE_URL: "http://judge:8082"
 
@@ -15,3 +15,15 @@ services:
       - "8082"
     environment:
       PORT: "8082"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 360
+      start_period: 5s
