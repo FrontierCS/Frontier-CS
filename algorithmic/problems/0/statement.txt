@@ -38,7 +38,7 @@ Where:
 - Fᵢ ∈ {0,1}: reflection flag (**1 = reflect across the y-axis before rotation**, 0 = no reflection)
 
 All transformed cells must satisfy:
-0 ≤ xᵢⱼ′ < W, 0 ≤ yᵢⱼ′ < H, W=H
+0 ≤ xᵢⱼ′ < W, 0 ≤ yᵢⱼ′ < H
 
 ---
 
