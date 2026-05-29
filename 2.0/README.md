@@ -19,3 +19,11 @@ The demo variant uses the same interface and scoring rule with only `N = 10`
 points. Its problem ID is `erdos_demo`. It is intended as a quick visual sanity
 check for Harborized agent workflows before running the larger
 `erdos_unit_distance` task.
+
+## Vector DB ANN
+
+This systems problem asks agents to build a Rust approximate nearest-neighbor
+vector search service for a hidden SIFT1M-scale benchmark. Its problem ID is
+`vector_db_ann`. Submissions are whole `/app` projects served through Harbor,
+and the objective is to maximize effective QPS subject to `recall@10 >= 0.95`;
+the score includes query throughput plus a small load/index-build penalty.
