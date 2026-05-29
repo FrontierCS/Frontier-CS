@@ -36,6 +36,15 @@ cargo 1.75
 If you add crates, choose versions compatible with this toolchain or pin
 transitive dependencies accordingly.
 
+The service and judge run with the task resource limits below. Design your
+parallel search and indexing strategy for this budget:
+
+```text
+vCPUs: 8
+memory: 16 GiB
+query concurrency: 4
+```
+
 The service must listen on `PORT` and implement these endpoints:
 
 ```text
@@ -92,14 +101,20 @@ A submission is valid if:
 
 ## Scoring
 
-The evaluator runs an official exact-search reference HTTP service once per
-judge process on the same hidden benchmark and through the same `/bulk_insert`
-and `/search` client harnesses to measure:
+At trial startup, the Harbor judge sidecar prepares the hidden benchmark and
+runs an exact-search reference HTTP service through the same `/bulk_insert`
+and `/search` client harnesses to produce ground-truth nearest neighbors and
+the trial-local scoring baseline:
 
 ```text
 baseline_qps
+baseline_effective_qps
 baseline_load_seconds
 ```
+
+Interactive submissions and the final verifier both score through this same
+judge sidecar, so the baseline and runtime environment are shared within a
+trial while still letting different machines measure their own local baseline.
 
 Each submission is then timed independently. The load phase includes all
 `/bulk_insert` calls and any index construction performed by the service before

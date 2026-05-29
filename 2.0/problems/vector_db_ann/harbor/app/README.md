@@ -20,6 +20,14 @@ cargo 1.75
 Pin crate versions if newer transitive dependencies require a newer Rust
 compiler.
 
+The Harbor task provides the following resource budget:
+
+```text
+vCPUs: 8
+memory: 16 GiB
+query concurrency: 4
+```
+
 ## Attribution
 
 This starter skeleton is adapted from KCORES/vector-db-bench, licensed under

@@ -19,8 +19,11 @@ runtime:
   docker:
     image: ubuntu:24.04
 environment:
-  cpus: 4
-  memory_mb: 8192
+  # If these resource limits change, also update the resource budget text in
+  # readme and harbor/app/README.md so agents can design parallel algorithms
+  # for the actual CPU and memory budget.
+  cpus: 8
+  memory_mb: 16384
   storage_mb: 8192
   build_timeout_seconds: 3600
 submission:
