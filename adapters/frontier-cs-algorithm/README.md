@@ -57,9 +57,9 @@ the average of per-case scores normalized to `[0, 1]` and written to
   final `/app/solution.cpp` score and the best successful iterative submission.
   This preserves progress when an agent times out after submitting a working
   solution but before leaving a better final file.
-- **Process reward artifacts**: every interactive submission is recorded in
-  `/logs/agent/submissions.jsonl` and mirrored to
-  `/logs/verifier/submissions.jsonl` by the final verifier.
+- **Process reward artifacts**: `/logs/agent/submissions.jsonl` is used for
+  live progress display; final scoring rebuilds `/logs/verifier/submissions.jsonl`
+  from judge-owned artifacts under `/logs/artifacts/judge/submissions`.
 - **Per-task verifier timeout**: scaled as
   `max(120, n_cases * time_limit_seconds * 5 + 60)` so harder problems
   with many cases do not time out before the judge finishes.

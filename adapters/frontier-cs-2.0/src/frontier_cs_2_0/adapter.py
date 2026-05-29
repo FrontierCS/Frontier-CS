@@ -233,8 +233,24 @@ class FrontierCS20Adapter:
             ),
             encoding="utf-8",
         )
-        for name in ("docker-compose.yaml", "judge_server.py", "submit.py"):
-            shutil.copy2(self.template_dir / "environment" / name, env_dir / name)
+        environment = problem.config.get("environment", {}) or {}
+        compose = (
+            self.template_dir / "environment" / "docker-compose.yaml"
+        ).read_text(encoding="utf-8")
+        (env_dir / "docker-compose.yaml").write_text(
+            compose.format(
+                judge_cpus=int(environment.get("cpus", 2)),
+                judge_memory_mb=int(environment.get("memory_mb", 4096)),
+            ),
+            encoding="utf-8",
+        )
+        shutil.copy2(
+            self.template_dir / "environment" / "judge_server.py",
+            env_dir / "judge_server.py",
+        )
+        shutil.copy2(
+            self.template_dir / "environment" / "submit.py", env_dir / "submit.py"
+        )
         # Kept in the build context for the judge image only; the main agent
         # image's Dockerfile does not copy this into /app.
         shutil.copy2(problem.problem_dir / "evaluator.py", env_dir / "problem_evaluator.py")
@@ -254,7 +270,9 @@ class FrontierCS20Adapter:
     def _write_tests(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         tests_dir = task_paths.tests_dir
         shutil.copy2(self.template_dir / "tests" / "test.sh", tests_dir / "test.sh")
-        shutil.copy2(self.template_dir / "tests" / "evaluate.py", tests_dir / "evaluate.py")
+        shutil.copy2(
+            self.template_dir / "tests" / "evaluate.py", tests_dir / "evaluate.py"
+        )
         shutil.copy2(problem.problem_dir / "evaluator.py", tests_dir / "problem_evaluator.py")
         (tests_dir / "test.sh").chmod(0o755)
 

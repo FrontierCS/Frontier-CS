@@ -6,7 +6,6 @@ Submits the agent's C++ code to the go-judge HTTP API and retrieves the score.
 
 import json
 import os
-import shutil
 import time
 from pathlib import Path
 
@@ -17,41 +16,82 @@ PROBLEM_ID = os.environ.get("PROBLEM_ID", "0")
 SOLUTION_PATH = Path("/app/solution.cpp")
 REWARD_TXT = Path("/logs/verifier/reward.txt")
 REWARD_JSON = Path("/logs/verifier/reward.json")
-AGENT_SUBMISSIONS_LOG = Path("/logs/agent/submissions.jsonl")
+JUDGE_SUBMISSIONS_DIR = Path("/logs/artifacts/judge/submissions")
 VERIFIER_SUBMISSIONS_LOG = Path("/logs/verifier/submissions.jsonl")
 JUDGE_RESULT_JSON = Path("/logs/verifier/judge_result.json")
 POLL_INTERVAL = 2  # seconds
 MAX_POLL_TIME = int(os.environ.get("MAX_POLL_TIME", "600"))  # seconds
 
 
-def copy_submissions_log() -> None:
-    """Mirror the agent's in-trace submissions log into verifier artifacts.
+def _submission_sort_key(path: Path) -> tuple[int, str]:
+    try:
+        return (int(path.parent.name), path.parent.name)
+    except ValueError:
+        return (10**18, path.parent.name)
 
-    The verifier dir is always present in the trial output; copying the log
-    here means the post-hoc analysis only has to look in one place even if
-    /logs/agent/ collection layout shifts.
-    """
-    if AGENT_SUBMISSIONS_LOG.exists():
-        VERIFIER_SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+def judge_submission_records() -> list[dict]:
+    """Rebuild the iterative submission log from judge-owned artifacts."""
+    problem_dir = JUDGE_SUBMISSIONS_DIR / str(PROBLEM_ID)
+    if not problem_dir.exists():
+        return []
+
+    records: list[dict] = []
+    for result_path in sorted(
+        problem_dir.glob("*/result.json"), key=_submission_sort_key
+    ):
         try:
-            shutil.copy2(AGENT_SUBMISSIONS_LOG, VERIFIER_SUBMISSIONS_LOG)
-        except OSError as exc:
-            print(f"WARN: failed to copy submissions.jsonl: {exc}")
+            result = json.loads(result_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        meta: dict = {}
+        meta_path = result_path.parent / "meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                meta = {}
+
+        score_raw = result.get("score") or 0.0
+        try:
+            reward = float(score_raw) / 100.0
+        except (TypeError, ValueError):
+            reward = 0.0
+
+        records.append(
+            {
+                "ts": meta.get("ts"),
+                "status": result.get("status", "unknown"),
+                "sid": meta.get("sid") or result_path.parent.name,
+                "problem_id": meta.get("pid") or PROBLEM_ID,
+                "score": reward,
+                "score_raw": score_raw,
+                "score_unbounded": result.get("scoreUnbounded"),
+                "detail": result.get("message")
+                or result.get("detail")
+                or result.get("result")
+                or "",
+                "raw_result": result,
+            }
+        )
+    return records
 
 
-def best_submission() -> dict | None:
-    if not AGENT_SUBMISSIONS_LOG.exists():
-        return None
+def write_submissions_log(records: list[dict]) -> None:
+    VERIFIER_SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with VERIFIER_SUBMISSIONS_LOG.open("w") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+
+def best_submission(records: list[dict]) -> dict | None:
     best: dict | None = None
-    for line in AGENT_SUBMISSIONS_LOG.read_text().splitlines():
-        if not line.strip():
-            continue
+    for record in records:
         try:
-            record = json.loads(line)
             reward = float(record.get("score", 0.0))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
+        except (TypeError, ValueError):
+            reward = 0.0
         if record.get("status") != "done":
             continue
         if best is None or reward > float(best.get("score", 0.0)):
@@ -71,11 +111,15 @@ def write_reward(
     """
     REWARD_TXT.parent.mkdir(parents=True, exist_ok=True)
     REWARD_TXT.write_text(str(score))
-    REWARD_JSON.write_text(json.dumps({"reward": score}, indent=2))
+    numeric_rewards: dict[str, float | int] = {"reward": score}
 
     sidecar: dict[str, object] = {"reward": score, "detail": detail}
     if extra:
-        sidecar.update(extra)
+        for key, value in extra.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric_rewards[key] = value
+            sidecar[key] = value
+    REWARD_JSON.write_text(json.dumps(numeric_rewards, indent=2))
     JUDGE_RESULT_JSON.write_text(json.dumps(sidecar, indent=2))
 
 
@@ -83,9 +127,9 @@ def main():
     print(f"Frontier-CS Problem {PROBLEM_ID}")
     print(f"Judge: {JUDGE_URL}")
 
-    # Always mirror the agent's in-trace submission log into verifier artifacts.
-    copy_submissions_log()
-    best = best_submission()
+    records = judge_submission_records()
+    write_submissions_log(records)
+    best = best_submission(records)
 
     def write_best_submission_reward(reason: str) -> bool:
         if best is None:

@@ -106,7 +106,7 @@ def make_directory_archive(root: Path, exclude: list[str]) -> tuple[str, int]:
     return base64.b64encode(buf.getvalue()).decode("ascii"), file_count
 
 
-def evaluate_with_judge(payload: dict) -> tuple[float, float, str, dict]:
+def evaluate_with_judge(payload: dict) -> dict:
     wait_for_judge()
     response = requests.post(
         f"{JUDGE_URL}/evaluate",
@@ -117,12 +117,7 @@ def evaluate_with_judge(payload: dict) -> tuple[float, float, str, dict]:
     payload = response.json()
     if payload.get("status") != "done":
         raise RuntimeError(str(payload.get("message") or payload.get("error") or payload))
-    return (
-        float(payload.get("score", 0.0)),
-        float(payload.get("score_unbounded", payload.get("score", 0.0))),
-        str(payload.get("message", "")),
-        dict(payload.get("metrics", {}) or {}),
-    )
+    return payload
 
 
 def main() -> int:
@@ -181,6 +176,7 @@ def main() -> int:
         )
         judge_payload = {
             "submission_kind": "directory",
+            "submission_uuid": sub_uuid,
             "archive_b64": archive_b64,
         }
     else:
@@ -199,11 +195,19 @@ def main() -> int:
                 }
             )
             return 2
-        judge_payload = {"submission_kind": "file", "code": code}
+        judge_payload = {
+            "submission_kind": "file",
+            "submission_uuid": sub_uuid,
+            "code": code,
+        }
 
     try:
         start = time.time()
-        score, score_unbounded, message, metrics = evaluate_with_judge(judge_payload)
+        judge_result = evaluate_with_judge(judge_payload)
+        score = float(judge_result.get("score", 0.0))
+        score_unbounded = float(judge_result.get("score_unbounded", score))
+        message = str(judge_result.get("message", ""))
+        metrics = dict(judge_result.get("metrics", {}) or {})
         elapsed_seconds = time.time() - start
         reward = float(score) / 100.0
 

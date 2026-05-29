@@ -48,9 +48,11 @@ uv run harbor trial start -p datasets/frontier-cs-2.0/frontier-cs-2-0-erdos-demo
 
 ## Task Contract
 
-The agent works in `/app` and must create `/app/solution.py`. The final
-verifier runs the original Frontier-CS `2.0` evaluator and writes a normalized
-reward in `/logs/verifier/reward.txt`.
+The agent works in `/app` and must create `/app/solution.py` unless the task
+declares a directory submission. A judge sidecar prepares the task evaluator
+once per trial; both iterative submissions and the final verifier score
+through that same sidecar. The final verifier writes a normalized reward in
+`/logs/verifier/reward.txt`.
 
 During the trial, the agent can call:
 
@@ -61,11 +63,12 @@ bash /app/submit.sh
 This submits the current `/app/solution.py` to a black-box judge service,
 prints the score and feedback, and records each attempt in
 `/logs/agent/submissions.jsonl`. The evaluator source is not mounted into the
-agent workspace. The final verifier mirrors that log to
-`/logs/verifier/submissions.jsonl` for process-reward analysis. The reported
-reward is the maximum of the final `/app/solution.py` score and the best
-successful iterative submission, so a timed-out agent can keep its best
-submitted solution.
+agent workspace. The judge owns the authoritative submission log at
+`/logs/judge/submissions.jsonl`; the final verifier filters iterative agent
+submissions into `/logs/verifier/submissions.jsonl` for process-reward
+analysis. The reported reward is the maximum of the final submission score and
+the best successful iterative submission, so a timed-out agent can keep its
+best submitted solution.
 
 Some Harbor CLI versions print the timeout/error summary before rewards; in
 that case inspect `result.json`, `verifier/reward.json`, and

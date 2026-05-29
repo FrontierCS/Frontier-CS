@@ -1168,6 +1168,23 @@ def _count_successful_submissions(trial_dir: Path) -> tuple[int, float | None]:
     if not submissions.exists():
         return 0, None
 
+    def record_reward(record: dict) -> float | None:
+        if "reward" in record:
+            try:
+                return float(record["reward"])
+            except (TypeError, ValueError):
+                return None
+        if "score_raw" in record:
+            try:
+                return float(record.get("score_raw", 0.0)) / 100.0
+            except (TypeError, ValueError):
+                return None
+        try:
+            score = float(record.get("score", 0.0))
+        except (TypeError, ValueError):
+            return None
+        return score / 100.0 if score > 1.0 else score
+
     successful = 0
     best = None
     for line in submissions.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -1175,12 +1192,14 @@ def _count_successful_submissions(trial_dir: Path) -> tuple[int, float | None]:
             continue
         try:
             record = json.loads(line)
-            score = float(record.get("score", 0.0))
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if record.get("status") == "done":
+            reward = record_reward(record)
+            if reward is None:
+                continue
             successful += 1
-            best = score if best is None else max(best, score)
+            best = reward if best is None else max(best, reward)
     return successful, best
 
 

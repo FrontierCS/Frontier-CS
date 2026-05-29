@@ -8,8 +8,16 @@ services:
 
   judge:
     build:
-      context: ${CONTEXT_DIR}
+      context: ${{CONTEXT_DIR}}
       dockerfile: Dockerfile.judge
+    deploy:
+      resources:
+        limits:
+          cpus: "{judge_cpus}"
+          memory: "{judge_memory_mb}M"
+        reservations:
+          cpus: "{judge_cpus}"
+          memory: "{judge_memory_mb}M"
     command: ["python3", "/judge/judge_server.py"]
     expose:
       - "8082"

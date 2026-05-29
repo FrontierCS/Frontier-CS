@@ -14,11 +14,14 @@ import io
 import time
 import traceback
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 PROBLEM_EVALUATOR_PATH = Path("/judge/problem_evaluator.py")
+JUDGE_READY_LOG = Path("/logs/judge/judge_ready.json")
+JUDGE_SUBMISSIONS_LOG = Path("/logs/judge/submissions.jsonl")
 MAX_SUBMISSION_BYTES = 30_000_000
 MAX_ARCHIVE_BYTES = 20_000_000
 
@@ -38,6 +41,44 @@ def load_problem_evaluator():
 EVALUATOR = None
 READY = False
 READY_PAYLOAD: dict[str, Any] = {"status": "starting"}
+
+
+def now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def write_judge_ready(payload: dict[str, Any]) -> None:
+    try:
+        JUDGE_READY_LOG.parent.mkdir(parents=True, exist_ok=True)
+        JUDGE_READY_LOG.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError as exc:
+        print(f"WARN: failed to write judge_ready.json: {exc}", flush=True)
+
+
+def log_submission(record: dict[str, Any]) -> None:
+    JUDGE_SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with JUDGE_SUBMISSIONS_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": now_iso(), **record}, ensure_ascii=False) + "\n")
+
+
+def read_submissions() -> list[dict[str, Any]]:
+    if not JUDGE_SUBMISSIONS_LOG.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in JUDGE_SUBMISSIONS_LOG.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def prepare_evaluator() -> None:
@@ -60,6 +101,7 @@ def prepare_evaluator() -> None:
             "prepare_seconds": elapsed,
             **payload,
         }
+        write_judge_ready(READY_PAYLOAD)
         READY = True
         print(
             "[frontier judge] ready "
@@ -144,6 +186,9 @@ class JudgeHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._write_json(200 if READY else 503, READY_PAYLOAD)
             return
+        if self.path == "/submissions":
+            self._write_json(200, {"status": "ok", "submissions": read_submissions()})
+            return
         self._write_json(404, {"status": "error", "error": "not found"})
 
     def do_POST(self) -> None:
@@ -176,8 +221,13 @@ class JudgeHandler(BaseHTTPRequestHandler):
             self._write_json(413, {"status": "error", "error": "submission too large"})
             return
 
+        submission_uuid = ""
+        submission_role = "agent"
+        submission_kind = "file"
         try:
             payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            submission_uuid = str(payload.get("submission_uuid") or "")
+            submission_role = str(payload.get("submission_role") or "agent")
             submission_kind = payload.get("submission_kind", "file")
             if submission_kind == "directory":
                 archive_b64 = payload.get("archive_b64")
@@ -185,25 +235,49 @@ class JudgeHandler(BaseHTTPRequestHandler):
                     raise ValueError(
                         "directory submission must include archive_b64"
                     )
-                self._write_json(200, evaluate_archive(archive_b64))
+                result = evaluate_archive(archive_b64)
+                log_submission(
+                    {
+                        "submission_uuid": submission_uuid,
+                        "submission_role": submission_role,
+                        "submission_kind": submission_kind,
+                        **result,
+                    }
+                )
+                self._write_json(200, result)
                 return
             code = payload.get("code")
             if not isinstance(code, str) or not code.strip():
                 raise ValueError(
                     "file submission must include non-empty string field 'code'"
                 )
-            self._write_json(200, evaluate_code(code))
+            result = evaluate_code(code)
+            log_submission(
+                {
+                    "submission_uuid": submission_uuid,
+                    "submission_role": submission_role,
+                    "submission_kind": submission_kind,
+                    **result,
+                }
+            )
+            self._write_json(200, result)
         except Exception:
             print(traceback.format_exc(), flush=True)
-            self._write_json(
-                200,
+            result = {
+                "status": "error",
+                "score": 0.0,
+                "score_unbounded": 0.0,
+                "message": "evaluation failed",
+            }
+            log_submission(
                 {
-                    "status": "error",
-                    "score": 0.0,
-                    "score_unbounded": 0.0,
-                    "message": "evaluation failed",
-                },
+                    "submission_uuid": submission_uuid,
+                    "submission_role": submission_role,
+                    "submission_kind": submission_kind,
+                    **result,
+                }
             )
+            self._write_json(200, result)
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
