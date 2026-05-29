@@ -19,7 +19,7 @@
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-68-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-188-green" alt="Algorithmic Problems">
-  <img src="https://img.shields.io/badge/2.0_Problems-2-purple" alt="2.0 Problems">
+  <img src="https://img.shields.io/badge/2.0_Problems-3-purple" alt="2.0 Problems">
 </p>
 
 ## News
