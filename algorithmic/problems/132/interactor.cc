@@ -9,10 +9,10 @@ int vis[1100],wait_ans[1100];
 double cal_score(int rmax){
     double score=0.0;
     if(rmax<=30) score=-1.0*20/3*rmax+1.0*820/3;
-    else if(30<rmax<=35) score=-1.0*4*rmax+1.0*580/3;
-    else if(35<rmax<=40) score=-1.0*8/3*rmax+1.0*440/3;
-    else if(40<rmax<=60) score=-1.0*4/3*rmax+1.0*280/3;
-    else if(60<rmax<=75) score=1.0*40/3;
+    else if(30<rmax&&rmax<=35) score=-1.0*4*rmax+1.0*580/3;
+    else if(35<rmax&&rmax<=40) score=-1.0*8/3*rmax+1.0*440/3;
+    else if(40<rmax&&rmax<=60) score=-1.0*4/3*rmax+1.0*280/3;
+    else if(60<rmax&&rmax<=75) score=1.0*40/3;
     return score/100;
 }
 
