@@ -27,3 +27,10 @@ vector search service for a hidden SIFT1M-scale benchmark. Its problem ID is
 `vector_db_ann`. Submissions are whole `/app` projects served through Harbor,
 and the objective is to maximize effective QPS subject to `recall@10 >= 0.95`;
 the score includes query throughput plus a small load/index-build penalty.
+
+## Vector DB ANN Relaxed
+
+This variant keeps the same SIFT1M-scale service contract and recall target as
+`vector_db_ann`, but reduces the load/index-build penalty by 10x so stronger
+offline indexing strategies are more viable. Its problem ID is
+`vector_db_ann_relaxed`.
