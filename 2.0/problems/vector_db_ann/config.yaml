@@ -26,6 +26,12 @@ environment:
   memory_mb: 16384
   storage_mb: 8192
   build_timeout_seconds: 3600
+evaluation:
+  # The judge drives the search service with this many concurrent workers.
+  # Keep this aligned with the CPU budget unless the task is intentionally
+  # changed into a higher-concurrency service benchmark.
+  query_concurrency: 8
+  queries_per_worker: 64
 submission:
   kind: directory
   path: /app

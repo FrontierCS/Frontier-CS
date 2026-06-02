@@ -25,7 +25,8 @@ The Harbor task provides the following resource budget:
 ```text
 vCPUs: 8
 memory: 16 GiB
-query concurrency: 4
+query concurrency: 8
+timed queries per worker: 64
 ```
 
 ## Attribution

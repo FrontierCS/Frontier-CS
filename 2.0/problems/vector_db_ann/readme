@@ -42,7 +42,8 @@ parallel search and indexing strategy for this budget:
 ```text
 vCPUs: 8
 memory: 16 GiB
-query concurrency: 4
+query concurrency: 8
+timed queries per worker: 64
 ```
 
 The service must listen on `PORT` and implement these endpoints:
@@ -118,7 +119,8 @@ trial while still letting different machines measure their own local baseline.
 
 Each submission is then timed independently. The load phase includes all
 `/bulk_insert` calls and any index construction performed by the service before
-queries begin. The query phase measures only `/search` throughput:
+queries begin. The query phase uses 8 concurrent workers, each issuing 64
+queries, and measures only `/search` throughput:
 
 ```text
 candidate_qps

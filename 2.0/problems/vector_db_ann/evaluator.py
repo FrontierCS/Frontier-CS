@@ -19,19 +19,61 @@ from urllib import request
 
 import numpy as np
 
+
+def _read_evaluation_config() -> dict[str, int]:
+    config_path = Path(__file__).with_name("config.yaml")
+    if not config_path.exists():
+        return {}
+
+    values: dict[str, int] = {}
+    in_evaluation = False
+    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line:
+            continue
+        if not raw_line.startswith((" ", "\t")):
+            in_evaluation = line == "evaluation:"
+            continue
+        if not in_evaluation:
+            continue
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key in {"query_concurrency", "queries_per_worker"} and value:
+            values[key] = int(value)
+    return values
+
+
+def _config_int(name: str, default: int) -> int:
+    return int(os.environ.get(name, str(default)))
+
+
+_EVALUATION_CONFIG = _read_evaluation_config()
+CONFIG_CONCURRENCY = int(_EVALUATION_CONFIG.get("query_concurrency", 8))
+CONFIG_QUERIES_PER_WORKER = int(_EVALUATION_CONFIG.get("queries_per_worker", 64))
+
+
 DIM = 128
-N_BASE = int(os.environ.get("FRONTIER_VECTOR_DB_N", "1000000"))
-N_QUERIES = int(os.environ.get("FRONTIER_VECTOR_DB_Q", "256"))
-TOP_K = int(os.environ.get("FRONTIER_VECTOR_DB_TOP_K", "10"))
-SEED = int(os.environ.get("FRONTIER_VECTOR_DB_SEED", "20260528"))
+N_BASE = _config_int("FRONTIER_VECTOR_DB_N", 1000000)
+CONCURRENCY = _config_int("FRONTIER_VECTOR_DB_CONCURRENCY", CONFIG_CONCURRENCY)
+QUERIES_PER_WORKER = _config_int(
+    "FRONTIER_VECTOR_DB_QUERIES_PER_WORKER", CONFIG_QUERIES_PER_WORKER
+)
+N_QUERIES = _config_int(
+    "FRONTIER_VECTOR_DB_Q", CONCURRENCY * QUERIES_PER_WORKER
+)
+TOP_K = _config_int("FRONTIER_VECTOR_DB_TOP_K", 10)
+SEED = _config_int("FRONTIER_VECTOR_DB_SEED", 20260528)
 TARGET_RECALL = float(os.environ.get("FRONTIER_VECTOR_DB_TARGET_RECALL", "0.95"))
 QUERY_NOISE = float(os.environ.get("FRONTIER_VECTOR_DB_QUERY_NOISE", "0.02"))
-BUILD_TIMEOUT_SECONDS = int(os.environ.get("FRONTIER_VECTOR_DB_BUILD_TIMEOUT", "600"))
-LOAD_TIMEOUT_SECONDS = int(os.environ.get("FRONTIER_VECTOR_DB_LOAD_TIMEOUT", "900"))
+BUILD_TIMEOUT_SECONDS = _config_int("FRONTIER_VECTOR_DB_BUILD_TIMEOUT", 600)
+LOAD_TIMEOUT_SECONDS = _config_int("FRONTIER_VECTOR_DB_LOAD_TIMEOUT", 900)
 LOAD_PENALTY_WEIGHT = float(os.environ.get("FRONTIER_VECTOR_DB_LOAD_PENALTY", "0.01"))
-BATCH_SIZE = int(os.environ.get("FRONTIER_VECTOR_DB_BATCH_SIZE", "1000"))
-CONCURRENCY = int(os.environ.get("FRONTIER_VECTOR_DB_CONCURRENCY", "4"))
-WARMUP = int(os.environ.get("FRONTIER_VECTOR_DB_WARMUP", "32"))
+BATCH_SIZE = _config_int("FRONTIER_VECTOR_DB_BATCH_SIZE", 1000)
+WARMUP = _config_int("FRONTIER_VECTOR_DB_WARMUP", 32)
 CACHE_DIR = Path(os.environ.get("FRONTIER_VECTOR_DB_CACHE", "/tmp/frontier_vector_db_ann"))
 
 _BENCHMARK: "Benchmark | None" = None
