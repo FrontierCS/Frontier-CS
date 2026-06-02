@@ -1,0 +1,138 @@
+{
+  "name": "frontiercs-bboplace-data",
+  "bboplace_bench_repository": {
+    "url": "https://github.com/lamda-bbo/BBOPlace-Bench",
+    "commit": "4a0dde451e40a3f368e501df6f027c442fcca02a"
+  },
+  "image": {
+    "expected_registry_tag": "ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad",
+    "bboplace_root": "/opt/bboplace-bench",
+    "contains": [
+      "/opt/bboplace-bench/src",
+      "/opt/bboplace-bench/config",
+      "/opt/bboplace-bench/benchmarks/ispd2005",
+      "/opt/bboplace-bench/benchmarks/iccad2015"
+    ]
+  },
+  "datasets": {
+    "ispd2005": {
+      "benchmarks_in_image": [
+        "adaptec1",
+        "adaptec2",
+        "adaptec3",
+        "adaptec4",
+        "bigblue1",
+        "bigblue2",
+        "bigblue3",
+        "bigblue4"
+      ],
+      "benchmarks_scored": [
+        "adaptec1",
+        "adaptec2",
+        "adaptec3",
+        "adaptec4",
+        "bigblue1",
+        "bigblue3"
+      ],
+      "extracted_size_observed": "967 MiB",
+      "archives": [
+        {
+          "name": "adaptec1.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec1.tar.gz",
+          "sha256": "b694dedfe15bffa7cb92dfbee0bc11906f5d334d211f51d82d0ac1effb6c0a08"
+        },
+        {
+          "name": "adaptec2.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec2.tar.gz",
+          "sha256": "e5a7bc0e343a97f3d9d3a1c871636a4b51da7f64ee71d2f04e7db295655a09a2"
+        },
+        {
+          "name": "adaptec3.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec3.tar.gz",
+          "sha256": "9ddc8f3040bd5d08609d2ff439484c3c8e3896edd9c73e5309477a2284f1edae"
+        },
+        {
+          "name": "adaptec4.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec4.tar.gz",
+          "sha256": "ca894bcf93ace5998dd393a6b6d5f240d3c695159cdc62ab055b8edf70ef46ab"
+        },
+        {
+          "name": "bigblue1.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue1.tar.gz",
+          "sha256": "d2a7a7df13242dc29f811dee8cbe4d8cd34bce6b502099ef176a3d5f7595a89d"
+        },
+        {
+          "name": "bigblue2.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue2.tar.gz",
+          "sha256": "3748e13367578b014424378fb441c89086c111770f835ef5b4afc3601e28316d"
+        },
+        {
+          "name": "bigblue3.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue3.tar.gz",
+          "sha256": "343d0c3a06eae195d92fded15dc8c8c6997db8dc76ff1da8d9c31e56bb927892"
+        },
+        {
+          "name": "bigblue4.tar.gz",
+          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue4.tar.gz",
+          "sha256": "afd489f440d3323b643baab9082c8c9b40f350ef482d58e6ce52e431c66f6dba"
+        }
+      ]
+    },
+    "iccad2015": {
+      "benchmarks_in_image": [
+        "superblue1",
+        "superblue3",
+        "superblue4",
+        "superblue5",
+        "superblue7",
+        "superblue10",
+        "superblue16",
+        "superblue18"
+      ],
+      "benchmarks_scored": [
+        "superblue1",
+        "superblue3",
+        "superblue4",
+        "superblue5",
+        "superblue7",
+        "superblue10",
+        "superblue16",
+        "superblue18"
+      ],
+      "archive": {
+        "name": "iccad2015_benchmark.zip",
+        "source": "BBOPlace-Bench README Google Drive file 1JEC17FmL2cM8BEAewENvRyG6aWxH53mX",
+        "sha256": "295120fa9f4e46013b68f90ed29603827e9768b84844c461c576881baa8e627a"
+      },
+      "archive_size_observed": "513 MiB",
+      "extracted_size_observed": "2.2 GiB"
+    }
+  },
+  "scoring_constants": {
+    "unit": "raw HPWL; source tables report MP-HPWL in x10^5; scoring baselines are relaxed by 1.2x",
+    "ispd2005": {
+      "source": "BBOPlace-Bench report Table III, MGO + Vanilla-EA, relaxed by 1.2x",
+      "baseline_hpwl": {
+        "adaptec1": 696000.0,
+        "adaptec2": 7375200.0,
+        "adaptec3": 6735600.0,
+        "adaptec4": 6814800.0,
+        "bigblue1": 276000.0,
+        "bigblue3": 6288000.0
+      }
+    },
+    "iccad2015": {
+      "source": "BBOPlace-Bench report Table V, MGO + PSO, relaxed by 1.2x",
+      "baseline_hpwl": {
+        "superblue1": 69600.0,
+        "superblue3": 182400.0,
+        "superblue4": 112800.0,
+        "superblue5": 451200.0,
+        "superblue7": 202800.0,
+        "superblue10": 64800.0,
+        "superblue16": 115200.0,
+        "superblue18": 57600.0
+      }
+    }
+  }
+}

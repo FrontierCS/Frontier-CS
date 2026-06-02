@@ -25,8 +25,11 @@ JUDGE_READY_LOG = Path("/logs/judge/judge_ready.json")
 VERIFIER_SUBMISSIONS_LOG = Path("/logs/verifier/submissions.jsonl")
 VERIFIER_JUDGE_READY_LOG = Path("/logs/verifier/judge_ready.json")
 EVALUATION_JSON = Path("/logs/verifier/evaluation_result.json")
+BEST_AGENT_PAYLOAD = Path("/logs/agent/best_submission_payload.json")
+BEST_AGENT_META = Path("/logs/agent/best_submission_meta.json")
 JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
 JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800"))
+FINAL_ROLE_TOKEN = "{verifier_token}"
 
 
 def submission_reward(record: dict) -> float | None:
@@ -34,6 +37,11 @@ def submission_reward(record: dict) -> float | None:
         return float(record.get("score", 0.0)) / 100.0
     except (TypeError, ValueError):
         return None
+
+
+def result_score_key(record: dict) -> tuple[float, float]:
+    score = float(record.get("score", 0.0))
+    return (score, float(record.get("score_unbounded", score)))
 
 
 def best_submission() -> dict | None:
@@ -60,8 +68,10 @@ def best_submission() -> dict | None:
             continue
         if record.get("status") != "done":
             continue
-        best_reward = submission_reward(best) if best is not None else None
-        if best is None or best_reward is None or reward > best_reward:
+        metrics = record.get("metrics", {})
+        if isinstance(metrics, dict) and metrics.get("evaluation_scope") == "quick_feedback":
+            continue
+        if best is None or result_score_key(record) > result_score_key(best):
             best = record
     return best
 
@@ -185,10 +195,13 @@ def wait_for_judge() -> None:
 
 def post_json(url: str, payload: dict) -> dict:
     body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if payload.get("submission_role") == "final":
+        headers["X-Frontier-CS-Role-Token"] = FINAL_ROLE_TOKEN
     req = request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -219,6 +232,34 @@ def build_judge_payload(solution_path: Path, config: dict) -> dict:
         "submission_role": "final",
         "code": solution_path.read_text(encoding="utf-8"),
     }
+
+
+def load_best_agent_payload() -> dict | None:
+    if not BEST_AGENT_PAYLOAD.exists():
+        return None
+    try:
+        payload = json.loads(BEST_AGENT_PAYLOAD.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"WARN: failed to read best agent payload: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload = dict(payload)
+    payload["submission_role"] = "final"
+    payload["submission_uuid"] = str(uuid.uuid4())
+    return payload
+
+
+def describe_best_agent_payload() -> str:
+    if not BEST_AGENT_META.exists():
+        return "best iterative artifact"
+    try:
+        meta = json.loads(BEST_AGENT_META.read_text(encoding="utf-8"))
+    except Exception:
+        return "best iterative artifact"
+    if not isinstance(meta, dict):
+        return "best iterative artifact"
+    return f"best iterative artifact {meta.get('submission_uuid', '')}".strip()
 
 
 def evaluate_with_judge(payload: dict) -> dict:
@@ -304,15 +345,46 @@ def main() -> None:
 
         final_result = evaluate_with_judge(build_judge_payload(solution_path, config))
         copy_judge_artifacts()
-        final_reward = float(final_result.get("score", 0.0)) / 100.0
-        best_reward = submission_reward(best) if best is not None else None
-        if best_reward is not None and best_reward > final_reward:
+        final_key = result_score_key(final_result)
+        best_payload = load_best_agent_payload()
+        if best_payload is not None:
+            try:
+                best_result = evaluate_with_judge(best_payload)
+                copy_judge_artifacts()
+                if result_score_key(best_result) > final_key:
+                    metrics = dict(best_result.get("metrics", {}) or {})
+                    metrics["used_best_agent_artifact"] = 1
+                    best_result["metrics"] = metrics
+                    best_result["message"] = (
+                        f"Using {describe_best_agent_payload()} after full-suite rerun: "
+                        f"{best_result.get('message', '')}"
+                    )
+                    write_result(best_result)
+                    return
+            except Exception as exc:
+                print(f"WARN: failed to rerun best iterative artifact: {exc}")
+        if best is not None and result_score_key(best) > final_key:
             write_best_submission_reward("final solution scored below best submission")
             return
         write_result(final_result)
     except Exception as exc:
         print(traceback.format_exc())
         copy_judge_artifacts()
+        best_payload = load_best_agent_payload()
+        if best_payload is not None:
+            try:
+                best_result = evaluate_with_judge(best_payload)
+                metrics = dict(best_result.get("metrics", {}) or {})
+                metrics["used_best_agent_artifact"] = 1
+                best_result["metrics"] = metrics
+                best_result["message"] = (
+                    f"Using {describe_best_agent_payload()} after final evaluation failed: "
+                    f"{best_result.get('message', '')}"
+                )
+                write_result(best_result)
+                return
+            except Exception as best_exc:
+                print(f"WARN: failed to rerun best iterative artifact: {best_exc}")
         if write_best_submission_reward(f"final evaluation failed: {exc}"):
             return
         write_reward(0.0, f"Evaluation failed: {exc}")

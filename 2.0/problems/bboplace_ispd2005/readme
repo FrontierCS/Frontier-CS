@@ -1,0 +1,83 @@
+BBOPlace ISPD2005
+=================
+
+Write a Python solution that proposes macro placements for the BBOPlace MGO
+formulation on the ISPD2005 benchmark suite. The hidden judge evaluates your
+placements with the original BBOPlace-Bench MP-HPWL evaluator.
+
+Runtime and resources
+---------------------
+
+Your solution runs in the main agent container with:
+
+- 8 CPU cores
+- 16 GiB memory
+- 8 GiB storage
+- no GPU
+- Python 3 with NumPy available
+- internet access may be available during the trial, but the benchmark data is
+  hidden and is not available in the agent workspace
+
+The final verifier timeout is 10800 seconds. The judge also runs on CPU only.
+Do not rely on CUDA, DREAMPlace, Ray, or GPU placement libraries for scoring;
+the official metric path used here is MGO with MP-HPWL.
+
+Your file must define one of:
+
+- `solve(info)`
+- `generate(info)`
+- `run(info)`
+- `CANDIDATES`, `CANDIDATE`, or `PLACEMENT`
+
+The recommended interface is `solve(info)`. The judge calls it once per
+benchmark. `info` contains:
+
+- `benchmark`: one of `adaptec1`, `adaptec2`, `adaptec3`, `adaptec4`,
+  `bigblue1`, `bigblue3`
+- `dim`: placement vector length
+- `node_cnt`: number of macros
+- `n_grid_x`, `n_grid_y`: MGO grid bounds
+- `max_candidates_per_submission`: 16
+- `baseline_hpwl`: the baseline HPWL used for scoring
+
+Return either one placement vector of length `dim`, or a 2D list/array with up
+to 16 placement candidates. For MGO, the first `node_cnt` entries are x-grid
+coordinates in `[0, n_grid_x]`, and the remaining `node_cnt` entries are y-grid
+coordinates in `[0, n_grid_y]`.
+
+Score
+-----
+
+The objective is to minimize MP-HPWL. For each benchmark:
+
+`raw_score = 100 * (baseline_hpwl - candidate_hpwl) / baseline_hpwl`
+
+`score = max(0, raw_score)`
+
+The final score is the mean score over the six ISPD2005 benchmarks. The
+unbounded score is the mean raw score before the zero clip.
+
+During iterative agent submissions, `/app/submit.sh` gives quick feedback on
+`adaptec1` only. The final verifier evaluates the full six-benchmark suite.
+Use the quick feedback to debug general placement logic, not as the complete
+leaderboard score.
+
+The submit helper saves the best quick-feedback artifact it has seen. During
+final verification, the verifier reruns both the current `/app/solution.py` and
+that saved best iterative artifact on the full suite, then uses the better
+full-suite score. A quick-feedback score is never used directly as the final
+reward.
+
+The baseline constants are from the BBOPlace-Bench report, Table III,
+`MGO + Vanilla-EA` MP-HPWL. The paper reports values in units of `x10^5`; the
+judge stores raw HPWL values relaxed by `1.2x`:
+
+- `adaptec1`: `6.96e5`
+- `adaptec2`: `73.752e5`
+- `adaptec3`: `67.356e5`
+- `adaptec4`: `68.148e5`
+- `bigblue1`: `2.76e5`
+- `bigblue3`: `62.88e5`
+
+The benchmark data and evaluator source are only present in the judge image.
+They are not available in the agent workspace.

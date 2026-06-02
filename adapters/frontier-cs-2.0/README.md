@@ -54,6 +54,10 @@ once per trial; both iterative submissions and the final verifier score
 through that same sidecar. The final verifier writes a normalized reward in
 `/logs/verifier/reward.txt`.
 
+Tasks may set `runtime.docker.judge_image` in `config.yaml` when the judge needs
+a different image from the agent workspace, for example to keep hidden data and
+heavy evaluator dependencies out of the main container.
+
 During the trial, the agent can call:
 
 ```bash

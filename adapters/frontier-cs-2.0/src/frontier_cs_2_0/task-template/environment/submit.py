@@ -20,6 +20,8 @@ import requests
 SOLUTION_PATH = Path("/app/solution.py")
 SUBMISSION_CONFIG_PATH = Path("/app/submission_config.json")
 SUBMISSIONS_LOG = Path("/logs/agent/submissions.jsonl")
+BEST_SUBMISSION_PAYLOAD = Path("/logs/agent/best_submission_payload.json")
+BEST_SUBMISSION_META = Path("/logs/agent/best_submission_meta.json")
 JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
 JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800"))
 
@@ -42,6 +44,32 @@ def log_record(record: dict) -> None:
     SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SUBMISSIONS_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def save_best_submission(payload: dict, metadata: dict) -> None:
+    previous_key: tuple[float, float] | None = None
+    if BEST_SUBMISSION_META.exists():
+        try:
+            previous = json.loads(BEST_SUBMISSION_META.read_text(encoding="utf-8"))
+            previous_score = float(previous.get("score_raw", 0.0))
+            previous_unbounded = float(
+                previous.get("score_unbounded", previous_score)
+            )
+            previous_key = (previous_score, previous_unbounded)
+        except Exception:
+            previous_key = None
+
+    score_raw = float(metadata.get("score_raw", 0.0))
+    score_unbounded = float(metadata.get("score_unbounded", score_raw))
+    score_key = (score_raw, score_unbounded)
+    if previous_key is not None and score_key <= previous_key:
+        return
+
+    BEST_SUBMISSION_PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
+    BEST_SUBMISSION_PAYLOAD.write_text(json.dumps(payload), encoding="utf-8")
+    BEST_SUBMISSION_META.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def wait_for_judge() -> None:
@@ -177,6 +205,7 @@ def main() -> int:
         judge_payload = {
             "submission_kind": "directory",
             "submission_uuid": sub_uuid,
+            "submission_role": "agent",
             "archive_b64": archive_b64,
         }
     else:
@@ -198,6 +227,7 @@ def main() -> int:
         judge_payload = {
             "submission_kind": "file",
             "submission_uuid": sub_uuid,
+            "submission_role": "agent",
             "code": code,
         }
 
@@ -225,6 +255,18 @@ def main() -> int:
                 "file_count": file_count,
                 "metrics": metrics,
             }
+        )
+        save_best_submission(
+            judge_payload,
+            {
+                "submission_uuid": sub_uuid,
+                "ts": now_iso(),
+                "score_raw": score,
+                "score_unbounded": score_unbounded,
+                "elapsed_seconds": elapsed_seconds,
+                "detail": message,
+                "metrics": metrics,
+            },
         )
 
         print(f"[submit] uuid={sub_uuid}")

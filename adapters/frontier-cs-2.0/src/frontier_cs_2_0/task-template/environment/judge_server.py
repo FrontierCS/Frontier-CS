@@ -14,6 +14,7 @@ import io
 import time
 import traceback
 import threading
+import secrets
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +25,7 @@ JUDGE_READY_LOG = Path("/logs/judge/judge_ready.json")
 JUDGE_SUBMISSIONS_LOG = Path("/logs/judge/submissions.jsonl")
 MAX_SUBMISSION_BYTES = 30_000_000
 MAX_ARCHIVE_BYTES = 20_000_000
+FINAL_ROLE_TOKEN = "{verifier_token}"
 
 
 def load_problem_evaluator():
@@ -129,12 +131,20 @@ def normalize_result(result: Any) -> tuple[float, float, str, dict[str, Any]]:
     return score, score_unbounded, message, metrics
 
 
-def evaluate_path(solution_path: Path) -> dict[str, Any]:
+def evaluate_path(solution_path: Path, *, submission_role: str = "agent") -> dict[str, Any]:
     if EVALUATOR is None:
         raise RuntimeError("problem evaluator is not loaded")
-    score, score_unbounded, message, metrics = normalize_result(
-        EVALUATOR.evaluate(str(solution_path))
-    )
+    previous_role = os.environ.get("FRONTIER_SUBMISSION_ROLE")
+    os.environ["FRONTIER_SUBMISSION_ROLE"] = submission_role
+    try:
+        score, score_unbounded, message, metrics = normalize_result(
+            EVALUATOR.evaluate(str(solution_path))
+        )
+    finally:
+        if previous_role is None:
+            os.environ.pop("FRONTIER_SUBMISSION_ROLE", None)
+        else:
+            os.environ["FRONTIER_SUBMISSION_ROLE"] = previous_role
     return {
         "status": "done",
         "score": float(score),
@@ -144,11 +154,11 @@ def evaluate_path(solution_path: Path) -> dict[str, Any]:
     }
 
 
-def evaluate_code(code: str) -> dict[str, Any]:
+def evaluate_code(code: str, *, submission_role: str = "agent") -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="frontier_cs_2_0_submission_") as tmp:
         solution_path = Path(tmp) / "solution.py"
         solution_path.write_text(code, encoding="utf-8")
-        return evaluate_path(solution_path)
+        return evaluate_path(solution_path, submission_role=submission_role)
 
 
 def is_safe_tar_member(member: tarfile.TarInfo) -> bool:
@@ -156,7 +166,7 @@ def is_safe_tar_member(member: tarfile.TarInfo) -> bool:
     return not path.is_absolute() and ".." not in path.parts
 
 
-def evaluate_archive(archive_b64: str) -> dict[str, Any]:
+def evaluate_archive(archive_b64: str, *, submission_role: str = "agent") -> dict[str, Any]:
     archive = base64.b64decode(archive_b64.encode("ascii"), validate=True)
     if len(archive) > MAX_ARCHIVE_BYTES:
         raise ValueError("submission archive too large")
@@ -168,7 +178,7 @@ def evaluate_archive(archive_b64: str) -> dict[str, Any]:
             if not all(is_safe_tar_member(member) for member in members):
                 raise ValueError("unsafe path in submission archive")
             tar.extractall(root)
-        return evaluate_path(root)
+        return evaluate_path(root, submission_role=submission_role)
 
 
 class JudgeHandler(BaseHTTPRequestHandler):
@@ -227,7 +237,14 @@ class JudgeHandler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
             submission_uuid = str(payload.get("submission_uuid") or "")
-            submission_role = str(payload.get("submission_role") or "agent")
+            requested_role = str(payload.get("submission_role") or "agent")
+            role_token = self.headers.get("X-Frontier-CS-Role-Token", "")
+            if requested_role == "final":
+                if not secrets.compare_digest(role_token, FINAL_ROLE_TOKEN):
+                    raise PermissionError("final evaluation role is verifier-only")
+                submission_role = "final"
+            else:
+                submission_role = "agent"
             submission_kind = payload.get("submission_kind", "file")
             if submission_kind == "directory":
                 archive_b64 = payload.get("archive_b64")
@@ -235,7 +252,7 @@ class JudgeHandler(BaseHTTPRequestHandler):
                     raise ValueError(
                         "directory submission must include archive_b64"
                     )
-                result = evaluate_archive(archive_b64)
+                result = evaluate_archive(archive_b64, submission_role=submission_role)
                 log_submission(
                     {
                         "submission_uuid": submission_uuid,
@@ -251,7 +268,7 @@ class JudgeHandler(BaseHTTPRequestHandler):
                 raise ValueError(
                     "file submission must include non-empty string field 'code'"
                 )
-            result = evaluate_code(code)
+            result = evaluate_code(code, submission_role=submission_role)
             log_submission(
                 {
                     "submission_uuid": submission_uuid,

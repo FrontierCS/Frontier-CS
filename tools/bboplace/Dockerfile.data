@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+#
+# Build context expectation:
+#   BBOPlace-Bench/  pinned checkout of lamda-bbo/BBOPlace-Bench
+#   benchmarks/     extracted ispd2005 and iccad2015 data
+#
+# The manifest in this directory records the exact repository commit, data
+# URLs, checksums, and observed sizes.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-numpy python3-yaml ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/bboplace-bench
+
+COPY BBOPlace-Bench/config ./config
+COPY BBOPlace-Bench/src ./src
+COPY benchmarks ./benchmarks
+
+RUN python3 - <<'PY'
+from pathlib import Path
+
+root = Path("/opt/bboplace-bench")
+required = [
+    root / "src" / "evaluator.py",
+    root / "config" / "benchmark.py",
+    root / "benchmarks" / "ispd2005" / "adaptec1",
+    root / "benchmarks" / "iccad2015" / "superblue1",
+]
+for path in required:
+    if not path.exists():
+        raise SystemExit(f"missing required BBOPlace data image path: {path}")
+PY
+
+RUN chmod -R go-rwx /opt/bboplace-bench/benchmarks && \
+    chmod -R go-rwx /opt/bboplace-bench/src /opt/bboplace-bench/config

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import shutil
+import secrets
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Iterable
@@ -64,6 +65,9 @@ def discover_problems(frontier_cs_root: Path) -> list[FrontierCS20Problem]:
                 language=str(runtime.get("language", "python")),
                 timeout_seconds=int(runtime.get("timeout_seconds", 10800)),
                 docker_image=str(docker.get("image", "ubuntu:24.04")),
+                judge_docker_image=(
+                    str(docker["judge_image"]) if "judge_image" in docker else None
+                ),
                 config=config,
             )
         )
@@ -125,8 +129,9 @@ class FrontierCS20Adapter:
         task_paths.tests_dir.mkdir(parents=True, exist_ok=True)
 
         self._write_instruction(task_paths, problem)
-        self._write_environment(task_paths, problem)
-        self._write_tests(task_paths, problem)
+        verifier_token = secrets.token_urlsafe(32)
+        self._write_environment(task_paths, problem, verifier_token=verifier_token)
+        self._write_tests(task_paths, problem, verifier_token=verifier_token)
         self._write_solution(task_paths, problem)
         self._write_task_config(task_paths, problem)
         LOGGER.info("  [OK] %s", problem.problem_id)
@@ -167,12 +172,19 @@ class FrontierCS20Adapter:
         )
         task_paths.instruction_path.write_text(instruction, encoding="utf-8")
 
-    def _write_environment(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
+    def _write_environment(
+        self,
+        task_paths: "TaskPaths",
+        problem: FrontierCS20Problem,
+        *,
+        verifier_token: str,
+    ) -> None:
         env_dir = task_paths.environment_dir
         dockerfile = (self.template_dir / "environment" / "Dockerfile").read_text(
             encoding="utf-8"
         )
         image = self.docker_image or problem.docker_image
+        judge_image = self.docker_image or problem.judge_docker_image or image
         runtime = problem.config.get("runtime", {}) or {}
         apt_package_names = [
             str(pkg)
@@ -225,7 +237,7 @@ class FrontierCS20Adapter:
             str(pkg) for pkg in runtime.get("judge_apt_packages", []) or []
         )
         env_dir.joinpath("Dockerfile.judge").write_text(
-            judge_dockerfile.replace("{base_image}", image).replace(
+            judge_dockerfile.replace("{base_image}", judge_image).replace(
                 "{judge_apt_packages_line}",
                 f" {judge_apt_packages}" if judge_apt_packages else "",
             ).replace(
@@ -244,9 +256,12 @@ class FrontierCS20Adapter:
             ),
             encoding="utf-8",
         )
-        shutil.copy2(
-            self.template_dir / "environment" / "judge_server.py",
-            env_dir / "judge_server.py",
+        judge_server = (
+            self.template_dir / "environment" / "judge_server.py"
+        ).read_text(encoding="utf-8")
+        (env_dir / "judge_server.py").write_text(
+            judge_server.replace("{verifier_token}", verifier_token),
+            encoding="utf-8",
         )
         shutil.copy2(
             self.template_dir / "environment" / "submit.py", env_dir / "submit.py"
@@ -267,11 +282,21 @@ class FrontierCS20Adapter:
             json.dumps(submission, indent=2), encoding="utf-8"
         )
 
-    def _write_tests(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
+    def _write_tests(
+        self,
+        task_paths: "TaskPaths",
+        problem: FrontierCS20Problem,
+        *,
+        verifier_token: str,
+    ) -> None:
         tests_dir = task_paths.tests_dir
         shutil.copy2(self.template_dir / "tests" / "test.sh", tests_dir / "test.sh")
-        shutil.copy2(
-            self.template_dir / "tests" / "evaluate.py", tests_dir / "evaluate.py"
+        evaluate_py = (self.template_dir / "tests" / "evaluate.py").read_text(
+            encoding="utf-8"
+        )
+        (tests_dir / "evaluate.py").write_text(
+            evaluate_py.replace("{verifier_token}", verifier_token),
+            encoding="utf-8",
         )
         shutil.copy2(problem.problem_dir / "evaluator.py", tests_dir / "problem_evaluator.py")
         (tests_dir / "test.sh").chmod(0o755)

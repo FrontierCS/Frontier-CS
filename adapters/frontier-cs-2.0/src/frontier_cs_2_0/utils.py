@@ -20,6 +20,7 @@ class FrontierCS20Problem:
     language: str
     timeout_seconds: int
     docker_image: str
+    judge_docker_image: str | None
     config: dict[str, Any]
 
 
