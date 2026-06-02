@@ -1,0 +1,16 @@
+opt_acqf_iter : 50
+verbose : True
+
+n_init : 50
+batch_size : 1
+kernel_type : tc 
+acqf_type : LCB_lower_bound
+verbose : True
+
+pm_prob : 1.0
+pm_eta : 30.0
+
+sbx_prob : 1.0
+sbx_eta : 30.0
+
+n_sampling_repeat: 5

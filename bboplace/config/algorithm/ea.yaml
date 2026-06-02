@@ -1,0 +1,13 @@
+mutation : swap
+crossover : uniform
+sampling : random
+
+n_population : 50
+
+pm_prob : 1.0
+pm_eta : 30.0
+
+sbx_prob : 1.0
+sbx_eta : 30.0
+
+n_sampling_repeat : 5

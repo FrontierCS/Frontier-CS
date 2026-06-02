@@ -1,0 +1,15 @@
+FROM {base_image}
+
+RUN python3 -m pip install --no-cache-dir requests numpy pyyaml ray==2.3.0 igraph==0.11.6 matplotlib==3.4.3 shapely==2.0.6 pandas==2.0.3 || true
+
+WORKDIR /opt/bboplace-bench
+
+COPY bboplace-bench/ /opt/bboplace-bench/
+COPY task_info.json judge_server.py bboplace_runtime.py /judge/
+
+ENV PYTHONPATH="/opt/bboplace-bench:/opt/bboplace-bench/src:${PYTHONPATH}"
+ENV BBOPLACE_REPO="/opt/bboplace-bench"
+ENV BBOPLACE_TASK_INFO="/judge/task_info.json"
+
+EXPOSE 8082
+CMD ["python3", "/judge/judge_server.py"]

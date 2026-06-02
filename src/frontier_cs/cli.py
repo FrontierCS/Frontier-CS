@@ -422,6 +422,7 @@ Solution files use format: {problem}/{model}.py (e.g., flash_attn/gpt5.py)
 Examples:
   frontier harbor trial algorithmic 0 -a codex -m gpt-5.5 --agent-timeout 180
   frontier harbor trial 2.0 erdos_unit_distance -a codex -m gpt-5.5
+  frontier harbor trial bboplace adaptec1 --placer mgo -a codex -m gpt-5.5
 
 This is a thin wrapper over `harbor trial start`. It preserves Harbor's
 CLI/API semantics, then reads the trial artifacts so rewards are shown even
@@ -438,12 +439,12 @@ when the agent times out after making a valid iterative submission.
     )
     harbor_trial.add_argument(
         "track",
-        choices=["algorithmic", "2.0"],
+        choices=["algorithmic", "2.0", "bboplace"],
         help="Generated Harbor adapter track",
     )
     harbor_trial.add_argument(
         "problem_id",
-        help="Problem ID (e.g. 0 or erdos_unit_distance)",
+        help="Problem ID (e.g. 0, erdos_unit_distance, or adaptec1)",
     )
     harbor_trial.add_argument(
         "-a",
@@ -503,6 +504,14 @@ when the agent times out after making a valid iterative submission.
         help="Harbor executable name/path (default: harbor)",
     )
     harbor_trial.add_argument(
+        "--agent-import-path",
+        help=(
+            "Custom Harbor agent import path. By default, codex uses "
+            "frontier_cs.harbor_agents:CodexNoWebSearch so Codex runs with "
+            'web_search = "disabled".'
+        ),
+    )
+    harbor_trial.add_argument(
         "--env",
         action="append",
         default=[],
@@ -515,6 +524,32 @@ when the agent times out after making a valid iterative submission.
         help="Do not auto-generate a missing Harbor task",
     )
     harbor_trial.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Regenerate the task before running it",
+    )
+    harbor_trial.add_argument(
+        "--placer",
+        default="mgo",
+        choices=["mgo", "sp", "hpo"],
+        help="BBOPlace placer formulation (bboplace only; default: mgo)",
+    )
+    harbor_trial.add_argument(
+        "--eval-gp-hpwl",
+        action="store_true",
+        help="Evaluate BBOPlace global-placement HPWL (bboplace only)",
+    )
+    harbor_trial.add_argument(
+        "--allow-missing-benchmark",
+        action="store_true",
+        help="Generate structural BBOPlace tasks without local benchmark data",
+    )
+    harbor_trial.add_argument(
+        "--base-image",
+        default="duketomlist/bboplace-bench:2.1.0",
+        help="BBOPlace task base image (bboplace only)",
+    )
+    harbor_trial.add_argument(
         "--verbose",
         action="store_true",
         help="Print Harbor output and trial artifact details",
@@ -523,6 +558,47 @@ when the agent times out after making a valid iterative submission.
         "--json",
         action="store_true",
         help="Print a JSON summary with reward, tokens, cost, and trial metadata",
+    )
+
+    harbor_generate = harbor_subparsers.add_parser(
+        "generate",
+        help="Generate one Harbor task without running an agent",
+    )
+    harbor_generate.add_argument(
+        "track",
+        choices=["algorithmic", "2.0", "bboplace"],
+        help="Generated Harbor adapter track",
+    )
+    harbor_generate.add_argument(
+        "problem_id",
+        help="Problem ID (e.g. 0, erdos_unit_distance, or adaptec1)",
+    )
+    harbor_generate.add_argument(
+        "--dataset-dir",
+        type=Path,
+        help="Directory for generated Harbor tasks",
+    )
+    harbor_generate.add_argument("--overwrite", action="store_true")
+    harbor_generate.add_argument(
+        "--placer",
+        default="mgo",
+        choices=["mgo", "sp", "hpo"],
+        help="BBOPlace placer formulation (bboplace only; default: mgo)",
+    )
+    harbor_generate.add_argument(
+        "--eval-gp-hpwl",
+        action="store_true",
+        help="Evaluate BBOPlace global-placement HPWL (bboplace only)",
+    )
+    harbor_generate.add_argument(
+        "--allow-missing-benchmark",
+        action="store_true",
+        help="Generate structural BBOPlace tasks without local benchmark data",
+    )
+    harbor_generate.add_argument(
+        "--base-image",
+        default="duketomlist/bboplace-bench:2.1.0",
+        help="BBOPlace task base image (bboplace only)",
     )
 
     return parser
@@ -943,12 +1019,22 @@ def run_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _harbor_task_name(track: str, problem_id: str) -> str:
+def _harbor_task_name(
+    track: str,
+    problem_id: str,
+    *,
+    placer: str = "mgo",
+    eval_gp_hpwl: bool = False,
+) -> str:
     if track == "algorithmic":
         return f"frontier-cs-algorithm-{problem_id}"
     if track == "2.0":
         slug = problem_id.replace("_", "-").replace(".", "-")
         return f"frontier-cs-2-0-{slug}"
+    if track == "bboplace":
+        suffix = "gp" if eval_gp_hpwl else "mp"
+        normalized = problem_id.strip().lower().replace("_", "-")
+        return f"bboplace-bench-{placer.lower()}-{normalized}-{suffix}"
     raise ValueError(f"Unsupported Harbor track: {track}")
 
 
@@ -965,11 +1051,19 @@ def _default_harbor_dataset_dir(track: str) -> Path:
         return base / "frontier-cs-algorithm"
     if track == "2.0":
         return base / "frontier-cs-2.0"
+    if track == "bboplace":
+        return base / "bboplace-bench"
     raise ValueError(f"Unsupported Harbor track: {track}")
 
 
 def _default_harbor_trials_dir() -> Path:
     return _repo_root() / ".frontier-cs" / "harbor" / "trials"
+
+
+def _harbor_task_namespace(track: str) -> str:
+    if track == "bboplace":
+        return "bboplace"
+    return "frontier-cs"
 
 
 def _adapter_module_for_track(track: str) -> tuple[str, Path]:
@@ -984,10 +1078,29 @@ def _adapter_module_for_track(track: str) -> tuple[str, Path]:
             "frontier_cs_2_0.main",
             root / "adapters" / "frontier-cs-2.0" / "src",
         )
+    if track == "bboplace":
+        return (
+            "bboplace_bench_harbor.main",
+            root / "adapters" / "bboplace-bench" / "src",
+        )
     raise ValueError(f"Unsupported Harbor track: {track}")
 
 
-def _generate_harbor_task(track: str, problem_id: str, output_dir: Path) -> None:
+def _bboplace_source_root() -> Path:
+    return _repo_root() / "bboplace"
+
+
+def _generate_harbor_task(
+    track: str,
+    problem_id: str,
+    output_dir: Path,
+    *,
+    placer: str = "mgo",
+    eval_gp_hpwl: bool = False,
+    overwrite: bool = True,
+    allow_missing_benchmark: bool = False,
+    base_image: str = "duketomlist/bboplace-bench:2.1.0",
+) -> None:
     module, adapter_src = _adapter_module_for_track(track)
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
@@ -997,18 +1110,35 @@ def _generate_harbor_task(track: str, problem_id: str, output_dir: Path) -> None
         else f"{adapter_src}{os.pathsep}{existing_pythonpath}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    source = _repo_root() if track != "bboplace" else _bboplace_source_root()
     command = [
         sys.executable,
         "-m",
         module,
         "--source",
-        str(_repo_root()),
+        str(source),
         "--output-dir",
         str(output_dir),
-        "--task-ids",
-        str(problem_id),
-        "--overwrite",
     ]
+    if track == "bboplace":
+        command.extend(
+            [
+                "--benchmarks",
+                str(problem_id),
+                "--placers",
+                placer,
+                "--base-image",
+                base_image,
+            ]
+        )
+        if eval_gp_hpwl:
+            command.append("--eval-gp-hpwl")
+        if allow_missing_benchmark:
+            command.append("--allow-missing-benchmark")
+    else:
+        command.extend(["--task-ids", str(problem_id)])
+    if overwrite:
+        command.append("--overwrite")
     completed = subprocess.run(
         command,
         env=env,
@@ -1068,6 +1198,7 @@ def _find_harbor_trial_dir(
     trials_dir: Path,
     task_name: str,
     harbor_stdout: str,
+    task_namespace: str = "frontier-cs",
 ) -> Path | None:
     for line in harbor_stdout.splitlines():
         if line.startswith("Trial name:"):
@@ -1084,7 +1215,7 @@ def _find_harbor_trial_dir(
     if candidates:
         return candidates[0]
 
-    expected_task_names = {task_name, f"frontier-cs/{task_name}"}
+    expected_task_names = {task_name, f"{task_namespace}/{task_name}"}
     result_files = sorted(
         trials_dir.glob("*/result.json"),
         key=lambda p: p.stat().st_mtime,
@@ -1097,7 +1228,9 @@ def _find_harbor_trial_dir(
     return None
 
 
-def _trial_dir_matches_task(candidate: Path, task_name: str) -> bool:
+def _trial_dir_matches_task(
+    candidate: Path, task_name: str, task_namespace: str = "frontier-cs"
+) -> bool:
     if candidate.name.startswith(f"{task_name}__"):
         return True
     if candidate.name.startswith(f"{task_name[:32]}__"):
@@ -1110,7 +1243,7 @@ def _trial_dir_matches_task(candidate: Path, task_name: str) -> bool:
         return True
 
     result = _load_json_file(candidate / "result.json") or {}
-    return result.get("task_name") in {task_name, f"frontier-cs/{task_name}"}
+    return result.get("task_name") in {task_name, f"{task_namespace}/{task_name}"}
 
 
 def _find_live_harbor_trial_dir(
@@ -1120,6 +1253,7 @@ def _find_live_harbor_trial_dir(
     harbor_stdout: str,
     known_trial_dirs: set[Path],
     started_at: float,
+    task_namespace: str = "frontier-cs",
 ) -> Path | None:
     for line in harbor_stdout.splitlines():
         if line.startswith("Trial name:"):
@@ -1139,7 +1273,7 @@ def _find_live_harbor_trial_dir(
                 continue
         except OSError:
             continue
-        if _trial_dir_matches_task(candidate, task_name):
+        if _trial_dir_matches_task(candidate, task_name, task_namespace):
             candidates.append(candidate)
 
     if not candidates:
@@ -1149,18 +1283,26 @@ def _find_live_harbor_trial_dir(
 
 def _get_harbor_trial_rewards(trial_dir: Path) -> dict[str, float | int] | None:
     result = _load_json_file(trial_dir / "result.json")
-    if result is None:
-        return None
+    if result is not None:
+        verifier_result = result.get("verifier_result") or {}
+        rewards = verifier_result.get("rewards")
+        if isinstance(rewards, dict):
+            normalized = dict(rewards)
+            reward = normalized.get("reward", 0.0)
+            normalized.setdefault("score", reward)
+            normalized.setdefault("score_unbounded", normalized["score"])
+            return normalized
 
-    verifier_result = result.get("verifier_result") or {}
-    rewards = verifier_result.get("rewards")
-    if isinstance(rewards, dict):
-        normalized = dict(rewards)
+    reward_json = _load_json_file(trial_dir / "verifier" / "reward.json")
+    if reward_json and "reward" in reward_json:
+        normalized = dict(reward_json)
         reward = normalized.get("reward", 0.0)
         normalized.setdefault("score", reward)
         normalized.setdefault("score_unbounded", normalized["score"])
         return normalized
-    return {"reward": 0.0, "score": 0.0, "score_unbounded": 0.0}
+    if result is not None:
+        return {"reward": 0.0, "score": 0.0, "score_unbounded": 0.0}
+    return None
 
 
 def _count_successful_submissions(trial_dir: Path) -> tuple[int, float | None]:
@@ -1246,6 +1388,8 @@ def _harbor_trial_summary_payload(trial_dir: Path) -> dict:
         "reward": rewards.get("reward"),
         "score": rewards.get("score"),
         "score_unbounded": rewards.get("score_unbounded"),
+        "hpwl": sidecar.get("hpwl"),
+        "overlap_rate": sidecar.get("overlap_rate"),
         "metrics": reward_metrics or None,
         "trial_status": "scored" if has_reward else agent_status,
         "agent_status": agent_status,
@@ -1291,6 +1435,10 @@ def _print_harbor_trial_summary(trial_dir: Path) -> None:
         print(f"Rewards: {rewards}")
     else:
         print("Rewards: unavailable")
+    if payload.get("hpwl") is not None:
+        print(f"HPWL: {payload['hpwl']}")
+    if payload.get("overlap_rate") is not None:
+        print(f"Overlap rate: {payload['overlap_rate']}")
 
     if payload.get("used_best_submission"):
         print(
@@ -1334,6 +1482,19 @@ def _harbor_submission_event_key(event: dict) -> tuple[str, str, str, str]:
     )
 
 
+_SUBMIT_STATUS_RE = re.compile(
+    r"\[submit\]\s+status=(?P<status>\S+)\s+"
+    r"score=(?P<reward>[0-9.]+)\s+\(raw=(?P<score>[-+0-9.eE]+)(?:/100)?\)"
+    r"(?:\s+code_chars=(?P<code_chars>\d+))?"
+)
+_BBOPLACE_SUBMIT_STATUS_RE = re.compile(
+    r"\[submit\]\s+status=(?P<status>\S+)\s+"
+    r"reward=(?P<reward>[-+0-9.eE]+)\s+"
+    r"hpwl=(?P<hpwl>[-+0-9.eE]+|None)"
+    r"(?:.*?\scode_chars=(?P<code_chars>\d+))?"
+)
+
+
 def _read_new_text(path: Path, file_offsets: dict[Path, int]) -> str:
     try:
         size = path.stat().st_size
@@ -1370,6 +1531,38 @@ def _submission_log_event(line: str) -> dict | None:
     }
 
 
+def _extract_submission_events(line: str) -> list[dict]:
+    timestamp = None
+    try:
+        payload = json.loads(line)
+        timestamp = payload.get("timestamp")
+        item = payload.get("item") or {}
+        text = "\n".join(
+            str(value)
+            for value in (
+                item.get("aggregated_output"),
+                payload.get("observation"),
+                payload.get("message"),
+                item.get("text"),
+            )
+            if value
+        )
+    except json.JSONDecodeError:
+        text = line
+
+    events = []
+    for match in _SUBMIT_STATUS_RE.finditer(text):
+        event = match.groupdict()
+        event["timestamp"] = timestamp
+        events.append(event)
+    for match in _BBOPLACE_SUBMIT_STATUS_RE.finditer(text):
+        event = match.groupdict()
+        event["timestamp"] = timestamp
+        event["score"] = event.get("hpwl")
+        events.append(event)
+    return events
+
+
 def _poll_harbor_submission_events(
     *,
     trial_dir: Path | None,
@@ -1391,6 +1584,14 @@ def _poll_harbor_submission_events(
                 continue
             seen.add(key)
             events.append(event)
+    for path in sorted((trial_dir / "agent").glob("*.txt")):
+        for line in _read_new_text(path, file_offsets).splitlines():
+            for event in _extract_submission_events(line):
+                key = _harbor_submission_event_key(event)
+                if key in seen:
+                    continue
+                seen.add(key)
+                events.append(event)
     return events
 
 
@@ -1438,10 +1639,12 @@ def _print_harbor_submission_event(
     best = max(scores) if scores else score
     code_chars = event.get("code_chars")
     suffix = f" code_chars={code_chars}" if code_chars is not None else ""
+    score_label = "hpwl" if event.get("hpwl") is not None else "score"
+    score_text = event.get("score") if score_label == "hpwl" else _format_score(score)
     print(
         "[frontier harbor] "
         f"submission #{index} {timestamp} "
-        f"status={event.get('status')} score={_format_score(score)} "
+        f"status={event.get('status')} {score_label}={score_text} "
         f"best={_format_score(best)} reward={_format_reward(reward)}{suffix}",
         file=sys.stderr,
         flush=True,
@@ -1463,6 +1666,7 @@ def _run_harbor_command_live(
     args: argparse.Namespace,
     trials_dir: Path,
     task_name: str,
+    task_namespace: str,
 ) -> tuple[int, str]:
     started_at = time.time()
     known_trial_dirs = {
@@ -1517,6 +1721,7 @@ def _run_harbor_command_live(
                         harbor_stdout=stdout_text,
                         known_trial_dirs=known_trial_dirs,
                         started_at=started_at,
+                        task_namespace=task_namespace,
                     )
         except queue.Empty:
             pass
@@ -1529,6 +1734,7 @@ def _run_harbor_command_live(
                 harbor_stdout=stdout_text,
                 known_trial_dirs=known_trial_dirs,
                 started_at=started_at,
+                task_namespace=task_namespace,
             )
 
         for event in _poll_harbor_submission_events(
@@ -1554,46 +1760,104 @@ def _run_harbor_command_live(
 
 def run_harbor(args: argparse.Namespace) -> int:
     """Run Harbor wrapper commands."""
-    if args.harbor_command != "trial":
-        print("Error: Missing Harbor command. Try `frontier harbor trial --help`.", file=sys.stderr)
+    if args.harbor_command not in {"trial", "generate"}:
+        print(
+            "Error: Missing Harbor command. Try `frontier harbor trial --help`.",
+            file=sys.stderr,
+        )
         return 1
 
-    task_name = _harbor_task_name(args.track, args.problem_id)
-    using_default_task_path = args.task_path is None
-    task_path = args.task_path
+    task_name = _harbor_task_name(
+        args.track,
+        args.problem_id,
+        placer=getattr(args, "placer", "mgo"),
+        eval_gp_hpwl=getattr(args, "eval_gp_hpwl", False),
+    )
     dataset_dir = args.dataset_dir or _default_harbor_dataset_dir(args.track)
+    if args.harbor_command == "generate":
+        _progress(f"Generating task {task_name}")
+        try:
+            _generate_harbor_task(
+                args.track,
+                args.problem_id,
+                dataset_dir,
+                placer=getattr(args, "placer", "mgo"),
+                eval_gp_hpwl=getattr(args, "eval_gp_hpwl", False),
+                overwrite=args.overwrite,
+                allow_missing_benchmark=getattr(args, "allow_missing_benchmark", False),
+                base_image=getattr(args, "base_image", "duketomlist/bboplace-bench:2.1.0"),
+            )
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(dataset_dir / task_name)
+        return 0
+
+    task_path = args.task_path
     if task_path is None:
         task_path = dataset_dir / task_name
 
-    should_generate = (
-        using_default_task_path
-        and task_path == dataset_dir / task_name
-        and not args.no_generate
-    )
-    if should_generate:
-        _progress(f"Generating task {task_name}")
+    if args.overwrite and task_path == dataset_dir / task_name:
+        _progress(f"Regenerating task {task_name}")
         try:
-            _generate_harbor_task(args.track, args.problem_id, dataset_dir)
+            _generate_harbor_task(
+                args.track,
+                args.problem_id,
+                dataset_dir,
+                placer=getattr(args, "placer", "mgo"),
+                eval_gp_hpwl=getattr(args, "eval_gp_hpwl", False),
+                overwrite=True,
+                allow_missing_benchmark=getattr(args, "allow_missing_benchmark", False),
+                base_image=getattr(args, "base_image", "duketomlist/bboplace-bench:2.1.0"),
+            )
         except RuntimeError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
 
     if not task_path.exists():
-        print(
-            f"Error: Harbor task path not found: {task_path}\n"
-            "Generate Harbor tasks first, or pass --task-path / --dataset-dir.",
-            file=sys.stderr,
-        )
-        return 1
+        if task_path == dataset_dir / task_name and not args.no_generate:
+            _progress(f"Generating task {task_name}")
+            try:
+                _generate_harbor_task(
+                    args.track,
+                    args.problem_id,
+                    dataset_dir,
+                    placer=getattr(args, "placer", "mgo"),
+                    eval_gp_hpwl=getattr(args, "eval_gp_hpwl", False),
+                    overwrite=True,
+                    allow_missing_benchmark=getattr(args, "allow_missing_benchmark", False),
+                    base_image=getattr(args, "base_image", "duketomlist/bboplace-bench:2.1.0"),
+                )
+            except RuntimeError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+        if task_path.exists():
+            pass
+        else:
+            print(
+                f"Error: Harbor task path not found: {task_path}\n"
+                "Generate Harbor tasks first, or pass --task-path / --dataset-dir.",
+                file=sys.stderr,
+            )
+            return 1
 
     trials_dir = args.trials_dir or _default_harbor_trials_dir()
     trials_dir.mkdir(parents=True, exist_ok=True)
 
     command = _harbor_command_prefix(args)
-    command.extend(["trial", "start", "-p", str(task_path), "-a", args.agent])
+    command.extend(["trial", "start", "-p", str(task_path)])
+    agent_import_path = args.agent_import_path
+    if agent_import_path is None and args.agent == "codex":
+        if args.track == "bboplace":
+            agent_import_path = "frontier_cs.harbor_agents:BBOPlaceCodexNoWebSearch"
+        else:
+            agent_import_path = "frontier_cs.harbor_agents:CodexNoWebSearch"
+    if agent_import_path:
+        command.extend(["--agent-import-path", agent_import_path])
+    else:
+        command.extend(["-a", args.agent])
     if args.model:
-        command.extend(["-m", args.model])
-    if args.agent_timeout is not None:
+        command.extend(["-m", args.model])    if args.agent_timeout is not None:
         command.extend(["--agent-timeout", str(args.agent_timeout)])
     if args.verifier_timeout is not None:
         command.extend(["--verifier-timeout", str(args.verifier_timeout)])
@@ -1604,6 +1868,13 @@ def run_harbor(args: argparse.Namespace) -> int:
         command.append("--delete")
 
     env = os.environ.copy()
+    repo_src = str(_repo_root() / "src")
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        repo_src
+        if not existing_pythonpath
+        else f"{repo_src}{os.pathsep}{existing_pythonpath}"
+    )
     try:
         env.update(_parse_harbor_env(args.env))
     except ValueError as exc:
@@ -1624,6 +1895,7 @@ def run_harbor(args: argparse.Namespace) -> int:
         args=args,
         trials_dir=trials_dir,
         task_name=task_name,
+        task_namespace=_harbor_task_namespace(args.track),
     )
 
     _progress("Reading trial artifacts")
@@ -1631,6 +1903,7 @@ def run_harbor(args: argparse.Namespace) -> int:
         trials_dir=trials_dir,
         task_name=task_name,
         harbor_stdout=harbor_stdout,
+        task_namespace=_harbor_task_namespace(args.track),
     )
     if trial_dir is None:
         print("Error: could not locate Harbor trial directory.", file=sys.stderr)

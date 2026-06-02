@@ -1,0 +1,13 @@
+opt_acqf_iter : 50
+verbose : True
+
+acqf_type : EI
+
+n_init : 50
+batch_size : 1
+
+warmup_steps : 512
+num_samples : 256
+thinning : 16
+
+n_sampling_repeat: 5

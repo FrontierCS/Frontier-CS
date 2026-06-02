@@ -51,6 +51,11 @@ berkeley-function-call-leaderboard/**/*.lock
 results/
 generation_logs/
 .frontier-cs/
+bboplace/benchmarks/
+bboplace/.downloads/
+bboplace/thirdparty/
+bboplace/results/
+bboplace/wandb/
 *.swp
 
 *.lock

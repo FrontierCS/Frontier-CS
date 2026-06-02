@@ -1,0 +1,40 @@
+placer : mgp
+algorithm : ea
+
+benchmark : adaptec1
+
+seed : 1
+
+max_evals : 10000
+max_eval_time : 24 # hours
+
+# wandb
+use_wandb : False
+wandb_offline : False
+wandb_api : None
+
+# "train" for experiment and "debug" for debug
+job_type : debug
+
+user : user
+
+run_mode : single
+
+n_macro : 512
+
+# placement saving
+n_max_saving_placement : 1
+
+# for memory saving purpose
+n_solution_in_memory : 50
+
+# ray init
+n_cpu_max : 10
+
+eval_gp_hpwl : False
+
+gpu : 0
+
+error_redirect : True
+
+timeout_seconds : 300

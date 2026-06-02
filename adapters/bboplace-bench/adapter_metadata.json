@@ -1,0 +1,10 @@
+{
+  "name": "bboplace-bench",
+  "version": "0.1.0",
+  "description": "Harbor-style adapter for iterative agent optimization on BBOPlace-Bench chip placement tasks.",
+  "source": "https://github.com/lamda-bbo/BBOPlace-Bench",
+  "harbor_adapter": [
+    "adapters/bboplace-bench"
+  ],
+  "notes": "Initial adapter. It supports mgo/sp black-box vector submissions with eval_gp_hpwl=False by default. HPO and global-placement HPWL need a DREAMPlace-enabled image and benchmark data."
+}

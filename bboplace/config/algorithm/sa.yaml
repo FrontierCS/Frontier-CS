@@ -1,0 +1,9 @@
+decay: 0.99
+T: 100
+update_freq: 100
+
+n_sampling_repeat : 250
+n_population : 1
+
+pm_prob : 1.0
+pm_eta : 30.0

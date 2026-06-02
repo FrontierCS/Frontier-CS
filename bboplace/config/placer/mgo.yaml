@@ -1,0 +1,7 @@
+# n grid 
+n_grid_x : 224
+n_grid_y : 224
+
+# rank rule
+rank_key : area_sum
+

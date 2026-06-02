@@ -1,0 +1,13 @@
+[project]
+name = "harbor-bboplace-bench-adapter"
+version = "0.1.0"
+description = "Harbor-style adapter for BBOPlace-Bench"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+bboplace-harbor = "bboplace_bench_harbor.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
