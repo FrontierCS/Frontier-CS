@@ -131,12 +131,14 @@ The reported `qps` is the raw query-only QPS. Scoring uses an effective QPS
 that includes a small index-build/load penalty:
 
 ```text
-effective_qps = Q / (query_seconds + 0.01 * load_seconds)
+effective_qps = Q / (query_seconds + 0.001 * load_seconds)
 ```
 
 The load phase has a default `900s` timeout. This keeps the benchmark focused
 on serving performance while still making very expensive offline indexing pay a
-bounded, explicit cost.
+bounded, explicit cost. The load/index-build penalty is deliberately small, so
+submissions may spend additional time building a stronger index when it
+materially improves query throughput or recall.
 
 During evaluation, the load and query phases may stop early and return `0` once
 the elapsed time plus the load penalty makes it impossible for the final

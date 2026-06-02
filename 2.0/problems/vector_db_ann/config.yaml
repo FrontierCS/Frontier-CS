@@ -32,6 +32,10 @@ evaluation:
   # changed into a higher-concurrency service benchmark.
   query_concurrency: 8
   queries_per_worker: 64
+  # Weight applied to load/index-build time when computing effective QPS.
+  # Increasing resources or changing this weight should be reflected in the
+  # task readme so agents understand the optimization tradeoff.
+  load_penalty_weight: 0.001
 submission:
   kind: directory
   path: /app

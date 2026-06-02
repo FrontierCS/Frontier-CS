@@ -20,12 +20,12 @@ from urllib import request
 import numpy as np
 
 
-def _read_evaluation_config() -> dict[str, int]:
+def _read_evaluation_config() -> dict[str, float]:
     config_path = Path(__file__).with_name("config.yaml")
     if not config_path.exists():
         return {}
 
-    values: dict[str, int] = {}
+    values: dict[str, float] = {}
     in_evaluation = False
     for raw_line in config_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.split("#", 1)[0].rstrip()
@@ -42,8 +42,11 @@ def _read_evaluation_config() -> dict[str, int]:
         key, value = stripped.split(":", 1)
         key = key.strip()
         value = value.strip()
-        if key in {"query_concurrency", "queries_per_worker"} and value:
-            values[key] = int(value)
+        if (
+            key in {"query_concurrency", "queries_per_worker", "load_penalty_weight"}
+            and value
+        ):
+            values[key] = float(value)
     return values
 
 
@@ -54,6 +57,9 @@ def _config_int(name: str, default: int) -> int:
 _EVALUATION_CONFIG = _read_evaluation_config()
 CONFIG_CONCURRENCY = int(_EVALUATION_CONFIG.get("query_concurrency", 8))
 CONFIG_QUERIES_PER_WORKER = int(_EVALUATION_CONFIG.get("queries_per_worker", 64))
+CONFIG_LOAD_PENALTY_WEIGHT = float(
+    _EVALUATION_CONFIG.get("load_penalty_weight", 0.001)
+)
 
 
 DIM = 128
@@ -71,7 +77,9 @@ TARGET_RECALL = float(os.environ.get("FRONTIER_VECTOR_DB_TARGET_RECALL", "0.95")
 QUERY_NOISE = float(os.environ.get("FRONTIER_VECTOR_DB_QUERY_NOISE", "0.02"))
 BUILD_TIMEOUT_SECONDS = _config_int("FRONTIER_VECTOR_DB_BUILD_TIMEOUT", 600)
 LOAD_TIMEOUT_SECONDS = _config_int("FRONTIER_VECTOR_DB_LOAD_TIMEOUT", 900)
-LOAD_PENALTY_WEIGHT = float(os.environ.get("FRONTIER_VECTOR_DB_LOAD_PENALTY", "0.01"))
+LOAD_PENALTY_WEIGHT = float(
+    os.environ.get("FRONTIER_VECTOR_DB_LOAD_PENALTY", str(CONFIG_LOAD_PENALTY_WEIGHT))
+)
 BATCH_SIZE = _config_int("FRONTIER_VECTOR_DB_BATCH_SIZE", 1000)
 WARMUP = _config_int("FRONTIER_VECTOR_DB_WARMUP", 32)
 CACHE_DIR = Path(os.environ.get("FRONTIER_VECTOR_DB_CACHE", "/tmp/frontier_vector_db_ann"))
