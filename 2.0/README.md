@@ -34,3 +34,21 @@ This variant keeps the same SIFT1M-scale service contract and recall target as
 `vector_db_ann`, but reduces the load/index-build penalty by 10x so stronger
 offline indexing strategies are more viable. Its problem ID is
 `vector_db_ann_relaxed`.
+
+## BBOPlace ISPD2005
+
+This VLSI placement problem asks agents to generate macro placement candidates
+for the ISPD2005 benchmarks used by BBOPlace-Bench. Its problem ID is
+`bboplace_ispd2005`. The public iterative feedback path evaluates the first
+benchmark only, while the final verifier reruns the best iterative artifact and
+the final submission across the full ISPD2005 suite. Scoring minimizes MP-HPWL
+against relaxed MGO baselines and clips negative scores to zero. The task is
+CPU-only and does not require DREAMPlace, GPU execution, or Ray.
+
+## BBOPlace ICCAD2015
+
+This VLSI placement problem uses the ICCAD2015 benchmark suite from
+BBOPlace-Bench. Its problem ID is `bboplace_iccad2015`. It follows the same
+candidate format, CPU-only evaluator, MP-HPWL metric, relaxed MGO baselines,
+and quick-versus-final evaluation flow as `bboplace_ispd2005`, but scores the
+ICCAD2015 benchmark set.
