@@ -5,6 +5,10 @@ into the existing `algorithmic` or `research` tracks. Problems use the same
 continuous scoring philosophy as Frontier-CS, but can define their own local
 interfaces and evaluators.
 
+To contribute a new 2.0 task, start with [CONTRIBUTING.md](CONTRIBUTING.md).
+It documents the expected problem layout, evaluator contract, Harbor submission
+modes, black-box safety rules, and validation commands.
+
 ## Erdos Unit Distance
 
 The first 2.0 problem asks solvers to place a fixed number of planar points so
