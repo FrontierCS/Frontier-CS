@@ -12,6 +12,7 @@ import uuid
 import base64
 import io
 import tarfile
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,32 +45,6 @@ def log_record(record: dict) -> None:
     SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SUBMISSIONS_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-
-def save_best_submission(payload: dict, metadata: dict) -> None:
-    previous_key: tuple[float, float] | None = None
-    if BEST_SUBMISSION_META.exists():
-        try:
-            previous = json.loads(BEST_SUBMISSION_META.read_text(encoding="utf-8"))
-            previous_score = float(previous.get("score_raw", 0.0))
-            previous_unbounded = float(
-                previous.get("score_unbounded", previous_score)
-            )
-            previous_key = (previous_score, previous_unbounded)
-        except Exception:
-            previous_key = None
-
-    score_raw = float(metadata.get("score_raw", 0.0))
-    score_unbounded = float(metadata.get("score_unbounded", score_raw))
-    score_key = (score_raw, score_unbounded)
-    if previous_key is not None and score_key <= previous_key:
-        return
-
-    BEST_SUBMISSION_PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
-    BEST_SUBMISSION_PAYLOAD.write_text(json.dumps(payload), encoding="utf-8")
-    BEST_SUBMISSION_META.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
 
 
 def wait_for_judge() -> None:
@@ -134,18 +109,37 @@ def make_directory_archive(root: Path, exclude: list[str]) -> tuple[str, int]:
     return base64.b64encode(buf.getvalue()).decode("ascii"), file_count
 
 
-def evaluate_with_judge(payload: dict) -> dict:
+def enqueue_with_judge(payload: dict) -> dict:
     wait_for_judge()
     response = requests.post(
-        f"{JUDGE_URL}/evaluate",
+        f"{JUDGE_URL}/submit",
         json=payload,
-        timeout=JUDGE_TIMEOUT_SECONDS,
+        timeout=30,
     )
     response.raise_for_status()
-    payload = response.json()
-    if payload.get("status") != "done":
-        raise RuntimeError(str(payload.get("message") or payload.get("error") or payload))
-    return payload
+    result = response.json()
+    if result.get("status") != "queued":
+        raise RuntimeError(str(result.get("message") or result.get("error") or result))
+    return result
+
+
+def start_submission_watcher(submission_uuid: str) -> None:
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "/app/wait_submission.py",
+                submission_uuid,
+                "--log-agent",
+                "--quiet",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        print(f"[submit] WARN: failed to start async watcher: {exc}", file=sys.stderr)
 
 
 def main() -> int:
@@ -207,6 +201,9 @@ def main() -> int:
             "submission_uuid": sub_uuid,
             "submission_role": "agent",
             "archive_b64": archive_b64,
+            "solution_path": str(solution_path),
+            "code_chars": code_chars,
+            "file_count": file_count,
         }
     else:
         code = solution_path.read_text(encoding="utf-8")
@@ -229,61 +226,34 @@ def main() -> int:
             "submission_uuid": sub_uuid,
             "submission_role": "agent",
             "code": code,
+            "solution_path": str(solution_path),
+            "code_chars": code_chars,
+            "file_count": file_count,
         }
 
     try:
-        start = time.time()
-        judge_result = evaluate_with_judge(judge_payload)
-        score = float(judge_result.get("score", 0.0))
-        score_unbounded = float(judge_result.get("score_unbounded", score))
-        message = str(judge_result.get("message", ""))
-        metrics = dict(judge_result.get("metrics", {}) or {})
-        elapsed_seconds = time.time() - start
-        reward = float(score) / 100.0
-
+        judge_result = enqueue_with_judge(judge_payload)
         log_record(
             {
                 "submission_uuid": sub_uuid,
                 "ts": now_iso(),
-                "status": "done",
-                "score": reward,
-                "score_raw": score,
-                "score_unbounded": score_unbounded,
-                "elapsed_seconds": elapsed_seconds,
-                "detail": message,
+                "status": "queued",
                 "code_chars": code_chars,
                 "file_count": file_count,
-                "metrics": metrics,
+                "queue_position": judge_result.get("queue_position"),
             }
         )
-        save_best_submission(
-            judge_payload,
-            {
-                "submission_uuid": sub_uuid,
-                "ts": now_iso(),
-                "score_raw": score,
-                "score_unbounded": score_unbounded,
-                "elapsed_seconds": elapsed_seconds,
-                "detail": message,
-                "metrics": metrics,
-            },
-        )
+        start_submission_watcher(sub_uuid)
 
         print(f"[submit] uuid={sub_uuid}")
         print(
-            f"[submit] status=done score={reward:.4f} "
-            f"(raw={score}/100) code_chars={code_chars}"
+            f"[submit] status=queued queue_position={judge_result.get('queue_position')} "
+            f"code_chars={code_chars}"
         )
-        if score_unbounded != score:
-            print(f"[submit] unbounded={score_unbounded}")
-        if message:
-            snippet = message if len(message) <= 800 else message[:800] + "..."
-            print(f"[submit] detail: {snippet}")
-        if metrics:
-            metric_text = " ".join(
-                f"{key}={value}" for key, value in sorted(metrics.items())
-            )
-            print(f"[submit] metrics: {metric_text}")
+        print("[submit] async submission accepted; continue improving while it runs")
+        print(f"[submit] wait: bash /app/wait_submission.sh {sub_uuid}")
+        print("[submit] list: bash /app/submissions.sh")
+        print(f"[submit] cancel queued: bash /app/cancel_submission.sh {sub_uuid}")
         return 0
     except Exception as exc:
         detail = traceback.format_exc()

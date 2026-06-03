@@ -25,6 +25,8 @@ ENV CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
 
 WORKDIR /app
 
-COPY readme config.yaml submission_config.json submit.py submit.sh /app/
+COPY readme config.yaml task_config.json submission_config.json AGENT.md \
+    submit.py submit.sh submissions.py submissions.sh \
+    wait_submission.py wait_submission.sh cancel_submission.py cancel_submission.sh /app/
 COPY harbor_app/ /app/
-RUN chmod +x /app/submit.sh
+RUN chmod +x /app/submit.sh /app/submissions.sh /app/wait_submission.sh /app/cancel_submission.sh

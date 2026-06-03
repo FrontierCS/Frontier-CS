@@ -144,21 +144,25 @@ class FrontierCS20Adapter:
         if submission_kind == "directory":
             workflow = (
                 "Create or modify the project under `/app`. You can call "
-                "`bash /app/submit.sh` at any time to package `/app`, grade it "
-                "with the same black-box judge used by the final verifier, and "
-                "get score feedback. The evaluator implementation and hidden "
+                "`bash /app/submit.sh` at any time to package a snapshot of `/app` "
+                "and enqueue it for the same black-box judge used by the final "
+                "verifier. Submissions are asynchronous: use "
+                "`bash /app/submissions.sh` and `bash /app/wait_submission.sh <uuid>` "
+                "to inspect results. The evaluator implementation and hidden "
                 "benchmark data are intentionally not available in the agent "
-                "workspace. The task statement defines the required build and "
-                "runtime contract.\n\n"
+                "workspace. Read `AGENT.md` for the shared submission workflow. "
+                "The task statement defines the required build and runtime contract.\n\n"
                 f"Final submission path: `{submission_path}`\n"
             )
         else:
             workflow = (
                 f"Create a {problem.language} solution at `{submission_path}`. "
-                "You can call `bash /app/submit.sh` at any time to grade the "
-                "current solution with the same black-box judge used by the final "
-                "verifier and get score feedback. The evaluator implementation is "
-                "intentionally not available in the agent workspace.\n"
+                "You can call `bash /app/submit.sh` at any time to enqueue a "
+                "snapshot for the same black-box judge used by the final verifier. "
+                "Submissions are asynchronous: use `bash /app/submissions.sh` and "
+                "`bash /app/wait_submission.sh <uuid>` to inspect results. The "
+                "evaluator implementation is intentionally not available in the "
+                "agent workspace. Read `AGENT.md` for the shared submission workflow.\n"
             )
 
         instruction = (
@@ -221,6 +225,9 @@ class FrontierCS20Adapter:
             src = problem.problem_dir / name
             if src.exists():
                 shutil.copy2(src, env_dir / name)
+        (env_dir / "task_config.json").write_text(
+            json.dumps(problem.config, indent=2), encoding="utf-8"
+        )
         self._write_submission_config(env_dir, problem)
         harbor_app_dir = problem.problem_dir / "harbor" / "app"
         generated_harbor_app_dir = env_dir / "harbor_app"
@@ -263,15 +270,26 @@ class FrontierCS20Adapter:
             judge_server.replace("{verifier_token}", verifier_token),
             encoding="utf-8",
         )
-        shutil.copy2(
-            self.template_dir / "environment" / "submit.py", env_dir / "submit.py"
-        )
+        for name in (
+            "AGENT.md",
+            "submit.py",
+            "submissions.py",
+            "wait_submission.py",
+            "cancel_submission.py",
+        ):
+            shutil.copy2(self.template_dir / "environment" / name, env_dir / name)
         # Kept in the build context for the judge image only; the main agent
         # image's Dockerfile does not copy this into /app.
         shutil.copy2(problem.problem_dir / "evaluator.py", env_dir / "problem_evaluator.py")
-        submit_sh = env_dir / "submit.sh"
-        shutil.copy2(self.template_dir / "environment" / "submit.sh", submit_sh)
-        submit_sh.chmod(0o755)
+        for name in (
+            "submit.sh",
+            "submissions.sh",
+            "wait_submission.sh",
+            "cancel_submission.sh",
+        ):
+            script = env_dir / name
+            shutil.copy2(self.template_dir / "environment" / name, script)
+            script.chmod(0o755)
 
     def _write_submission_config(self, env_dir: Path, problem: FrontierCS20Problem) -> None:
         submission = dict(problem.config.get("submission", {}) or {})

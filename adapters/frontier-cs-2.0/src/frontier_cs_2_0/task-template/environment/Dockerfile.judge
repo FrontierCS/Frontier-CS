@@ -7,7 +7,7 @@ RUN apt-get update && \
 
 WORKDIR /judge
 
-COPY judge_server.py problem_evaluator.py /judge/
+COPY judge_server.py problem_evaluator.py task_config.json /judge/
 RUN chmod 600 /judge/problem_evaluator.py
 
 EXPOSE 8082

@@ -1325,7 +1325,12 @@ def _print_harbor_trial_summary(trial_dir: Path) -> None:
 def _harbor_submission_event_key(event: dict) -> tuple[str, str, str, str]:
     submission_uuid = event.get("submission_uuid")
     if submission_uuid:
-        return ("uuid", str(submission_uuid), "", "")
+        return (
+            "uuid",
+            str(submission_uuid),
+            str(event.get("status") or ""),
+            str(event.get("score") or event.get("reward") or ""),
+        )
     return (
         str(event.get("timestamp") or ""),
         str(event.get("status") or ""),
@@ -1358,15 +1363,22 @@ def _submission_log_event(line: str) -> dict | None:
         record = json.loads(line)
     except json.JSONDecodeError:
         return None
-    if record.get("status") != "done":
+    status = record.get("status")
+    if status not in {"queued", "running", "done", "error", "cancelled"}:
         return None
+    raw_score = record.get("score_raw", record.get("score"))
+    reward = record.get("score")
+    if "score_raw" not in record:
+        parsed_raw_score = _parse_float(raw_score)
+        reward = parsed_raw_score / 100.0 if parsed_raw_score is not None else None
     return {
         "timestamp": record.get("ts"),
-        "status": record.get("status"),
-        "reward": record.get("score"),
-        "score": record.get("score_raw", record.get("score")),
+        "status": status,
+        "reward": reward,
+        "score": raw_score,
         "code_chars": record.get("code_chars"),
         "submission_uuid": record.get("submission_uuid"),
+        "message": record.get("message") or record.get("error"),
     }
 
 
@@ -1380,8 +1392,13 @@ def _poll_harbor_submission_events(
         return []
 
     events = []
-    submissions_log = trial_dir / "agent" / "submissions.jsonl"
-    if submissions_log.exists():
+    submission_logs = [
+        trial_dir / "agent" / "submissions.jsonl",
+        trial_dir / "judge" / "submissions.jsonl",
+    ]
+    for submissions_log in submission_logs:
+        if not submissions_log.exists():
+            continue
         for line in _read_new_text(submissions_log, file_offsets).splitlines():
             event = _submission_log_event(line)
             if event is None:
@@ -1438,6 +1455,17 @@ def _print_harbor_submission_event(
     best = max(scores) if scores else score
     code_chars = event.get("code_chars")
     suffix = f" code_chars={code_chars}" if code_chars is not None else ""
+    if event.get("status") != "done":
+        message = event.get("message")
+        detail = f" detail={message}" if message else ""
+        print(
+            "[frontier harbor] "
+            f"submission #{index} {timestamp} "
+            f"status={event.get('status')}{suffix}{detail}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
     print(
         "[frontier harbor] "
         f"submission #{index} {timestamp} "
@@ -1498,6 +1526,7 @@ def _run_harbor_command_live(
     seen_events: set[tuple[str, str, str, str]] = set()
     scores: list[float] = []
     submission_count = 0
+    submission_indices: dict[str, int] = {}
     stdout_closed = False
 
     while True:
@@ -1536,13 +1565,21 @@ def _run_harbor_command_live(
             file_offsets=file_offsets,
             seen=seen_events,
         ):
-            submission_count += 1
+            submission_uuid = str(event.get("submission_uuid") or "")
+            if submission_uuid:
+                if submission_uuid not in submission_indices:
+                    submission_count += 1
+                    submission_indices[submission_uuid] = submission_count
+                event_index = submission_indices[submission_uuid]
+            else:
+                submission_count += 1
+                event_index = submission_count
             score = _parse_float(event.get("score"))
             previous_score = scores[-1] if scores else 0.0
             if score is not None:
                 scores.append(score)
             _print_harbor_submission_event(
-                submission_count, event, scores, previous_score
+                event_index, event, scores, previous_score
             )
 
         if stdout_closed and process.poll() is not None:

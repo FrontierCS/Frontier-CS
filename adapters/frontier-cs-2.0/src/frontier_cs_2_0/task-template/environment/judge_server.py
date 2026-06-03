@@ -15,17 +15,60 @@ import time
 import traceback
 import threading
 import secrets
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 PROBLEM_EVALUATOR_PATH = Path("/judge/problem_evaluator.py")
+TASK_CONFIG_PATH = Path("/judge/task_config.json")
 JUDGE_READY_LOG = Path("/logs/judge/judge_ready.json")
 JUDGE_SUBMISSIONS_LOG = Path("/logs/judge/submissions.jsonl")
+BEST_SUBMISSION_PAYLOAD = Path("/logs/judge/best_submission_payload.json")
+BEST_SUBMISSION_META = Path("/logs/judge/best_submission_meta.json")
 MAX_SUBMISSION_BYTES = 30_000_000
 MAX_ARCHIVE_BYTES = 20_000_000
 FINAL_ROLE_TOKEN = "{verifier_token}"
+DEFAULT_MAX_QUEUE_SIZE = 3
+EVALUATION_LOCK_TIMEOUT_SECONDS = int(
+    os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800")
+)
+
+
+def load_task_config() -> dict[str, Any]:
+    if not TASK_CONFIG_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(TASK_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def configured_max_queue_size() -> int:
+    env_value = os.environ.get("FRONTIER_MAX_ASYNC_SUBMISSIONS")
+    if env_value:
+        try:
+            return max(1, int(env_value))
+        except ValueError:
+            pass
+    config = load_task_config()
+    submission = config.get("submission", {})
+    if isinstance(submission, dict):
+        for key in ("max_queue_size", "queue_size"):
+            value = submission.get(key)
+            if value is None:
+                continue
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+    return DEFAULT_MAX_QUEUE_SIZE
+
+
+MAX_QUEUE_SIZE = configured_max_queue_size()
 
 
 def load_problem_evaluator():
@@ -43,6 +86,13 @@ def load_problem_evaluator():
 EVALUATOR = None
 READY = False
 READY_PAYLOAD: dict[str, Any] = {"status": "starting"}
+SUBMISSION_LOCK = threading.RLock()
+SUBMISSION_CONDITION = threading.Condition(SUBMISSION_LOCK)
+SUBMISSION_QUEUE: deque[str] = deque()
+SUBMISSION_PAYLOADS: dict[str, dict[str, Any]] = {}
+SUBMISSION_RECORDS: dict[str, dict[str, Any]] = {}
+SUBMISSION_ORDER: list[str] = []
+EVALUATION_LOCK = threading.Lock()
 
 
 def now_iso() -> str:
@@ -67,6 +117,26 @@ def log_submission(record: dict[str, Any]) -> None:
         f.write(json.dumps({"ts": now_iso(), **record}, ensure_ascii=False) + "\n")
 
 
+def update_submission_record(submission_uuid: str, record: dict[str, Any]) -> dict[str, Any]:
+    with SUBMISSION_LOCK:
+        previous = SUBMISSION_RECORDS.get(submission_uuid, {})
+        merged = {**previous, **record, "submission_uuid": submission_uuid}
+        SUBMISSION_RECORDS[submission_uuid] = merged
+        if submission_uuid not in SUBMISSION_ORDER:
+            SUBMISSION_ORDER.append(submission_uuid)
+    log_submission(merged)
+    return merged
+
+
+def latest_submissions() -> list[dict[str, Any]]:
+    with SUBMISSION_LOCK:
+        return [
+            dict(SUBMISSION_RECORDS[submission_uuid])
+            for submission_uuid in SUBMISSION_ORDER
+            if submission_uuid in SUBMISSION_RECORDS
+        ]
+
+
 def read_submissions() -> list[dict[str, Any]]:
     if not JUDGE_SUBMISSIONS_LOG.exists():
         return []
@@ -81,6 +151,46 @@ def read_submissions() -> list[dict[str, Any]]:
         if isinstance(record, dict):
             records.append(record)
     return records
+
+
+def best_score_key_from_meta(path: Path) -> tuple[float, float] | None:
+    if not path.exists():
+        return None
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+        score = float(metadata.get("score_raw", 0.0))
+        return (score, float(metadata.get("score_unbounded", score)))
+    except Exception:
+        return None
+
+
+def save_best_submission(payload: dict[str, Any], record: dict[str, Any]) -> None:
+    if record.get("status") != "done":
+        return
+    try:
+        score = float(record.get("score", 0.0))
+        score_unbounded = float(record.get("score_unbounded", score))
+    except (TypeError, ValueError):
+        return
+
+    score_key = (score, score_unbounded)
+    previous_key = best_score_key_from_meta(BEST_SUBMISSION_META)
+    if previous_key is not None and score_key <= previous_key:
+        return
+
+    metadata = {
+        "submission_uuid": record.get("submission_uuid"),
+        "ts": record.get("ts") or now_iso(),
+        "score_raw": score,
+        "score_unbounded": score_unbounded,
+        "detail": record.get("message", ""),
+        "metrics": record.get("metrics", {}),
+    }
+    BEST_SUBMISSION_PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
+    BEST_SUBMISSION_PAYLOAD.write_text(json.dumps(payload), encoding="utf-8")
+    BEST_SUBMISSION_META.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def prepare_evaluator() -> None:
@@ -181,6 +291,108 @@ def evaluate_archive(archive_b64: str, *, submission_role: str = "agent") -> dic
         return evaluate_path(root, submission_role=submission_role)
 
 
+def validate_payload(payload: dict[str, Any], *, allow_final: bool, role_token: str = "") -> tuple[str, str, str]:
+    submission_uuid = str(payload.get("submission_uuid") or "")
+    if not submission_uuid:
+        raise ValueError("submission_uuid is required")
+
+    requested_role = str(payload.get("submission_role") or "agent")
+    if requested_role == "final":
+        if not allow_final or not secrets.compare_digest(role_token, FINAL_ROLE_TOKEN):
+            raise PermissionError("final evaluation role is verifier-only")
+        submission_role = "final"
+    else:
+        submission_role = "agent"
+
+    submission_kind = str(payload.get("submission_kind", "file"))
+    if submission_kind == "directory":
+        archive_b64 = payload.get("archive_b64")
+        if not isinstance(archive_b64, str) or not archive_b64:
+            raise ValueError("directory submission must include archive_b64")
+    else:
+        code = payload.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("file submission must include non-empty string field 'code'")
+        submission_kind = "file"
+    return submission_uuid, submission_role, submission_kind
+
+
+def run_payload(payload: dict[str, Any], *, submission_role: str) -> dict[str, Any]:
+    acquired = EVALUATION_LOCK.acquire(timeout=EVALUATION_LOCK_TIMEOUT_SECONDS)
+    if not acquired:
+        raise TimeoutError("timed out waiting for evaluator lock")
+    try:
+        submission_kind = str(payload.get("submission_kind", "file"))
+        if submission_kind == "directory":
+            return evaluate_archive(str(payload.get("archive_b64")), submission_role=submission_role)
+        return evaluate_code(str(payload.get("code")), submission_role=submission_role)
+    finally:
+        EVALUATION_LOCK.release()
+
+
+def queue_size() -> int:
+    return sum(
+        1
+        for record in SUBMISSION_RECORDS.values()
+        if record.get("status") in {"queued", "running"}
+    )
+
+
+def submission_worker() -> None:
+    while True:
+        with SUBMISSION_CONDITION:
+            while True:
+                while SUBMISSION_QUEUE:
+                    submission_uuid = SUBMISSION_QUEUE.popleft()
+                    record = SUBMISSION_RECORDS.get(submission_uuid, {})
+                    if record.get("status") == "queued":
+                        break
+                else:
+                    SUBMISSION_CONDITION.wait()
+                    continue
+                break
+
+        payload = SUBMISSION_PAYLOADS.get(submission_uuid)
+        if payload is None:
+            update_submission_record(
+                submission_uuid,
+                {"status": "error", "message": "queued payload is missing"},
+            )
+            continue
+
+        update_submission_record(submission_uuid, {"status": "running"})
+        started = time.time()
+        try:
+            result = run_payload(payload, submission_role="agent")
+            elapsed = time.time() - started
+            record = update_submission_record(
+                submission_uuid,
+                {
+                    "status": result.get("status", "done"),
+                    "score": float(result.get("score", 0.0)),
+                    "score_unbounded": float(result.get("score_unbounded", 0.0)),
+                    "message": str(result.get("message", "")),
+                    "metrics": result.get("metrics", {}),
+                    "elapsed_seconds": elapsed,
+                },
+            )
+            save_best_submission(payload, record)
+        except Exception:
+            detail = traceback.format_exc()
+            print(detail, flush=True)
+            update_submission_record(
+                submission_uuid,
+                {
+                    "status": "error",
+                    "score": 0.0,
+                    "score_unbounded": 0.0,
+                    "message": "evaluation failed",
+                    "detail": detail,
+                    "elapsed_seconds": time.time() - started,
+                },
+            )
+
+
 class JudgeHandler(BaseHTTPRequestHandler):
     server_version = "FrontierCS20Judge/1.0"
 
@@ -193,16 +405,34 @@ class JudgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self._write_json(200 if READY else 503, READY_PAYLOAD)
             return
-        if self.path == "/submissions":
-            self._write_json(200, {"status": "ok", "submissions": read_submissions()})
+        if parsed.path == "/submissions":
+            self._write_json(200, {"status": "ok", "submissions": latest_submissions()})
+            return
+        if parsed.path.startswith("/submission/"):
+            submission_uuid = parsed.path.removeprefix("/submission/").strip("/")
+            with SUBMISSION_LOCK:
+                record = SUBMISSION_RECORDS.get(submission_uuid)
+            if record is None:
+                self._write_json(404, {"status": "error", "error": "submission not found"})
+            else:
+                self._write_json(200, {"status": "ok", "submission": record})
             return
         self._write_json(404, {"status": "error", "error": "not found"})
 
     def do_POST(self) -> None:
-        if self.path != "/evaluate":
+        parsed = urlparse(self.path)
+        if parsed.path == "/submit":
+            self.handle_submit()
+            return
+        if parsed.path.startswith("/submission/") and parsed.path.endswith("/cancel"):
+            submission_uuid = parsed.path.removeprefix("/submission/").removesuffix("/cancel").strip("/")
+            self.handle_cancel(submission_uuid)
+            return
+        if parsed.path != "/evaluate":
             self._write_json(404, {"status": "error", "error": "not found"})
             return
         if not READY:
@@ -236,39 +466,12 @@ class JudgeHandler(BaseHTTPRequestHandler):
         submission_kind = "file"
         try:
             payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-            submission_uuid = str(payload.get("submission_uuid") or "")
-            requested_role = str(payload.get("submission_role") or "agent")
-            role_token = self.headers.get("X-Frontier-CS-Role-Token", "")
-            if requested_role == "final":
-                if not secrets.compare_digest(role_token, FINAL_ROLE_TOKEN):
-                    raise PermissionError("final evaluation role is verifier-only")
-                submission_role = "final"
-            else:
-                submission_role = "agent"
-            submission_kind = payload.get("submission_kind", "file")
-            if submission_kind == "directory":
-                archive_b64 = payload.get("archive_b64")
-                if not isinstance(archive_b64, str) or not archive_b64:
-                    raise ValueError(
-                        "directory submission must include archive_b64"
-                    )
-                result = evaluate_archive(archive_b64, submission_role=submission_role)
-                log_submission(
-                    {
-                        "submission_uuid": submission_uuid,
-                        "submission_role": submission_role,
-                        "submission_kind": submission_kind,
-                        **result,
-                    }
-                )
-                self._write_json(200, result)
-                return
-            code = payload.get("code")
-            if not isinstance(code, str) or not code.strip():
-                raise ValueError(
-                    "file submission must include non-empty string field 'code'"
-                )
-            result = evaluate_code(code, submission_role=submission_role)
+            submission_uuid, submission_role, submission_kind = validate_payload(
+                payload,
+                allow_final=True,
+                role_token=self.headers.get("X-Frontier-CS-Role-Token", ""),
+            )
+            result = run_payload(payload, submission_role=submission_role)
             log_submission(
                 {
                     "submission_uuid": submission_uuid,
@@ -296,6 +499,93 @@ class JudgeHandler(BaseHTTPRequestHandler):
             )
             self._write_json(200, result)
 
+    def read_json_body(self) -> dict[str, Any]:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if content_length <= 0:
+            raise ValueError("empty request body")
+        if content_length > MAX_SUBMISSION_BYTES:
+            raise ValueError("submission too large")
+        payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        return payload
+
+    def handle_submit(self) -> None:
+        if not READY:
+            self._write_json(503, {"status": "error", "error": "judge is not ready", "health": READY_PAYLOAD})
+            return
+        try:
+            payload = self.read_json_body()
+            submission_uuid, submission_role, submission_kind = validate_payload(
+                payload,
+                allow_final=False,
+            )
+            if submission_role != "agent":
+                raise PermissionError("async submissions are agent-only")
+            with SUBMISSION_CONDITION:
+                if queue_size() >= MAX_QUEUE_SIZE:
+                    self._write_json(
+                        429,
+                        {
+                            "status": "error",
+                            "error": f"too many queued/running submissions; limit={MAX_QUEUE_SIZE}",
+                        },
+                    )
+                    return
+                if submission_uuid in SUBMISSION_RECORDS:
+                    raise ValueError("duplicate submission_uuid")
+                SUBMISSION_PAYLOADS[submission_uuid] = dict(payload)
+                SUBMISSION_QUEUE.append(submission_uuid)
+                position = len(SUBMISSION_QUEUE)
+                update_submission_record(
+                    submission_uuid,
+                    {
+                        "submission_role": "agent",
+                        "submission_kind": submission_kind,
+                        "status": "queued",
+                        "code_chars": payload.get("code_chars"),
+                        "file_count": payload.get("file_count"),
+                        "solution_path": payload.get("solution_path"),
+                        "queue_position": position,
+                    },
+                )
+                SUBMISSION_CONDITION.notify()
+            self._write_json(
+                202,
+                {
+                    "status": "queued",
+                    "submission_uuid": submission_uuid,
+                    "queue_position": position,
+                },
+            )
+        except Exception as exc:
+            print(traceback.format_exc(), flush=True)
+            self._write_json(400, {"status": "error", "error": str(exc)})
+
+    def handle_cancel(self, submission_uuid: str) -> None:
+        with SUBMISSION_CONDITION:
+            record = SUBMISSION_RECORDS.get(submission_uuid)
+            if record is None:
+                self._write_json(404, {"status": "error", "error": "submission not found"})
+                return
+            if record.get("status") != "queued":
+                self._write_json(
+                    409,
+                    {
+                        "status": "error",
+                        "error": "only queued submissions can be cancelled",
+                        "submission": record,
+                    },
+                )
+                return
+            update_submission_record(submission_uuid, {"status": "cancelled"})
+            SUBMISSION_PAYLOADS.pop(submission_uuid, None)
+            SUBMISSION_CONDITION.notify()
+        self._write_json(200, {"status": "cancelled", "submission_uuid": submission_uuid})
+
     def log_message(self, fmt: str, *args: object) -> None:
         return
 
@@ -304,6 +594,7 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8082"))
     server = ThreadingHTTPServer(("0.0.0.0", port), JudgeHandler)
     threading.Thread(target=prepare_evaluator, daemon=True).start()
+    threading.Thread(target=submission_worker, daemon=True).start()
     server.serve_forever()
 
 

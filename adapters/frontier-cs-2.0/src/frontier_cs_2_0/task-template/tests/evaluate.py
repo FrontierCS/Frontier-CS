@@ -27,6 +27,8 @@ VERIFIER_JUDGE_READY_LOG = Path("/logs/verifier/judge_ready.json")
 EVALUATION_JSON = Path("/logs/verifier/evaluation_result.json")
 BEST_AGENT_PAYLOAD = Path("/logs/agent/best_submission_payload.json")
 BEST_AGENT_META = Path("/logs/agent/best_submission_meta.json")
+BEST_JUDGE_PAYLOAD = Path("/logs/judge/best_submission_payload.json")
+BEST_JUDGE_META = Path("/logs/judge/best_submission_meta.json")
 JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
 JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800"))
 FINAL_ROLE_TOKEN = "{verifier_token}"
@@ -115,16 +117,18 @@ def copy_judge_artifacts() -> None:
         except OSError as exc:
             print(f"WARN: failed to copy submissions.jsonl: {exc}")
 
-    seen: set[str] = set()
+    by_uuid: dict[str, dict] = {}
     VERIFIER_SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    status_rank = {"queued": 0, "running": 1, "cancelled": 2, "error": 3, "done": 4}
+    for record in records:
+        if record.get("submission_role", "agent") != "agent":
+            continue
+        key = str(record.get("submission_uuid") or json.dumps(record, sort_keys=True))
+        previous = by_uuid.get(key)
+        if previous is None or status_rank.get(str(record.get("status")), -1) >= status_rank.get(str(previous.get("status")), -1):
+            by_uuid[key] = record
     with VERIFIER_SUBMISSIONS_LOG.open("w", encoding="utf-8") as dst:
-        for record in records:
-            if record.get("submission_role", "agent") != "agent":
-                continue
-            key = str(record.get("submission_uuid") or json.dumps(record, sort_keys=True))
-            if key in seen:
-                continue
-            seen.add(key)
+        for record in by_uuid.values():
             dst.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     if JUDGE_READY_LOG.exists():
@@ -193,6 +197,41 @@ def wait_for_judge() -> None:
     raise RuntimeError(f"judge service is not ready at {JUDGE_URL}: {last_error}")
 
 
+def get_judge_submissions() -> list[dict]:
+    try:
+        with request.urlopen(f"{JUDGE_URL}/submissions", timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return []
+    records = payload.get("submissions", [])
+    return [record for record in records if isinstance(record, dict)]
+
+
+def wait_for_async_submissions() -> None:
+    deadline = time.time() + JUDGE_TIMEOUT_SECONDS
+    printed = False
+    while True:
+        records = get_judge_submissions()
+        pending = [
+            record
+            for record in records
+            if record.get("submission_role", "agent") == "agent"
+            and record.get("status") in {"queued", "running"}
+        ]
+        if not pending:
+            return
+        if time.time() >= deadline:
+            raise RuntimeError(
+                f"timed out waiting for {len(pending)} async submission(s) to finish"
+            )
+        if not printed:
+            print(
+                f"Waiting for {len(pending)} async submission(s) before final verification"
+            )
+            printed = True
+        time.sleep(1)
+
+
 def post_json(url: str, payload: dict) -> dict:
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -235,10 +274,11 @@ def build_judge_payload(solution_path: Path, config: dict) -> dict:
 
 
 def load_best_agent_payload() -> dict | None:
-    if not BEST_AGENT_PAYLOAD.exists():
+    payload_path = BEST_JUDGE_PAYLOAD if BEST_JUDGE_PAYLOAD.exists() else BEST_AGENT_PAYLOAD
+    if not payload_path.exists():
         return None
     try:
-        payload = json.loads(BEST_AGENT_PAYLOAD.read_text(encoding="utf-8"))
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
     except Exception as exc:
         print(f"WARN: failed to read best agent payload: {exc}")
         return None
@@ -251,10 +291,11 @@ def load_best_agent_payload() -> dict | None:
 
 
 def describe_best_agent_payload() -> str:
-    if not BEST_AGENT_META.exists():
+    meta_path = BEST_JUDGE_META if BEST_JUDGE_META.exists() else BEST_AGENT_META
+    if not meta_path.exists():
         return "best iterative artifact"
     try:
-        meta = json.loads(BEST_AGENT_META.read_text(encoding="utf-8"))
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except Exception:
         return "best iterative artifact"
     if not isinstance(meta, dict):
@@ -301,9 +342,6 @@ def write_result(result: dict) -> None:
 
 
 def main() -> None:
-    copy_judge_artifacts()
-    best = best_submission()
-
     def write_best_submission_reward(reason: str) -> bool:
         if best is None:
             return False
@@ -327,7 +365,12 @@ def main() -> None:
         )
         return True
 
+    best: dict | None = None
     try:
+        wait_for_judge()
+        wait_for_async_submissions()
+        copy_judge_artifacts()
+        best = best_submission()
         config = load_submission_config()
         solution_path = load_submission_path(config)
         if not solution_path.exists():
