@@ -303,11 +303,28 @@ class FrontierCS20Adapter:
 
     def _write_solution(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         solution_dir = task_paths.solution_dir
-        reference = problem.problem_dir / "reference.py"
-        if reference.exists():
-            shutil.copy2(reference, solution_dir / "reference.py")
+        submission = problem.config.get("submission", {}) or {}
+        submission_path = str(submission.get("path", "/app/solution.py"))
+        submission_suffix = Path(submission_path).suffix.lstrip(".")
+        reference_candidates = []
+        if submission_suffix:
+            reference_candidates.append(problem.problem_dir / f"reference.{submission_suffix}")
+        reference_candidates.append(problem.problem_dir / "reference.py")
+        for reference in reference_candidates:
+            if reference.exists():
+                shutil.copy2(reference, solution_dir / "reference.py")
+                break
         solve_sh = solution_dir / "solve.sh"
-        shutil.copy2(self.template_dir / "solution" / "solve.sh", solve_sh)
+        solve_text = (self.template_dir / "solution" / "solve.sh").read_text(
+            encoding="utf-8"
+        )
+        solve_submission_path = (
+            submission_path if submission.get("kind", "file") != "directory" else "/app/solution.py"
+        )
+        solve_sh.write_text(
+            solve_text.replace("/app/solution.py", solve_submission_path),
+            encoding="utf-8",
+        )
         solve_sh.chmod(0o755)
 
     def _write_task_config(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:

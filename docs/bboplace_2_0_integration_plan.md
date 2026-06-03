@@ -7,9 +7,15 @@ Current direction:
   BBOPlace adapter.
 - Add two algorithmic suite tasks: `bboplace_ispd2005` and
   `bboplace_iccad2015`.
+- Add two direct-placement single-design tasks:
+  `bboplace_direct_ispd2005` for `adaptec1` and
+  `bboplace_direct_iccad2015` for `superblue1`.
 - Keep the agent/main container separate from the judge/data container.
 - During agent iteration, score only the first benchmark in each suite for fast
   general-design feedback. During final verification, score the full suite.
+- For direct-placement tasks, both iterative feedback and final verification
+  score the same single design. The agent submits `/app/solution.json` instead
+  of a Python generator.
 - The judge accepts `final` evaluation role only when the hidden verifier sends
   the generated role token. Agent submissions, including hand-written judge
   requests, are treated as quick-feedback submissions.
@@ -20,7 +26,7 @@ Current direction:
   extracted ISPD2005 plus ICCAD2015 data. The evaluator uses only MGO +
   MP-HPWL, so the image does not need Ray, HPO, DREAMPlace, or GPU packages.
 
-Evaluation flow:
+Suite evaluation flow:
 
 ```mermaid
 flowchart TD
@@ -36,6 +42,10 @@ flowchart TD
   J --> K["Score against maintained MGO baseline constants"]
   K --> L["Return mean score, unbounded score, and metrics"]
 ```
+
+Direct-placement tasks use the same judge image and scoring path, but the agent
+edits `/app/solution.json`, the evaluator reads exactly one placement, and both
+agent feedback and final verification evaluate the fixed single design.
 
 Scoring:
 
@@ -61,7 +71,6 @@ Data status:
 
 Future extension:
 
-- Add direct-placement single-instance tasks where the model receives one
-  evaluator input file and directly outputs a placement. That variant is better
-  suited for agent fine-tuning and should be separate from these suite-style
-  algorithmic tasks.
+- Add additional direct-placement single-design tasks if we want more
+  fine-tuning targets. Keep them separate from the suite-style algorithmic
+  tasks so direct placement and general design are measured independently.

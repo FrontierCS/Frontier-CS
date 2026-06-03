@@ -7,10 +7,28 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_TASKS = (
-    "frontier-cs-2-0-bboplace-ispd2005",
-    "frontier-cs-2-0-bboplace-iccad2015",
-)
+EXPECTED_TASKS = {
+    "frontier-cs-2-0-bboplace-ispd2005": {
+        "candidate_limit": 16,
+        "submission_path": "/app/solution.py",
+        "required_text": "quick-feedback score is never used directly",
+    },
+    "frontier-cs-2-0-bboplace-iccad2015": {
+        "candidate_limit": 16,
+        "submission_path": "/app/solution.py",
+        "required_text": "quick-feedback score is never used directly",
+    },
+    "frontier-cs-2-0-bboplace-direct-ispd2005": {
+        "candidate_limit": 1,
+        "submission_path": "/app/solution.json",
+        "required_text": "Submit exactly one placement for `adaptec1`",
+    },
+    "frontier-cs-2-0-bboplace-direct-iccad2015": {
+        "candidate_limit": 1,
+        "submission_path": "/app/solution.json",
+        "required_text": "Submit exactly one placement for `superblue1`",
+    },
+}
 EXPECTED_JUDGE_IMAGE = "ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad"
 
 
@@ -24,7 +42,7 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def check_task(task_dir: Path) -> None:
+def check_task(task_dir: Path, expected: dict[str, object]) -> None:
     env_dir = task_dir / "environment"
     tests_dir = task_dir / "tests"
 
@@ -34,6 +52,7 @@ def check_task(task_dir: Path) -> None:
     judge_server = read(env_dir / "judge_server.py")
     evaluate_py = read(tests_dir / "evaluate.py")
     instruction = read(task_dir / "instruction.md")
+    submission_config = read(env_dir / "submission_config.json")
 
     require("FROM ubuntu:24.04" in dockerfile, f"{task_dir.name}: main image changed")
     require(
@@ -49,10 +68,18 @@ def check_task(task_dir: Path) -> None:
     require("Runtime and resources" in instruction, f"{task_dir.name}: missing resource statement")
     require("no GPU" in instruction, f"{task_dir.name}: missing no-GPU statement")
     require(
-        "`max_candidates_per_submission`: 16" in instruction,
-        f"{task_dir.name}: candidate limit should be 16",
+        f"`max_candidates_per_submission`: {expected['candidate_limit']}" in instruction
+        or f"Only one placement is accepted" in instruction,
+        f"{task_dir.name}: candidate limit should be {expected['candidate_limit']}",
     )
-    require("quick-feedback score is never used directly" in instruction, f"{task_dir.name}: missing quick/full warning")
+    require(
+        str(expected["required_text"]) in instruction,
+        f"{task_dir.name}: missing expected BBOPlace instruction text",
+    )
+    require(
+        str(expected["submission_path"]) in submission_config,
+        f"{task_dir.name}: generated submission path mismatch",
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -60,8 +87,8 @@ def main(argv: list[str]) -> int:
         print("usage: check_generated_tasks.py /path/to/generated/frontier-cs-2.0", file=sys.stderr)
         return 2
     root = Path(argv[1])
-    for task_name in EXPECTED_TASKS:
-        check_task(root / task_name)
+    for task_name, expected in EXPECTED_TASKS.items():
+        check_task(root / task_name, expected)
     print("Generated BBOPlace tasks match the expected Harbor flow")
     return 0
 

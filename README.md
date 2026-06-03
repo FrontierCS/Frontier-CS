@@ -19,7 +19,7 @@
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-68-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-188-green" alt="Algorithmic Problems">
-  <img src="https://img.shields.io/badge/2.0_Problems-6-purple" alt="2.0 Problems">
+  <img src="https://img.shields.io/badge/2.0_Problems-8-purple" alt="2.0 Problems">
 </p>
 
 ## News
@@ -140,7 +140,8 @@ isolated from Frontier-CS's own `uv sync` environment.
 Frontier-CS 2.0 is agent-first: current 2.0 problems are meant to be run
 through Harbor-compatible agents rather than direct one-shot solution files.
 Problem IDs are their problem directory names, such as `erdos_unit_distance`,
-the small `erdos_demo`, and BBOPlace variants such as `bboplace_ispd2005`.
+the small `erdos_demo`, and BBOPlace variants such as `bboplace_ispd2005` and
+`bboplace_direct_ispd2005`.
 
 ```bash
 # List 2.0 problems
@@ -154,6 +155,9 @@ uv run frontier harbor trial 2.0 erdos_demo -a codex -m gpt-5.5 --json
 
 # Run a BBOPlace placement task
 uv run frontier harbor trial 2.0 bboplace_ispd2005 -a codex -m gpt-5.5 --json
+
+# Run a direct JSON BBOPlace single-design task
+uv run frontier harbor trial 2.0 bboplace_direct_ispd2005 -a codex -m gpt-5.5 --json
 ```
 
 See [2.0/README.md](2.0/README.md) for the current 2.0 track.

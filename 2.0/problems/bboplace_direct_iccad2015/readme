@@ -1,0 +1,72 @@
+BBOPlace Direct ICCAD2015
+========================
+
+Directly submit one JSON macro placement for a single BBOPlace ICCAD2015
+design: `superblue1`. The hidden judge evaluates the placement with the
+original BBOPlace-Bench MGO MP-HPWL evaluator.
+
+Runtime and resources
+---------------------
+
+Your final submission is a JSON file at `/app/solution.json`. You are encouraged
+to write Python programs, shell scripts, search loops, local parsers, or any
+other helper code in `/app` while working. Those programs may generate and
+overwrite `/app/solution.json` many times. Only the final JSON artifact is
+graded.
+
+The agent container provides:
+
+- 8 CPU cores
+- 16 GiB memory
+- 8 GiB storage
+- no GPU
+- Python 3 with NumPy available for local helper scripts
+- hidden benchmark data is not available in the agent workspace
+
+The judge also runs on CPU only. Do not rely on CUDA, DREAMPlace, Ray, or GPU
+placement libraries for scoring.
+
+Submission format
+-----------------
+
+Submit exactly one placement for `superblue1` by writing `/app/solution.json`.
+After your program writes the file, call `bash /app/submit.sh` to score that
+JSON. The JSON must use one of these forms:
+
+```json
+{"placement": [0.0, 0.0, "..."]}
+```
+
+or:
+
+```json
+{"x": [0.0, 0.0, "..."], "y": [0.0, 0.0, "..."]}
+```
+
+The placement vector length must equal `dim = 2 * node_cnt`. The first
+`node_cnt` entries are x-grid coordinates and the remaining `node_cnt` entries
+are y-grid coordinates. Coordinates must be finite, with x in `[0, n_grid_x]`
+and y in `[0, n_grid_y]`. Only one placement is accepted.
+
+The judge discloses public metadata through the iterative feedback path,
+including `dim`, `node_cnt`, `n_grid_x`, `n_grid_y`, and the baseline HPWL.
+The netlist and evaluator source stay hidden in the judge image.
+
+Score
+-----
+
+The objective is to minimize MP-HPWL for `superblue1`:
+
+`raw_score = 100 * (baseline_hpwl - candidate_hpwl) / baseline_hpwl`
+
+`score = max(0, raw_score)`
+
+The baseline constant is from the BBOPlace-Bench report, Table V, `MGO + PSO`
+MP-HPWL. The paper reports values in units of `x10^5`; the judge stores the
+raw HPWL value relaxed by `1.2x`:
+
+- `superblue1`: `0.696e5`
+
+Both iterative submissions and final verification evaluate this same single
+design. The submit helper may still save the best iterative JSON artifact and
+rerun it during final verification.

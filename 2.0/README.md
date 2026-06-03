@@ -52,3 +52,20 @@ BBOPlace-Bench. Its problem ID is `bboplace_iccad2015`. It follows the same
 candidate format, CPU-only evaluator, MP-HPWL metric, relaxed MGO baselines,
 and quick-versus-final evaluation flow as `bboplace_ispd2005`, but scores the
 ICCAD2015 benchmark set.
+
+## BBOPlace Direct ISPD2005
+
+This direct-placement variant asks agents to submit one JSON placement for a
+single ISPD2005 design, `adaptec1`, instead of writing a Python placement
+generator. Its problem ID is `bboplace_direct_ispd2005`. The evaluator uses the
+same CPU-only BBOPlace MGO MP-HPWL path and relaxed baseline as the ISPD2005
+suite task, but both iterative feedback and final verification score only that
+one design.
+
+## BBOPlace Direct ICCAD2015
+
+This direct-placement variant asks agents to submit one JSON placement for a
+single ICCAD2015 design, `superblue1`. Its problem ID is
+`bboplace_direct_iccad2015`. It follows the same JSON interface and single
+design evaluation flow as `bboplace_direct_ispd2005`, with the ICCAD2015
+baseline for `superblue1`.
