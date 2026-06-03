@@ -43,3 +43,29 @@ docker tag frontiercs-bboplace-data:local ghcr.io/frontiercs/frontiercs-bboplace
 python3 tools/bboplace/check_constants.py
 python3 tools/bboplace/check_generated_tasks.py /path/to/generated/frontier-cs-2.0
 ```
+
+Placement visualization
+-----------------------
+
+Use `tools/bboplace/viz_placement.py` to render a submitted placement as an
+SVG. The script reuses the task evaluator, so run it inside the BBOPlace judge
+image or another environment where `BBOPLACE_ROOT` points at the BBOPlace-Bench
+runtime and benchmark data.
+
+Example with a Harbor best-submission payload:
+
+```bash
+docker run --rm \
+  -v "$PWD":/repo \
+  -v /path/to/trial/agent/best_submission_payload.json:/payload.json:ro \
+  ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad \
+  python3 /repo/tools/bboplace/viz_placement.py \
+    --problem-id bboplace_ispd2005 \
+    --benchmark adaptec1 \
+    --payload-json /payload.json \
+    --output /repo/.frontier-cs/harbor/bboplace-viz/adaptec1.svg
+```
+
+The output SVG draws the legalized macro rectangles produced by the same MGO
+placement path used for scoring. The netlist and benchmark data remain inside
+the judge/data environment.
