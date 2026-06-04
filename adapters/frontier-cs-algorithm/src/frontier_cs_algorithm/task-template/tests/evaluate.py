@@ -32,13 +32,12 @@ def _submission_sort_key(path: Path) -> tuple[int, str]:
 
 def judge_submission_records() -> list[dict]:
     """Rebuild the iterative submission log from judge-owned artifacts."""
-    problem_dir = JUDGE_SUBMISSIONS_DIR / str(PROBLEM_ID)
-    if not problem_dir.exists():
+    if not JUDGE_SUBMISSIONS_DIR.exists():
         return []
 
     records: list[dict] = []
     for result_path in sorted(
-        problem_dir.glob("*/result.json"), key=_submission_sort_key
+        JUDGE_SUBMISSIONS_DIR.glob("*/*/result.json"), key=_submission_sort_key
     ):
         try:
             result = json.loads(result_path.read_text())
@@ -53,6 +52,10 @@ def judge_submission_records() -> list[dict]:
             except (OSError, json.JSONDecodeError):
                 meta = {}
 
+        record_pid = str(meta.get("pid") or result_path.parent.parent.name)
+        if record_pid != str(PROBLEM_ID):
+            continue
+
         score_raw = result.get("score") or 0.0
         try:
             reward = float(score_raw) / 100.0
@@ -64,7 +67,7 @@ def judge_submission_records() -> list[dict]:
                 "ts": meta.get("ts"),
                 "status": result.get("status", "unknown"),
                 "sid": meta.get("sid") or result_path.parent.name,
-                "problem_id": meta.get("pid") or PROBLEM_ID,
+                "problem_id": record_pid,
                 "score": reward,
                 "score_raw": score_raw,
                 "score_unbounded": result.get("scoreUnbounded"),
