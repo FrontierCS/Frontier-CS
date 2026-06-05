@@ -15,6 +15,7 @@ import time
 import traceback
 import threading
 import secrets
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -291,6 +292,19 @@ def evaluate_archive(archive_b64: str, *, submission_role: str = "agent") -> dic
         return evaluate_path(root, submission_role=submission_role)
 
 
+def load_best_submission_payload(submission_uuid: str) -> tuple[dict[str, Any], str]:
+    if not BEST_SUBMISSION_PAYLOAD.exists():
+        raise FileNotFoundError("best submission payload not found")
+    payload = json.loads(BEST_SUBMISSION_PAYLOAD.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("best submission payload is invalid")
+    payload = dict(payload)
+    payload["submission_role"] = "final"
+    payload["submission_uuid"] = submission_uuid
+    submission_kind = str(payload.get("submission_kind", "file"))
+    return payload, submission_kind
+
+
 def validate_payload(payload: dict[str, Any], *, allow_final: bool, role_token: str = "") -> tuple[str, str, str]:
     submission_uuid = str(payload.get("submission_uuid") or "")
     if not submission_uuid:
@@ -432,6 +446,9 @@ class JudgeHandler(BaseHTTPRequestHandler):
             submission_uuid = parsed.path.removeprefix("/submission/").removesuffix("/cancel").strip("/")
             self.handle_cancel(submission_uuid)
             return
+        if parsed.path == "/evaluate_best":
+            self.handle_evaluate_best()
+            return
         if parsed.path != "/evaluate":
             self._write_json(404, {"status": "error", "error": "not found"})
             return
@@ -512,6 +529,61 @@ class JudgeHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise ValueError("request body must be a JSON object")
         return payload
+
+    def handle_evaluate_best(self) -> None:
+        if not READY:
+            self._write_json(
+                503,
+                {
+                    "status": "error",
+                    "score": 0.0,
+                    "score_unbounded": 0.0,
+                    "message": "judge is not ready",
+                    "health": READY_PAYLOAD,
+                },
+            )
+            return
+
+        submission_uuid = ""
+        submission_kind = "file"
+        try:
+            request_payload = self.read_json_body()
+            if request_payload.get("submission_role") != "final":
+                raise PermissionError("best-submission rerun must use final role")
+            if not secrets.compare_digest(
+                self.headers.get("X-Frontier-CS-Role-Token", ""),
+                FINAL_ROLE_TOKEN,
+            ):
+                raise PermissionError("final evaluation role is verifier-only")
+            submission_uuid = str(request_payload.get("submission_uuid") or uuid.uuid4())
+            payload, submission_kind = load_best_submission_payload(submission_uuid)
+            result = run_payload(payload, submission_role="final")
+            log_submission(
+                {
+                    "submission_uuid": submission_uuid,
+                    "submission_role": "final",
+                    "submission_kind": submission_kind,
+                    **result,
+                }
+            )
+            self._write_json(200, result)
+        except Exception:
+            print(traceback.format_exc(), flush=True)
+            result = {
+                "status": "error",
+                "score": 0.0,
+                "score_unbounded": 0.0,
+                "message": "best iterative evaluation failed",
+            }
+            log_submission(
+                {
+                    "submission_uuid": submission_uuid,
+                    "submission_role": "final",
+                    "submission_kind": submission_kind,
+                    **result,
+                }
+            )
+            self._write_json(200, result)
 
     def handle_submit(self) -> None:
         if not READY:

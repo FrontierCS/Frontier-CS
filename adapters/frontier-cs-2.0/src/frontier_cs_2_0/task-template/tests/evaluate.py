@@ -311,6 +311,19 @@ def evaluate_with_judge(payload: dict) -> dict:
     return result
 
 
+def evaluate_best_with_judge() -> dict | None:
+    wait_for_judge()
+    payload = {
+        "submission_kind": "file",
+        "submission_uuid": str(uuid.uuid4()),
+        "submission_role": "final",
+    }
+    result = post_json(f"{JUDGE_URL}/evaluate_best", payload)
+    if result.get("status") != "done":
+        return None
+    return result
+
+
 def load_submission_path(config: dict) -> Path:
     if config.get("kind") == "directory":
         return Path(config.get("path") or APP_PATH)
@@ -342,46 +355,45 @@ def write_result(result: dict) -> None:
 
 
 def main() -> None:
-    def write_best_submission_reward(reason: str) -> bool:
-        if best is None:
-            return False
-        score_raw = float(best.get("score", 0.0))
-        reward = score_raw / 100.0
-        score_unbounded = float(best.get("score_unbounded", score_raw))
-        metrics = best.get("metrics", {})
-        if not isinstance(metrics, dict):
-            metrics = {}
-        print(f"Using best iterative submission after {reason}: reward={reward:.4f}")
-        write_reward(
-            reward,
-            f"Using best iterative submission after {reason}: {best.get('message', '')}",
-            {
-                "score": score_raw,
-                "score_unbounded": score_unbounded,
-                "best_submission_reward": reward,
-                "used_best_submission": 1,
-                **metrics,
-            },
+    def write_best_final_result(best_result: dict, reason: str) -> None:
+        metrics = dict(best_result.get("metrics", {}) or {})
+        metrics["used_best_agent_artifact"] = 1
+        best_result["metrics"] = metrics
+        best_result["message"] = (
+            f"Using {describe_best_agent_payload()} after {reason}: "
+            f"{best_result.get('message', '')}"
         )
+        write_result(best_result)
+
+    def try_write_best_final_result(reason: str, final_key: tuple[float, float] | None = None) -> bool:
+        try:
+            best_result = evaluate_best_with_judge()
+            copy_judge_artifacts()
+        except Exception as exc:
+            print(f"WARN: failed to rerun best iterative artifact: {exc}")
+            best_result = None
+        if best_result is None:
+            return False
+        if final_key is not None and result_score_key(best_result) <= final_key:
+            return False
+        write_best_final_result(best_result, reason)
         return True
 
-    best: dict | None = None
     try:
         wait_for_judge()
         wait_for_async_submissions()
         copy_judge_artifacts()
-        best = best_submission()
         config = load_submission_config()
         solution_path = load_submission_path(config)
         if not solution_path.exists():
             print(f"ERROR: {solution_path} not found")
-            if write_best_submission_reward(f"{solution_path} not found"):
+            if try_write_best_final_result(f"{solution_path} not found"):
                 return
             write_reward(0.0, f"{solution_path} not found")
             return
         if solution_path.is_file() and not solution_path.read_text(encoding="utf-8").strip():
             print(f"ERROR: {solution_path} is empty")
-            if write_best_submission_reward(f"{solution_path} is empty"):
+            if try_write_best_final_result(f"{solution_path} is empty"):
                 return
             write_reward(0.0, f"{solution_path} is empty")
             return
@@ -389,46 +401,13 @@ def main() -> None:
         final_result = evaluate_with_judge(build_judge_payload(solution_path, config))
         copy_judge_artifacts()
         final_key = result_score_key(final_result)
-        best_payload = load_best_agent_payload()
-        if best_payload is not None:
-            try:
-                best_result = evaluate_with_judge(best_payload)
-                copy_judge_artifacts()
-                if result_score_key(best_result) > final_key:
-                    metrics = dict(best_result.get("metrics", {}) or {})
-                    metrics["used_best_agent_artifact"] = 1
-                    best_result["metrics"] = metrics
-                    best_result["message"] = (
-                        f"Using {describe_best_agent_payload()} after full-suite rerun: "
-                        f"{best_result.get('message', '')}"
-                    )
-                    write_result(best_result)
-                    return
-            except Exception as exc:
-                print(f"WARN: failed to rerun best iterative artifact: {exc}")
-        if best is not None and result_score_key(best) > final_key:
-            write_best_submission_reward("final solution scored below best submission")
+        if try_write_best_final_result("full-suite rerun", final_key):
             return
         write_result(final_result)
     except Exception as exc:
         print(traceback.format_exc())
         copy_judge_artifacts()
-        best_payload = load_best_agent_payload()
-        if best_payload is not None:
-            try:
-                best_result = evaluate_with_judge(best_payload)
-                metrics = dict(best_result.get("metrics", {}) or {})
-                metrics["used_best_agent_artifact"] = 1
-                best_result["metrics"] = metrics
-                best_result["message"] = (
-                    f"Using {describe_best_agent_payload()} after final evaluation failed: "
-                    f"{best_result.get('message', '')}"
-                )
-                write_result(best_result)
-                return
-            except Exception as best_exc:
-                print(f"WARN: failed to rerun best iterative artifact: {best_exc}")
-        if write_best_submission_reward(f"final evaluation failed: {exc}"):
+        if try_write_best_final_result("final evaluation failed"):
             return
         write_reward(0.0, f"Evaluation failed: {exc}")
 

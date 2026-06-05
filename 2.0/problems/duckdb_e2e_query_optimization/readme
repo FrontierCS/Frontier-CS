@@ -69,8 +69,11 @@ penalized before performance is considered.
 
 The experimental evaluator currently encodes the patch policy, timing
 orchestration, and vanilla-vs-patched TPC-H result comparison inside the custom
-judge image. DuckDB's broader SQLLogicTest/unit-test tooling is a natural future
-hardening step, but the current score path already gates on query results before
+judge image. During iterative asynchronous submissions, the judge keeps feedback
+focused on the public scale-factor TPC-H gate so agents can submit early and
+continue working while evaluation runs. During final verification, the judge
+uses the broader hidden scale-factor set and also runs a small DuckDB
+SQLLogicTest smoke set covering join, filter, and aggregate behavior before
 timing is considered.
 
 ## Scoring
