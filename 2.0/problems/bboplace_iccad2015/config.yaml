@@ -13,3 +13,4 @@ environment:
   memory_mb: 16384
   storage_mb: 8192
   build_timeout_seconds: 3600
+  allow_internet: false
