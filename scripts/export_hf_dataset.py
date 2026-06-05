@@ -117,6 +117,11 @@ tags:
   - frontier-cs-2.0
 size_categories:
   - n<1K
+configs:
+  - config_name: default
+    data_files:
+      - split: test
+        path: data/test-*.json
 ---
 
 # Frontier-CS Dataset

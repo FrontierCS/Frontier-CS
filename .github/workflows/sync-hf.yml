@@ -7,6 +7,8 @@ on:
       - 'algorithmic/problems/**'
       - 'research/problems/**'
       - '2.0/problems/**'
+      - 'scripts/export_hf_dataset.py'
+      - '.github/workflows/sync-hf.yml'
   release:
     types: [published]
   workflow_dispatch:  # Allow manual trigger
