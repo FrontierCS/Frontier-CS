@@ -1,55 +1,106 @@
-# Meituan Cup Warm-up Problem — Number Loop
+# Number Loop Construction
 
-This year's Meituan Cup warm-up problem is a **Number Loop**.
+You are given a fixed 12 by 12 clue template. Some cells are clue cells, and the
+remaining cells are blank. Your task is to fill every clue cell with a digit and
+construct a Number Loop puzzle.
 
-When designing this problem, Suanxie first selected the following template, ensuring that the puzzle must contain the two patterns **MT** and **PKU**.
+The goal has two levels:
 
-The next step is to replace all `?` in the template with digits from `0` to `3`, thus forming a valid Number Loop puzzle. An important requirement is that the puzzle must have a **unique solution** (the definition of a solution can be found in the warm-up problem).
+1. Make the puzzle have as few valid loop solutions as possible.
+2. Among puzzles with the same number of valid loop solutions, maximize the
+   number of clue cells equal to `1`.
 
-However, Suanxie found that creating a puzzle of suitable difficulty with a unique solution on this template was extremely challenging. Therefore, he temporarily modified the template, which resulted in the final warm-up problem used in the contest.
+## Number Loop Rules
 
-Although he eventually managed to produce a valid puzzle, the feeling of failure still bothered him. Now, he hopes that you can help him achieve his original goal — **to construct a unique-solution Number Loop puzzle based on the original template.**
+A loop is drawn on the grid lines around the 12 by 12 cells.
 
----
+* Each grid vertex must have degree either `0` or `2`.
+* The selected grid edges must form exactly one non-empty closed loop.
+* For every clue cell containing digit `d`, exactly `d` of its four surrounding
+  grid edges must be selected.
+* Blank cells impose no clue constraint.
 
-## Problem Description
+A valid loop solution is one loop satisfying all clue constraints in your
+output puzzle.
 
-You need to construct a valid Number Loop puzzle according to the given input type.
+## Template
 
-* If the input is `0`, this corresponds to the **Small Task**: replace all `?` in the template with integers from `0` to `3`, ensuring the resulting puzzle has a **unique solution**.
-* If the input is `1`, this corresponds to the **Large Task**: replace all `?` in the template with integers from `1` to `3`, ensuring the resulting puzzle has a **unique solution**.
+Your output must preserve the following blank positions exactly. Every `?`
+position must be replaced by a digit.
 
-Your program should output a $12\times12$ grid consisting only of spaces and digits `0`–`3`, representing the constructed puzzle. Each row of the grid corresponds to one line of output (including spaces).
+```text
+?   ?   ??? 
+?? ??  ?   ?
+? ? ?  ?   ?
+? ? ?  ???? 
+? ? ?  ?    
+?   ?  ?    
+            
+?  ?   ?????
+? ?      ?  
+??   ? ? ?  
+? ?  ? ? ?  
+?  ? ??? ?  
+```
 
----
+There are 56 clue cells.
 
 ## Input Format
 
 The input contains a single integer:
 
-* `0` — requires output of the Small Task solution.
-* `1` — requires output of the Large Task solution.
-
----
+* `0`: each clue cell may be one of `0`, `1`, `2`, or `3`.
+* `1`: each clue cell may be one of `1`, `2`, or `3`.
 
 ## Output Format
 
-Output a $12\times12$ character matrix containing only spaces and digits `0`–`3`, representing your constructed Number Loop puzzle.
+Output exactly 12 lines, each with exactly 12 characters.
 
----
+* A blank position in the template must be output as a space.
+* A `?` position in the template must be output as an allowed digit.
+
+Trailing spaces are significant for the 12 by 12 format.
+
+## Scoring
+
+For each test case, the judge counts the number of valid loop solutions in your
+constructed puzzle, up to a cap of six solutions. It also counts
+
+```text
+ones = number of clue cells equal to '1'
+```
+
+Let `u = ones / 56`.
+
+The per-case score is:
+
+```text
+0 valid solutions: 0
+6 or more valid solutions: 1 + 9 * u
+5 valid solutions:         10 + 10 * u
+4 valid solutions:         20 + 10 * u
+3 valid solutions:         30 + 10 * u
+2 valid solutions:         40 + 10 * u
+1 valid solution:          50 + 50 * u
+```
+
+The final score is the average over the two test cases. A unique-solution puzzle
+is therefore always better than any non-unique puzzle, and within the same
+solution-count bucket, more `1` clues are better.
 
 ## Sample Output
 
-Below is a sample output (note that this example has **multiple solutions** and therefore does **not** satisfy the problem requirement; it is shown only to illustrate the format):
+The following output only illustrates the required 12 by 12 format. It is not
+necessarily a high-scoring construction.
 
-```
+```text
 0   0   000 
 00 00  0   0
 0 0 0  0   0
 0 0 0  0000 
 0 0 0  0    
 0   0  0    
-
+            
 0  0   00000
 0 0      0  
 00   0 0 0  

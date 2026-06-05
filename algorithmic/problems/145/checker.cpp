@@ -26,6 +26,38 @@ const vector<string> M = {
 string valid_char;
 vector<string> grid;
 
+int clue_cell_count(){
+    int total = 0;
+    for(const string &row : M) {
+        for(char c : row) {
+            if(c == '?') total++;
+        }
+    }
+    return total;
+}
+
+int count_ones(){
+    int total = 0;
+    for(const string &row : grid) {
+        for(char c : row) {
+            if(c == '1') total++;
+        }
+    }
+    return total;
+}
+
+double score_percent(int solution_count){
+    if(solution_count <= 0) return 0.0;
+
+    const double u = (double)count_ones() / (double)clue_cell_count();
+    if(solution_count >= 6) return 1.0 + 9.0 * u;
+    if(solution_count == 5) return 10.0 + 10.0 * u;
+    if(solution_count == 4) return 20.0 + 10.0 * u;
+    if(solution_count == 3) return 30.0 + 10.0 * u;
+    if(solution_count == 2) return 40.0 + 10.0 * u;
+    return 50.0 + 50.0 * u;
+}
+
 // helper printing to stderr (like original)
 void eprint(const string &s){ cerr << s << "\n"; }
 void myAssert(bool cond, const string &msg){
@@ -531,38 +563,35 @@ int main(int argc, char **argv){
         quitp(0.0, "There is no valid solution");
     }
 
-    // enumerate solutions, stop when 5 found (>=5 -> 0 points)
+    // Enumerate solutions, stopping once the score bucket is known.
     sol_list.clear();
     sol_set.clear();
-    const int LIMIT = 5;
+    const int LIMIT = 6;
     try_search(LIMIT);
 
     int cnt = (int)sol_list.size();
 
     if(cnt == 0){
         quitp(0.0, "There is no valid solution");
-    } else if(cnt == 1){
-        // unique -> 100%
-        // print solution to stderr
-        print_solution_to_stderr(sol_list[0].first, sol_list[0].second);
-        quitp(1.0, "Ratio: 1.0 Correct! unique solution");
-    } else if(cnt == 2){
-        for(int k=0;k<2;k++) print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
-        quitp(0.80, "Ratio: 0.8 Two valid solutions");
-    } else if(cnt == 3){
-        for(int k=0;k<3;k++) print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
-        quitp(0.60, "Ratio: 0.6 Three valid solutions");
-    } else if(cnt == 4){
-        for(int k=0;k<4;k++) print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
-        quitp(0.40, "Ratio: 0.4 Four valid solutions");
-    } else if(cnt == 5){
-        for(int k=0;k<5;k++) print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
-        quitp(0.20, "Ratio: 0.2 Five valid solutions");
-    } else {
-        // >=5
-        for(int k=0;k< (int)min((size_t)6, sol_list.size()); ++k) print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
-        quitp(0.0, "Ratio: 0.0 Six or more valid solutions (or too many)");
     }
+
+    for(int k=0;k< (int)min((size_t)6, sol_list.size()); ++k) {
+        print_solution_to_stderr(sol_list[k].first, sol_list[k].second);
+    }
+
+    const int ones = count_ones();
+    const int clues = clue_cell_count();
+    const double score = score_percent(cnt);
+    const string count_label = cnt >= 6 ? "six or more" : to_string(cnt);
+    quitp(
+        score / 100.0,
+        "Ratio: %.10f RatioUnbounded: %.10f Score: %.6f, solutions: %s, ones: %d/%d",
+        score / 100.0,
+        score / 100.0,
+        score,
+        count_label.c_str(),
+        ones,
+        clues
+    );
     return 0;
 }
-
