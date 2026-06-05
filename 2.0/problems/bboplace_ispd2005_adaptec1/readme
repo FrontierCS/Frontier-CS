@@ -1,15 +1,15 @@
-BBOPlace ISPD2005
-=================
+BBOPlace ISPD2005 Adaptec1
+==========================
 
 Problem
 -------
 
 Write a Python solution that proposes macro placements for the BBOPlace
-Mask-Guided Optimization (MGO) formulation on six ISPD2005 placement
-benchmarks:
+Mask-Guided Optimization (MGO) formulation on the ISPD2005 `adaptec1`
+placement benchmark:
 
 ```text
-adaptec1, adaptec2, adaptec3, adaptec4, bigblue1, bigblue3
+adaptec1
 ```
 
 This is a VLSI chip-placement optimization task. A chip design contains many
@@ -27,7 +27,7 @@ macros to legal positions, and then reporting macro-placement half-perimeter
 wirelength (MP-HPWL). Lower MP-HPWL is better.
 
 You do not need to implement an ISPD parser, a legalizer, HPWL computation, or
-BBOPlace itself for this suite task. The judge owns the hidden benchmark files
+BBOPlace itself for this task. The judge owns the hidden benchmark files
 and the original BBOPlace-Bench evaluator. Your job is to generate promising
 candidate coordinate vectors from the public metadata passed to `solve(info)`.
 External repositories, papers, internet search, and BBOPlace source code are
@@ -61,7 +61,7 @@ file roles are:
 .wts    optional net or object weights
 ```
 
-Those files are hidden for this suite task. They are described here only so the
+Those files are hidden for this task. They are described here only so the
 optimization problem is clear.
 
 Runtime and resources
@@ -75,7 +75,7 @@ Your solution runs in the main agent container with:
 - no GPU
 - Python 3 with NumPy available
 
-The final verifier timeout is 10800 seconds. The judge also runs on CPU only.
+The final verifier timeout is 900 seconds. The judge also runs on CPU only.
 Do not rely on CUDA, DREAMPlace, Ray, or GPU placement libraries for scoring;
 the official metric path used here is MGO with MP-HPWL.
 
@@ -95,7 +95,7 @@ dictionary containing:
 
 ```text
 dataset: "ispd2005"
-benchmark: one of adaptec1, adaptec2, adaptec3, adaptec4, bigblue1, bigblue3
+benchmark: "adaptec1"
 placer: "mgo"
 metric: "mp_hpwl"
 objective: "minimize"
@@ -110,12 +110,10 @@ baseline_hpwl: the HPWL baseline used for scoring
 ```
 
 The `info` dictionary is the public data channel for benchmark-specific
-constants in this suite task. The raw ISPD2005 Bookshelf files stay hidden, but
+constants in this task. The raw ISPD2005 Bookshelf files stay hidden, but
 the constants needed to create a syntactically valid placement are provided on
-every call to `solve(info)`. In particular, do not assume that the quick-feedback
-benchmark dimensions also apply to the full suite. Read `dim`, `node_cnt`,
-`n_grid_x`, `n_grid_y`, `canvas_width`, `canvas_height`, and `baseline_hpwl`
-from the `info` argument each time the function is called.
+every call to `solve(info)`. Read `dim`, `node_cnt`, `n_grid_x`, `n_grid_y`,
+`canvas_width`, `canvas_height`, and `baseline_hpwl` from the `info` argument.
 
 Because the raw netlist and macro order are hidden, a useful solver should
 return several robust coordinate patterns rather than trying to compute true
@@ -125,15 +123,14 @@ and small deterministic variants keyed by `info["benchmark"]`. The judge will
 evaluate up to 16 candidates and keep the best legal candidate for each
 benchmark.
 
-The final verifier calls your solution separately for:
+The final verifier calls your solution for:
 
 ```text
-adaptec1, adaptec2, adaptec3, adaptec4, bigblue1, bigblue3
+adaptec1
 ```
 
-Each call has the same field names but may have different values. A correct
-solution can therefore be written without knowing or hard-coding the per-design
-constants in advance:
+The call provides all shape and bound constants needed to create a valid
+candidate without reading the hidden benchmark files:
 
 ```python
 def solve(info):
@@ -234,16 +231,13 @@ bash /app/submit.sh
 
 to submit the current `/app/solution.py` and receive public score feedback.
 
-During iterative agent submissions, `/app/submit.sh` gives quick feedback on
-`adaptec1` only. The final verifier evaluates the full six-benchmark suite.
-Use the quick feedback to debug general placement logic, candidate formatting,
-and search ideas, not as the complete leaderboard score.
+During iterative agent submissions, `/app/submit.sh` gives feedback on the same
+`adaptec1` benchmark used by the final verifier. Use the feedback to debug
+candidate formatting and search ideas.
 
-The submit helper saves the best quick-feedback artifact it has seen. During
-final verification, the verifier reruns both the current `/app/solution.py` and
-that saved best iterative artifact on the full suite, then uses the better
-full-suite score. A quick-feedback score is never used directly as the final
-reward.
+The submit helper saves the best feedback artifact it has seen. During final
+verification, the verifier reruns both the current `/app/solution.py` and that
+saved artifact, then uses the better score.
 
 Validity
 --------
@@ -271,5 +265,5 @@ raw_score = 100 * (baseline_hpwl - candidate_hpwl) / baseline_hpwl
 score = max(0, raw_score)
 ```
 
-The final score is the mean score over the six ISPD2005 benchmarks. The
-unbounded score is the mean raw score before the zero clip.
+The final score is the `adaptec1` score. The unbounded score is the raw score
+before the zero clip.

@@ -34,49 +34,13 @@
         "bigblue1",
         "bigblue3"
       ],
-      "extracted_size_observed": "967 MiB",
-      "archives": [
-        {
-          "name": "adaptec1.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec1.tar.gz",
-          "sha256": "b694dedfe15bffa7cb92dfbee0bc11906f5d334d211f51d82d0ac1effb6c0a08"
-        },
-        {
-          "name": "adaptec2.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec2.tar.gz",
-          "sha256": "e5a7bc0e343a97f3d9d3a1c871636a4b51da7f64ee71d2f04e7db295655a09a2"
-        },
-        {
-          "name": "adaptec3.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec3.tar.gz",
-          "sha256": "9ddc8f3040bd5d08609d2ff439484c3c8e3896edd9c73e5309477a2284f1edae"
-        },
-        {
-          "name": "adaptec4.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/adaptec4.tar.gz",
-          "sha256": "ca894bcf93ace5998dd393a6b6d5f240d3c695159cdc62ab055b8edf70ef46ab"
-        },
-        {
-          "name": "bigblue1.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue1.tar.gz",
-          "sha256": "d2a7a7df13242dc29f811dee8cbe4d8cd34bce6b502099ef176a3d5f7595a89d"
-        },
-        {
-          "name": "bigblue2.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue2.tar.gz",
-          "sha256": "3748e13367578b014424378fb441c89086c111770f835ef5b4afc3601e28316d"
-        },
-        {
-          "name": "bigblue3.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue3.tar.gz",
-          "sha256": "343d0c3a06eae195d92fded15dc8c8c6997db8dc76ff1da8d9c31e56bb927892"
-        },
-        {
-          "name": "bigblue4.tar.gz",
-          "url": "https://www.ispd.cc/contests/05/ispd05dp.tarballs/bigblue4.tar.gz",
-          "sha256": "afd489f440d3323b643baab9082c8c9b40f350ef482d58e6ce52e431c66f6dba"
-        }
-      ]
+      "archive": {
+        "name": "ispd2005.zip",
+        "source": "BBOPlace-Bench README Google Drive folder 1MVIOZp2rihzIFK3C_4RqJs-bUv1TW2YT, file 1d5gpvDSQluWiT_O2QVEJgyFdkeyyVT7E",
+        "sha256": "bd8d44cc3a39070fff654c7e6573fa0d207c98435129d818c89559fd5672aa72"
+      },
+      "archive_size_observed": "189 MiB",
+      "extracted_size_observed": "1.2 GiB"
     },
     "iccad2015": {
       "benchmarks_in_image": [

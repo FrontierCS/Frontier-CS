@@ -1,8 +1,8 @@
 tag: optimization
 runtime:
   language: python
-  timeout_seconds: 10800
-  environment: "Python solution returning BBOPlace MGO placement candidates; hidden ISPD2005 judge data"
+  timeout_seconds: 900
+  environment: "Python solution returning BBOPlace MGO placement candidates; hidden ISPD2005 adaptec1 judge data"
   apt_packages:
     - python3-numpy
     - python3-matplotlib

@@ -21,9 +21,9 @@ Expected layout:
 ```
 
 The data sources, SHA256 checksums, observed sizes, and scoring constants are
-tracked in `data_manifest.json`. ISPD2005 archives contain gzipped inner files;
-the final image must store the uncompressed `.aux`, `.nodes`, `.nets`, `.pl`,
-`.scl`, and `.wts` files because the BBOPlace reader expects those filenames.
+tracked in `data_manifest.json`. The final image must store the extracted
+`.aux`, `.nodes`, `.nets`, `.pl`, `.scl`, and `.wts` files because the
+BBOPlace reader expects those filenames.
 
 The Frontier-CS evaluator uses only the BBOPlace MGO + MP-HPWL path. It avoids
 the original BBOPlace `src.evaluator` import path because that path imports
@@ -38,8 +38,19 @@ metadata through `solve(info)`.
 Local validation commands:
 
 ```bash
-docker build -t frontiercs-bboplace-data:local /path/to/context
-docker tag frontiercs-bboplace-data:local ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad
+mkdir -p /tmp/bboplace-data/benchmarks
+git clone https://github.com/lamda-bbo/BBOPlace-Bench /tmp/bboplace-data/BBOPlace-Bench
+git -C /tmp/bboplace-data/BBOPlace-Bench checkout 4a0dde451e40a3f368e501df6f027c442fcca02a
+
+# Download and extract the BBOPlace-Bench README Google Drive archives:
+#   ispd2005.zip -> /tmp/bboplace-data/benchmarks/ispd2005
+#   iccad2015_benchmark.zip -> /tmp/bboplace-data/benchmarks/iccad2015
+
+docker build \
+  -t ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad \
+  -f tools/bboplace/Dockerfile.data \
+  /tmp/bboplace-data
+
 python3 tools/bboplace/check_constants.py
 python3 tools/bboplace/check_generated_tasks.py /path/to/generated/frontier-cs-2.0
 ```

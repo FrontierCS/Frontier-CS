@@ -29,9 +29,37 @@ root = Path("/opt/bboplace-bench")
 required = [
     root / "src" / "evaluator.py",
     root / "config" / "benchmark.py",
-    root / "benchmarks" / "ispd2005" / "adaptec1",
-    root / "benchmarks" / "iccad2015" / "superblue1",
 ]
+for dataset, names in {
+    "ispd2005": (
+        "adaptec1",
+        "adaptec2",
+        "adaptec3",
+        "adaptec4",
+        "bigblue1",
+        "bigblue3",
+    ),
+    "iccad2015": (
+        "superblue1",
+        "superblue3",
+        "superblue4",
+        "superblue5",
+        "superblue7",
+        "superblue10",
+        "superblue16",
+        "superblue18",
+    ),
+}.items():
+    for name in names:
+        benchmark_dir = root / "benchmarks" / dataset / name
+        required.append(benchmark_dir)
+        required += [
+            benchmark_dir / f"{name}.aux",
+            benchmark_dir / f"{name}.nodes",
+            benchmark_dir / f"{name}.nets",
+            benchmark_dir / f"{name}.pl",
+            benchmark_dir / f"{name}.scl",
+        ]
 for path in required:
     if not path.exists():
         raise SystemExit(f"missing required BBOPlace data image path: {path}")
