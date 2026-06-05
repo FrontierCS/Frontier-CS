@@ -63,6 +63,11 @@ def _config_bool(env_name: str, config_name: str, default: bool) -> bool:
 
 BUILD_TIMEOUT_SECONDS = _config_int("FRONTIER_DUCKDB_BUILD_TIMEOUT", "build_timeout_seconds", 3600)
 QUERY_TIMEOUT_SECONDS = _config_int("FRONTIER_DUCKDB_QUERY_TIMEOUT", "query_timeout_seconds", 300)
+SQLLOGICTEST_TIMEOUT_SECONDS = _config_int(
+    "FRONTIER_DUCKDB_SQLLOGICTEST_TIMEOUT",
+    "sqllogictest_timeout_seconds",
+    600,
+)
 DUCKDB_MEMORY_LIMIT = _config_str("FRONTIER_DUCKDB_MEMORY_LIMIT", "duckdb_memory_limit", "6GB")
 DUCKDB_TEMP_LIMIT = _config_str("FRONTIER_DUCKDB_TEMP_LIMIT", "duckdb_temp_limit", "2GB")
 CHILD_MEMORY_LIMIT_MB = _config_int("FRONTIER_DUCKDB_CHILD_MEMORY_MB", "child_memory_mb", 12288)
@@ -76,7 +81,15 @@ QUERY_ORDER_SEED = _config_int("FRONTIER_DUCKDB_QUERY_ORDER_SEED", "query_order_
 
 BENCHMARK_RUNNER_REL = Path("build/release/benchmark/benchmark_runner")
 DUCKDB_SHELL_REL = Path("build/release/duckdb")
+DUCKDB_UNITTEST_REL = Path("build/release/test/unittest")
 DEFAULT_CORRECTNESS_QUERIES = tuple(range(1, 23))
+FINAL_SQLLOGICTEST_FILES = (
+    "test/sql/join/inner/test_join.test",
+    "test/sql/join/inner/test_inner_join_filter_pushdown.test",
+    "test/sql/join/semianti/semijoin.test",
+    "test/sql/filter/test_transitive_filters.test",
+    "test/sql/aggregate/distinct/test_distinct.test",
+)
 
 STRONGLY_ALLOWED_PATTERNS = (
     "src/optimizer/**",
@@ -480,12 +493,15 @@ def _parse_csv_or_list(raw: Any) -> tuple[str, ...]:
     return ()
 
 
-def evaluation_scale_factors() -> tuple[str, ...]:
-    configured = _parse_csv_or_list(EVALUATION_CONFIG.get("scale_factors"))
+def evaluation_scale_factors(*, final_role: bool) -> tuple[str, ...]:
+    config_key = "scale_factors" if final_role else "agent_scale_factors"
+    configured = _parse_csv_or_list(EVALUATION_CONFIG.get(config_key))
     if configured:
         raw_values = configured
-    else:
+    elif final_role:
         raw_values = (PUBLIC_SCALE_FACTOR, *DEFAULT_HIDDEN_SCALE_FACTORS)
+    else:
+        raw_values = (PUBLIC_SCALE_FACTOR,)
     seen: set[str] = set()
     result: list[str] = []
     for value in raw_values:
@@ -522,16 +538,19 @@ def restore_prebuilt_source(source_dir: Path, env: dict[str, str]) -> bool:
     return bool(status_before.strip()) or bool(clean.strip())
 
 
-def build_duckdb(source_dir: Path, env: dict[str, str]) -> None:
+def build_duckdb(source_dir: Path, env: dict[str, str], *, include_unittest: bool = False) -> None:
     build_env = dict(env)
     build_env["GEN"] = "ninja"
     build_env["BUILD_BENCHMARK"] = "1"
     build_env["BUILD_EXTENSIONS"] = "tpch"
-    build_env.setdefault("BUILD_UNITTESTS", "0")
+    build_env.setdefault("BUILD_UNITTESTS", "1" if include_unittest else "0")
     build_env.setdefault("DISABLE_UNITY", "1")
     build_env.setdefault("DISABLE_PARQUET", "1")
     build_env.setdefault("BUILD_JEMALLOC", "0")
     build_env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", "1")
+    targets = ["duckdb", "benchmark_runner"]
+    if include_unittest:
+        targets.append("unittest")
     run_checked(
         [
             "cmake",
@@ -540,8 +559,7 @@ def build_duckdb(source_dir: Path, env: dict[str, str]) -> None:
             "--config",
             "Release",
             "--target",
-            "duckdb",
-            "benchmark_runner",
+            *targets,
         ],
         cwd=source_dir,
         env=build_env,
@@ -563,6 +581,13 @@ def duckdb_shell(source_dir: Path) -> Path:
     return shell
 
 
+def duckdb_unittest(source_dir: Path) -> Path:
+    runner = source_dir / DUCKDB_UNITTEST_REL
+    if not runner.exists():
+        raise FileNotFoundError(f"DuckDB unittest runner not found at {runner}")
+    return runner
+
+
 def benchmark_env(base_env: dict[str, str], tmp_root: Path) -> dict[str, str]:
     env = dict(base_env)
     env["DUCKDB_BENCHMARK_MEMORY_LIMIT"] = DUCKDB_MEMORY_LIMIT
@@ -582,6 +607,30 @@ def settings_sql(temp_dir: Path) -> str:
             "SET preserve_insertion_order = false;",
         )
     )
+
+
+def is_final_submission_role() -> bool:
+    return os.environ.get("FRONTIER_SUBMISSION_ROLE", "agent") == "final"
+
+
+def run_final_sqllogictest_smoke(
+    source_dir: Path,
+    *,
+    env: dict[str, str],
+    metrics: dict[str, Any],
+) -> None:
+    runner = duckdb_unittest(source_dir)
+    start = time.perf_counter()
+    for test_file in FINAL_SQLLOGICTEST_FILES:
+        run_checked(
+            [str(runner), test_file],
+            cwd=source_dir,
+            env=env,
+            timeout=SQLLOGICTEST_TIMEOUT_SECONDS,
+        )
+    metrics["final_sqllogictest"] = 1
+    metrics["final_sqllogictest_count"] = len(FINAL_SQLLOGICTEST_FILES)
+    metrics["final_sqllogictest_seconds"] = round(time.perf_counter() - start, 3)
 
 
 def run_duckdb_sql(
@@ -865,6 +914,8 @@ def safe_failed_command(cmd: Any) -> str:
         return " ".join(str(part) for part in cmd[:3])
     if executable == "cmake":
         return "cmake build"
+    if executable == "unittest":
+        return "duckdb sqllogictest"
     if executable in {"duckdb", "benchmark_runner"}:
         return executable
     return executable or "subprocess"
@@ -877,7 +928,9 @@ def safe_exception(exc: Exception) -> str:
 
 
 def full_evaluation(patch_path: Path, metrics: dict[str, Any]):
-    scale_factors = evaluation_scale_factors()
+    final_role = is_final_submission_role()
+    metrics["submission_role"] = "final" if final_role else "agent"
+    scale_factors = evaluation_scale_factors(final_role=final_role)
     benchmark_queries = benchmark_query_numbers()
     correctness_query_set = correctness_queries()
     correctness_cases = shuffled(
@@ -907,11 +960,13 @@ def full_evaluation(patch_path: Path, metrics: dict[str, Any]):
             metrics["used_prebuilt_empty_patch"] = 1
             if restored_source:
                 metrics["rebuilt_after_source_restore"] = 1
-                build_duckdb(patched_source, env)
+                build_duckdb(patched_source, env, include_unittest=final_role)
+            elif final_role:
+                build_duckdb(patched_source, env, include_unittest=True)
         else:
             run_checked(["git", "apply", "--check", str(patch_path)], cwd=patched_source, env=env, timeout=60)
             run_checked(["git", "apply", str(patch_path)], cwd=patched_source, env=env, timeout=60)
-            build_duckdb(patched_source, env)
+            build_duckdb(patched_source, env, include_unittest=final_role)
 
         vanilla_source = DEFAULT_VANILLA_SOURCE if DEFAULT_VANILLA_SOURCE.exists() else DEFAULT_CLEAN_SOURCE
         mismatches: dict[str, str] = {}
@@ -933,6 +988,9 @@ def full_evaluation(patch_path: Path, metrics: dict[str, Any]):
         if mismatches:
             metrics["correctness_mismatch_count"] = len(mismatches)
             return _invalid("patched DuckDB produced incorrect TPC-H results", metrics)
+
+        if final_role:
+            run_final_sqllogictest_smoke(patched_source, env=env, metrics=metrics)
 
         if USE_BENCHMARK_RUNNER:
             vanilla_runner = benchmark_runner(vanilla_source)

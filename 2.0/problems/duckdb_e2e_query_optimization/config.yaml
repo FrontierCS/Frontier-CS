@@ -36,9 +36,12 @@ environment:
   build_timeout_seconds: 7200
 evaluation:
   scale_factor: 1
+  agent_scale_factors:
+    - 1
   benchmark_repetitions: 3
   build_timeout_seconds: 7200
   query_timeout_seconds: 300
+  sqllogictest_timeout_seconds: 600
   duckdb_memory_limit: "6GB"
   duckdb_temp_limit: "2GB"
   child_memory_mb: 12288
