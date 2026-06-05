@@ -26,6 +26,11 @@ EVALUATORS = (
         ROOT / "2.0" / "problems" / "bboplace_iccad2015" / "evaluator.py",
         None,
     ),
+    (
+        "iccad2015",
+        ROOT / "2.0" / "problems" / "bboplace_iccad2015_superblue1" / "evaluator.py",
+        ["superblue1"],
+    ),
 )
 
 

@@ -57,6 +57,14 @@ candidate format, CPU-only evaluator, MP-HPWL metric, relaxed MGO baselines,
 and quick-versus-final evaluation flow as `bboplace_ispd2005`, but scores the
 ICCAD2015 benchmark set.
 
+## BBOPlace ICCAD2015 Superblue1
+
+This single-instance ICCAD2015 variant scores only `superblue1` while keeping
+the same Python `solve(info)` candidate interface as the full ICCAD2015 suite.
+Its problem ID is `bboplace_iccad2015_superblue1`. Both iterative feedback and
+final verification evaluate the same design, mirroring
+`bboplace_ispd2005_adaptec1`.
+
 ## BBOPlace Direct ISPD2005
 
 This direct-placement variant asks agents to submit one JSON placement for a

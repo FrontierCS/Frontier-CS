@@ -69,7 +69,7 @@ Runtime and resources
 
 Your solution runs in the main agent container with:
 
-- 8 CPU cores
+- 4 CPU cores
 - 16 GiB memory
 - 8 GiB storage
 - no GPU

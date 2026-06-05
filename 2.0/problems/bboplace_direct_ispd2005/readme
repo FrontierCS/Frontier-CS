@@ -79,7 +79,7 @@ overwrite `/app/solution.json` many times.
 
 The agent container provides:
 
-- 8 CPU cores
+- 4 CPU cores
 - 16 GiB memory
 - 8 GiB storage
 - no GPU

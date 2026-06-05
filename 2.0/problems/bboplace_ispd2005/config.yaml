@@ -11,7 +11,7 @@ runtime:
     image: ubuntu:24.04
     judge_image: ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad
 environment:
-  cpus: 8
+  cpus: 4
   memory_mb: 16384
   storage_mb: 8192
   build_timeout_seconds: 3600

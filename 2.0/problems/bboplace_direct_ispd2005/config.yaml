@@ -12,7 +12,7 @@ submission:
   kind: file
   path: /app/solution.json
 environment:
-  cpus: 8
+  cpus: 4
   memory_mb: 16384
   storage_mb: 8192
   build_timeout_seconds: 3600

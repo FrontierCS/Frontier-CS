@@ -18,6 +18,11 @@ EXPECTED_TASKS = {
         "submission_path": "/app/solution.py",
         "required_text": "quick-feedback score is never used directly",
     },
+    "frontier-cs-2-0-bboplace-iccad2015-superblue1": {
+        "candidate_limit": 16,
+        "submission_path": "/app/solution.py",
+        "required_text": "The final score is the `superblue1` score",
+    },
     "frontier-cs-2-0-bboplace-direct-ispd2005": {
         "candidate_limit": 1,
         "submission_path": "/app/solution.json",
@@ -69,6 +74,7 @@ def check_task(task_dir: Path, expected: dict[str, object]) -> None:
     require("no GPU" in instruction, f"{task_dir.name}: missing no-GPU statement")
     require(
         f"`max_candidates_per_submission`: {expected['candidate_limit']}" in instruction
+        or f"max_candidates_per_submission: {expected['candidate_limit']}" in instruction
         or f"Only one placement is accepted" in instruction,
         f"{task_dir.name}: candidate limit should be {expected['candidate_limit']}",
     )
