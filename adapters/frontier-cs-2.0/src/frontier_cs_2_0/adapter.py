@@ -217,6 +217,12 @@ class FrontierCS20Adapter:
                 "{extra_apt_install}", extra_apt_install
             ).replace(
                 "{extra_pip_install}", extra_pip_install
+            ).replace(
+                "{visible_input_stages}",
+                self._visible_input_stages(problem, default_image=judge_image),
+            ).replace(
+                "{visible_input_copies}",
+                self._visible_input_copies(problem),
             ),
             encoding="utf-8",
         )
@@ -234,7 +240,14 @@ class FrontierCS20Adapter:
         generated_harbor_app_dir.mkdir(parents=True, exist_ok=True)
         if harbor_app_dir.exists():
             shutil.copytree(
-                harbor_app_dir, generated_harbor_app_dir, dirs_exist_ok=True
+                harbor_app_dir,
+                generated_harbor_app_dir,
+                dirs_exist_ok=True,
+                ignore=(
+                    shutil.ignore_patterns("input")
+                    if self._visible_inputs(problem)
+                    else None
+                ),
             )
 
         judge_dockerfile = (
@@ -299,6 +312,55 @@ class FrontierCS20Adapter:
         (env_dir / "submission_config.json").write_text(
             json.dumps(submission, indent=2), encoding="utf-8"
         )
+
+    def _visible_inputs(self, problem: FrontierCS20Problem) -> list[dict[str, str]]:
+        runtime = problem.config.get("runtime", {}) or {}
+        entries = runtime.get("visible_inputs", []) or []
+        if not isinstance(entries, list):
+            raise TypeError(f"{problem.problem_id}: runtime.visible_inputs must be a list")
+        normalized: list[dict[str, str]] = []
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise TypeError(
+                    f"{problem.problem_id}: runtime.visible_inputs[{index}] must be a mapping"
+                )
+            source = str(entry.get("source") or entry.get("from_image_path") or "")
+            destination = str(entry.get("destination") or entry.get("to_app_path") or "")
+            image = str(entry.get("image") or entry.get("from_image") or "")
+            if not source.startswith("/") or not destination.startswith("/"):
+                raise ValueError(
+                    f"{problem.problem_id}: visible input paths must be absolute"
+                )
+            for value in (source, destination, image):
+                if value and any(ch.isspace() for ch in value):
+                    raise ValueError(
+                        f"{problem.problem_id}: visible input values may not contain whitespace"
+                    )
+            normalized.append(
+                {"source": source, "destination": destination, "image": image}
+            )
+        return normalized
+
+    def _visible_input_stages(
+        self, problem: FrontierCS20Problem, *, default_image: str
+    ) -> str:
+        lines: list[str] = []
+        for index, entry in enumerate(self._visible_inputs(problem)):
+            image = entry["image"] or default_image
+            lines.append(f"FROM {image} AS visible_input_{index}\n")
+        return "".join(lines)
+
+    def _visible_input_copies(self, problem: FrontierCS20Problem) -> str:
+        lines: list[str] = []
+        for index, entry in enumerate(self._visible_inputs(problem)):
+            lines.append(
+                "COPY --from=visible_input_{index} {source} {destination}\n".format(
+                    index=index,
+                    source=entry["source"],
+                    destination=entry["destination"],
+                )
+            )
+        return "".join(lines)
 
     def _write_tests(
         self,

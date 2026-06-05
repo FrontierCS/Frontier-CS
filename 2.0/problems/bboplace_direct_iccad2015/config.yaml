@@ -8,6 +8,9 @@ runtime:
   docker:
     image: ubuntu:24.04
     judge_image: ghcr.io/frontiercs/frontiercs-bboplace-data:2026-06-ispd-iccad
+  visible_inputs:
+    - source: /opt/bboplace-bench/benchmarks/iccad2015/superblue1
+      destination: /app/input/benchmarks/iccad2015/superblue1
 submission:
   kind: file
   path: /app/solution.json

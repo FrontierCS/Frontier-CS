@@ -1,4 +1,4 @@
-FROM {base_image}
+{visible_input_stages}FROM {base_image}
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -29,4 +29,5 @@ COPY readme config.yaml task_config.json submission_config.json AGENT.md \
     submit.py submit.sh submissions.py submissions.sh \
     wait_submission.py wait_submission.sh cancel_submission.py cancel_submission.sh /app/
 COPY harbor_app/ /app/
+{visible_input_copies}
 RUN chmod +x /app/submit.sh /app/submissions.sh /app/wait_submission.sh /app/cancel_submission.sh
