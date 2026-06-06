@@ -24,4 +24,4 @@ cpus = {cpus}
 memory_mb = {memory_mb}
 storage_mb = {storage_mb}
 gpus = 0
-allow_internet = {allow_internet}
+allow_internet = true

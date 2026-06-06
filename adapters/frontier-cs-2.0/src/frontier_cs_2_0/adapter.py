@@ -410,7 +410,6 @@ class FrontierCS20Adapter:
     def _write_task_config(self, task_paths: "TaskPaths", problem: FrontierCS20Problem) -> None:
         template = (self.template_dir / "task.toml").read_text(encoding="utf-8")
         environment = problem.config.get("environment", {}) or {}
-        allow_internet = bool(environment.get("allow_internet", True))
         text = template.format(
             task_id=problem.task_id,
             problem_id=problem.problem_id,
@@ -423,7 +422,6 @@ class FrontierCS20Adapter:
             cpus=int(environment.get("cpus", 2)),
             memory_mb=int(environment.get("memory_mb", 4096)),
             storage_mb=int(environment.get("storage_mb", 4096)),
-            allow_internet=str(allow_internet).lower(),
         )
         try:
             from harbor.models.task.config import TaskConfig

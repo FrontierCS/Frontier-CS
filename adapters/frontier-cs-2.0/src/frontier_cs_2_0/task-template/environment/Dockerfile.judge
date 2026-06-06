@@ -1,12 +1,6 @@
 FROM {base_image}
 
-RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do \
-        [ -f "$f" ] || continue; \
-        if grep -q "developer.download.nvidia.com/compute/cuda" "$f"; then \
-            sed -i 's|^[[:space:]]*deb |# disabled stale cuda repo: deb |' "$f"; \
-        fi; \
-    done && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 ca-certificates {judge_apt_packages_line} && \
     {judge_pip_install} \
     rm -rf /var/lib/apt/lists/*
