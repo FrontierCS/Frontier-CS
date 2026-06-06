@@ -18,11 +18,6 @@ EXPECTED_TASKS = {
         "submission_path": "/app/solution.py",
         "required_text": "quick-feedback score is never used directly",
     },
-    "frontier-cs-2-0-bboplace-iccad2015-superblue1": {
-        "candidate_limit": 16,
-        "submission_path": "/app/solution.py",
-        "required_text": "The final score is the `superblue1` score",
-    },
     "frontier-cs-2-0-bboplace-direct-ispd2005": {
         "candidate_limit": 1,
         "submission_path": "/app/solution.json",
