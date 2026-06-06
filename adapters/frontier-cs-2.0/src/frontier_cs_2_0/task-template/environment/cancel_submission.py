@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cancel a queued Frontier-CS 2.0 async submission."""
+"""Cancel a queued or running Frontier-CS 2.0 async submission."""
 
 from __future__ import annotations
 

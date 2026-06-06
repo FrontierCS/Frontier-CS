@@ -8,6 +8,8 @@ import json
 import os
 import sys
 import base64
+import multiprocessing
+import signal
 import tarfile
 import tempfile
 import io
@@ -17,6 +19,7 @@ import threading
 import secrets
 import uuid
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -94,6 +97,19 @@ SUBMISSION_PAYLOADS: dict[str, dict[str, Any]] = {}
 SUBMISSION_RECORDS: dict[str, dict[str, Any]] = {}
 SUBMISSION_ORDER: list[str] = []
 EVALUATION_LOCK = threading.Lock()
+
+
+@dataclass
+class RunningSubmission:
+    process: multiprocessing.Process
+    started_at: float
+
+
+class SubmissionCancelled(Exception):
+    pass
+
+
+RUNNING_SUBMISSIONS: dict[str, RunningSubmission] = {}
 
 
 def now_iso() -> str:
@@ -331,15 +347,138 @@ def validate_payload(payload: dict[str, Any], *, allow_final: bool, role_token: 
     return submission_uuid, submission_role, submission_kind
 
 
+def evaluate_payload_direct(payload: dict[str, Any], *, submission_role: str) -> dict[str, Any]:
+    submission_kind = str(payload.get("submission_kind", "file"))
+    if submission_kind == "directory":
+        return evaluate_archive(str(payload.get("archive_b64")), submission_role=submission_role)
+    return evaluate_code(str(payload.get("code")), submission_role=submission_role)
+
+
 def run_payload(payload: dict[str, Any], *, submission_role: str) -> dict[str, Any]:
     acquired = EVALUATION_LOCK.acquire(timeout=EVALUATION_LOCK_TIMEOUT_SECONDS)
     if not acquired:
         raise TimeoutError("timed out waiting for evaluator lock")
     try:
-        submission_kind = str(payload.get("submission_kind", "file"))
-        if submission_kind == "directory":
-            return evaluate_archive(str(payload.get("archive_b64")), submission_role=submission_role)
-        return evaluate_code(str(payload.get("code")), submission_role=submission_role)
+        return evaluate_payload_direct(payload, submission_role=submission_role)
+    finally:
+        EVALUATION_LOCK.release()
+
+
+def _async_evaluate_child(
+    payload: dict[str, Any],
+    submission_role: str,
+    result_path: str,
+) -> None:
+    if os.name == "posix":
+        try:
+            os.setsid()
+        except OSError:
+            pass
+    try:
+        result = evaluate_payload_direct(payload, submission_role=submission_role)
+        output = {"ok": True, "result": result}
+    except BaseException:
+        output = {"ok": False, "detail": traceback.format_exc()}
+    Path(result_path).write_text(json.dumps(output, ensure_ascii=False), encoding="utf-8")
+
+
+def terminate_process_group(process: multiprocessing.Process) -> None:
+    if not process.is_alive():
+        return
+
+    if os.name == "posix" and process.pid:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.terminate()
+    else:
+        process.terminate()
+
+    process.join(timeout=5)
+    if not process.is_alive():
+        return
+
+    if os.name == "posix" and process.pid:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.kill()
+    else:
+        process.kill()
+    process.join(timeout=5)
+
+
+def submission_is_cancelling(submission_uuid: str) -> bool:
+    with SUBMISSION_LOCK:
+        status = SUBMISSION_RECORDS.get(submission_uuid, {}).get("status")
+    return status in {"cancelling", "cancelled"}
+
+
+def run_async_payload(
+    submission_uuid: str,
+    payload: dict[str, Any],
+    *,
+    submission_role: str,
+) -> dict[str, Any]:
+    acquired = EVALUATION_LOCK.acquire(timeout=EVALUATION_LOCK_TIMEOUT_SECONDS)
+    if not acquired:
+        raise TimeoutError("timed out waiting for evaluator lock")
+    try:
+        if submission_is_cancelling(submission_uuid):
+            raise SubmissionCancelled()
+
+        ctx = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory(prefix="frontier_cs_2_0_async_result_") as tmp:
+            result_path = Path(tmp) / "result.json"
+            process = ctx.Process(
+                target=_async_evaluate_child,
+                args=(payload, submission_role, str(result_path)),
+            )
+            process.start()
+            should_cancel = False
+            with SUBMISSION_CONDITION:
+                RUNNING_SUBMISSIONS[submission_uuid] = RunningSubmission(
+                    process=process,
+                    started_at=time.time(),
+                )
+                if submission_is_cancelling(submission_uuid):
+                    should_cancel = True
+                else:
+                    update_submission_record(submission_uuid, {"status": "running"})
+                SUBMISSION_CONDITION.notify()
+            if should_cancel:
+                terminate_process_group(process)
+                raise SubmissionCancelled()
+
+            try:
+                while process.is_alive():
+                    process.join(timeout=0.2)
+                    if submission_is_cancelling(submission_uuid):
+                        terminate_process_group(process)
+                        raise SubmissionCancelled()
+
+                if submission_is_cancelling(submission_uuid):
+                    raise SubmissionCancelled()
+                if not result_path.exists():
+                    raise RuntimeError(
+                        f"evaluation process exited without a result (exitcode={process.exitcode})"
+                    )
+                output = json.loads(result_path.read_text(encoding="utf-8"))
+                if not isinstance(output, dict):
+                    raise RuntimeError("evaluation process returned invalid output")
+                if not output.get("ok"):
+                    raise RuntimeError(str(output.get("detail") or "evaluation failed"))
+                result = output.get("result")
+                if not isinstance(result, dict):
+                    raise RuntimeError("evaluation process returned invalid result")
+                return result
+            finally:
+                with SUBMISSION_LOCK:
+                    RUNNING_SUBMISSIONS.pop(submission_uuid, None)
     finally:
         EVALUATION_LOCK.release()
 
@@ -348,7 +487,7 @@ def queue_size() -> int:
     return sum(
         1
         for record in SUBMISSION_RECORDS.values()
-        if record.get("status") in {"queued", "running"}
+        if record.get("status") in {"queued", "running", "cancelling"}
     )
 
 
@@ -374,10 +513,9 @@ def submission_worker() -> None:
             )
             continue
 
-        update_submission_record(submission_uuid, {"status": "running"})
         started = time.time()
         try:
-            result = run_payload(payload, submission_role="agent")
+            result = run_async_payload(submission_uuid, payload, submission_role="agent")
             elapsed = time.time() - started
             record = update_submission_record(
                 submission_uuid,
@@ -391,6 +529,22 @@ def submission_worker() -> None:
                 },
             )
             save_best_submission(payload, record)
+        except SubmissionCancelled:
+            elapsed = time.time() - started
+            with SUBMISSION_LOCK:
+                record = SUBMISSION_RECORDS.get(submission_uuid, {})
+                already_cancelled = record.get("status") == "cancelled"
+            if not already_cancelled:
+                update_submission_record(
+                    submission_uuid,
+                    {
+                        "status": "cancelled",
+                        "score": 0.0,
+                        "score_unbounded": 0.0,
+                        "message": "evaluation cancelled",
+                        "elapsed_seconds": elapsed,
+                    },
+                )
         except Exception:
             detail = traceback.format_exc()
             print(detail, flush=True)
@@ -638,24 +792,66 @@ class JudgeHandler(BaseHTTPRequestHandler):
             self._write_json(400, {"status": "error", "error": str(exc)})
 
     def handle_cancel(self, submission_uuid: str) -> None:
+        running: RunningSubmission | None = None
         with SUBMISSION_CONDITION:
             record = SUBMISSION_RECORDS.get(submission_uuid)
             if record is None:
                 self._write_json(404, {"status": "error", "error": "submission not found"})
                 return
-            if record.get("status") != "queued":
+            current_status = record.get("status")
+            if current_status == "cancelled":
+                self._write_json(200, {"status": "cancelled", "submission_uuid": submission_uuid})
+                return
+            if current_status == "queued":
+                update_submission_record(submission_uuid, {"status": "cancelled"})
+                SUBMISSION_PAYLOADS.pop(submission_uuid, None)
+                SUBMISSION_CONDITION.notify()
+                self._write_json(200, {"status": "cancelled", "submission_uuid": submission_uuid})
+                return
+            if current_status in {"running", "cancelling"}:
+                running = RUNNING_SUBMISSIONS.get(submission_uuid)
+                if running is None:
+                    self._write_json(
+                        409,
+                        {
+                            "status": "error",
+                            "error": "running submission process is no longer cancellable",
+                            "submission": record,
+                        },
+                    )
+                    return
+                if current_status != "cancelling":
+                    update_submission_record(
+                        submission_uuid,
+                        {"status": "cancelling", "message": "cancellation requested"},
+                    )
+                SUBMISSION_CONDITION.notify()
+            else:
                 self._write_json(
                     409,
                     {
                         "status": "error",
-                        "error": "only queued submissions can be cancelled",
+                        "error": "only queued or running submissions can be cancelled",
                         "submission": record,
                     },
                 )
                 return
-            update_submission_record(submission_uuid, {"status": "cancelled"})
-            SUBMISSION_PAYLOADS.pop(submission_uuid, None)
-            SUBMISSION_CONDITION.notify()
+
+        if running is not None:
+            terminate_process_group(running.process)
+            with SUBMISSION_CONDITION:
+                update_submission_record(
+                    submission_uuid,
+                    {
+                        "status": "cancelled",
+                        "score": 0.0,
+                        "score_unbounded": 0.0,
+                        "message": "running evaluation cancelled",
+                        "elapsed_seconds": time.time() - running.started_at,
+                    },
+                )
+                SUBMISSION_PAYLOADS.pop(submission_uuid, None)
+                SUBMISSION_CONDITION.notify()
         self._write_json(200, {"status": "cancelled", "submission_uuid": submission_uuid})
 
     def log_message(self, fmt: str, *args: object) -> None:

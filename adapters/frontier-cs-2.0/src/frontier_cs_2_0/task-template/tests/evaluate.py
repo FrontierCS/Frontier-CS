@@ -216,7 +216,7 @@ def wait_for_async_submissions() -> None:
             record
             for record in records
             if record.get("submission_role", "agent") == "agent"
-            and record.get("status") in {"queued", "running"}
+            and record.get("status") in {"queued", "running", "cancelling"}
         ]
         if not pending:
             return
