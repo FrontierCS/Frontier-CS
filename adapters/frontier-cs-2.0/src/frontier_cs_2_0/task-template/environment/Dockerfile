@@ -30,4 +30,16 @@ COPY readme config.yaml task_config.json submission_config.json AGENT.md \
     wait_submission.py wait_submission.sh cancel_submission.py cancel_submission.sh /app/
 COPY harbor_app/ /app/
 {visible_input_copies}
+RUN if command -v git >/dev/null 2>&1; then \
+        find /app -mindepth 2 -maxdepth 4 -type d -name .git -print | \
+        while read -r gitdir; do \
+            repo="$(dirname "$gitdir")"; \
+            git -C "$repo" config user.email frontier-cs@example.invalid; \
+            git -C "$repo" config user.name "Frontier-CS"; \
+            git -C "$repo" add -A; \
+            if ! git -C "$repo" diff --cached --quiet; then \
+                git -C "$repo" commit -q --amend --no-edit || git -C "$repo" commit -q -m base; \
+            fi; \
+        done; \
+    fi
 RUN chmod +x /app/submit.sh /app/submissions.sh /app/wait_submission.sh /app/cancel_submission.sh
