@@ -34,48 +34,9 @@ JUDGE_TIMEOUT_SECONDS = int(os.environ.get("JUDGE_TIMEOUT_SECONDS", "10800"))
 FINAL_ROLE_TOKEN = "{verifier_token}"
 
 
-def submission_reward(record: dict) -> float | None:
-    try:
-        return float(record.get("score", 0.0)) / 100.0
-    except (TypeError, ValueError):
-        return None
-
-
 def result_score_key(record: dict) -> tuple[float, float]:
     score = float(record.get("score", 0.0))
     return (score, float(record.get("score_unbounded", score)))
-
-
-def best_submission() -> dict | None:
-    submissions_log = (
-        VERIFIER_SUBMISSIONS_LOG
-        if VERIFIER_SUBMISSIONS_LOG.exists()
-        else JUDGE_SUBMISSIONS_LOG
-    )
-    if not submissions_log.exists():
-        return None
-
-    best: dict | None = None
-    for line in submissions_log.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-            reward = submission_reward(record)
-            if reward is None:
-                continue
-        except json.JSONDecodeError:
-            continue
-        if record.get("submission_role", "agent") != "agent":
-            continue
-        if record.get("status") != "done":
-            continue
-        metrics = record.get("metrics", {})
-        if isinstance(metrics, dict) and metrics.get("evaluation_scope") == "quick_feedback":
-            continue
-        if best is None or result_score_key(record) > result_score_key(best):
-            best = record
-    return best
 
 
 def write_reward(reward: float, detail: str = "", extra: dict | None = None) -> None:
@@ -391,7 +352,8 @@ def main() -> None:
                 return
             write_reward(0.0, f"{solution_path} not found")
             return
-        if solution_path.is_file() and not solution_path.read_text(encoding="utf-8").strip():
+        allow_empty = bool(config.get("allow_empty", False))
+        if solution_path.is_file() and not allow_empty and not solution_path.read_text(encoding="utf-8").strip():
             print(f"ERROR: {solution_path} is empty")
             if try_write_best_final_result(f"{solution_path} is empty"):
                 return

@@ -39,6 +39,14 @@ This variant keeps the same SIFT1M-scale service contract and recall target as
 offline indexing strategies are more viable. Its problem ID is
 `vector_db_ann_relaxed`.
 
+## Generals.io Bot Arena
+
+This game-playing problem asks agents to improve a patch-based bot for a local
+Generals.io-style simulator. Its problem ID is `generals_io_bot`. The judge
+applies the submitted patch to a clean skeleton, runs a hidden arena against
+multiple baseline bot families, and scores by mean baseline win rate with a
+small faster-win tiebreak. The online generals.io service is not used.
+
 ## BBOPlace ISPD2005
 
 This VLSI placement problem asks agents to generate macro placement candidates

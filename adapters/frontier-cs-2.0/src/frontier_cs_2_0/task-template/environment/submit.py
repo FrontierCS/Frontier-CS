@@ -148,6 +148,7 @@ def main() -> int:
     default_path = str(config.get("path") or SOLUTION_PATH)
     solution_path = Path(sys.argv[1] if len(sys.argv) > 1 else default_path)
     exclude = list(config.get("exclude", []) or [])
+    allow_empty = bool(config.get("allow_empty", False))
     sub_uuid = str(uuid.uuid4())
     code_chars = 0
     file_count = 0
@@ -208,7 +209,7 @@ def main() -> int:
     else:
         code = solution_path.read_text(encoding="utf-8")
         code_chars = len(code)
-        if not code.strip():
+        if not allow_empty and not code.strip():
             msg = f"Solution file {solution_path} is empty"
             print(f"[submit] ERROR: {msg}", file=sys.stderr)
             log_record(

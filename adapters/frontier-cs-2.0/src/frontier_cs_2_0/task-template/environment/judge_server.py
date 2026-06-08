@@ -72,6 +72,28 @@ def configured_max_queue_size() -> int:
     return DEFAULT_MAX_QUEUE_SIZE
 
 
+def configured_allow_empty_submission() -> bool:
+    config = load_task_config()
+    submission = config.get("submission", {})
+    return bool(isinstance(submission, dict) and submission.get("allow_empty"))
+
+
+def configured_async_start_method() -> str:
+    config = load_task_config()
+    evaluation = config.get("evaluation", {})
+    configured = None
+    if isinstance(evaluation, dict):
+        configured = evaluation.get("async_start_method")
+    method = str(
+        os.environ.get("FRONTIER_ASYNC_EVAL_START_METHOD")
+        or configured
+        or "fork"
+    )
+    if method not in multiprocessing.get_all_start_methods():
+        return "fork"
+    return method
+
+
 MAX_QUEUE_SIZE = configured_max_queue_size()
 
 
@@ -341,7 +363,7 @@ def validate_payload(payload: dict[str, Any], *, allow_final: bool, role_token: 
             raise ValueError("directory submission must include archive_b64")
     else:
         code = payload.get("code")
-        if not isinstance(code, str) or not code.strip():
+        if not isinstance(code, str) or (not configured_allow_empty_submission() and not code.strip()):
             raise ValueError("file submission must include non-empty string field 'code'")
         submission_kind = "file"
     return submission_uuid, submission_role, submission_kind
@@ -359,7 +381,34 @@ def run_payload(payload: dict[str, Any], *, submission_role: str) -> dict[str, A
     if not acquired:
         raise TimeoutError("timed out waiting for evaluator lock")
     try:
-        return evaluate_payload_direct(payload, submission_role=submission_role)
+        ctx = multiprocessing.get_context(configured_async_start_method())
+        with tempfile.TemporaryDirectory(prefix="frontier_cs_2_0_final_result_") as tmp:
+            result_path = Path(tmp) / "result.json"
+            process = ctx.Process(
+                target=_async_evaluate_child,
+                args=(payload, submission_role, str(result_path)),
+            )
+            process.start()
+            deadline = time.time() + EVALUATION_LOCK_TIMEOUT_SECONDS
+            while process.is_alive():
+                process.join(timeout=0.2)
+                if time.time() >= deadline:
+                    terminate_process_group(process)
+                    raise TimeoutError("final evaluation timed out")
+
+            if not result_path.exists():
+                raise RuntimeError(
+                    f"evaluation process exited without a result (exitcode={process.exitcode})"
+                )
+            output = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(output, dict):
+                raise RuntimeError("evaluation process returned invalid output")
+            if not output.get("ok"):
+                raise RuntimeError(str(output.get("detail") or "evaluation failed"))
+            result = output.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError("evaluation process returned invalid result")
+            return result
     finally:
         EVALUATION_LOCK.release()
 
@@ -369,12 +418,15 @@ def _async_evaluate_child(
     submission_role: str,
     result_path: str,
 ) -> None:
+    global EVALUATOR
     if os.name == "posix":
         try:
             os.setsid()
         except OSError:
             pass
     try:
+        if EVALUATOR is None:
+            EVALUATOR = load_problem_evaluator()
         result = evaluate_payload_direct(payload, submission_role=submission_role)
         output = {"ok": True, "result": result}
     except BaseException:
@@ -390,7 +442,7 @@ def terminate_process_group(process: multiprocessing.Process) -> None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            process.terminate()
         except OSError:
             process.terminate()
     else:
@@ -404,7 +456,7 @@ def terminate_process_group(process: multiprocessing.Process) -> None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            process.kill()
         except OSError:
             process.kill()
     else:
@@ -431,7 +483,7 @@ def run_async_payload(
         if submission_is_cancelling(submission_uuid):
             raise SubmissionCancelled()
 
-        ctx = multiprocessing.get_context("fork")
+        ctx = multiprocessing.get_context(configured_async_start_method())
         with tempfile.TemporaryDirectory(prefix="frontier_cs_2_0_async_result_") as tmp:
             result_path = Path(tmp) / "result.json"
             process = ctx.Process(
