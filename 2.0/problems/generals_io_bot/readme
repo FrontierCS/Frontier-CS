@@ -1,13 +1,19 @@
 # Generals.io Bot Arena
 
+![Generals.io gameplay](https://raw.githubusercontent.com/strakam/generals-bots/master/generals/assets/gifs/wider_gameplay.gif)
+
+Image credit: `strakam/generals-bots`, MIT license.
+
 ## Problem
 
 Implement a bot for a local Generals.io-style arena. Your bot plays repeated
 two-player games against fixed baseline bots in the `generals-bots` simulator.
 
-Each game is played on a square grid with fog of war. A player wins by capturing
-the opponent's general. If no general is captured before the truncation limit,
-the game is scored as a draw for win-rate purposes.
+Your goal is simple: protect your own general and capture the opponent's
+general as often and as quickly as possible.
+
+Each game is played on a square grid with fog of war. If no general is captured
+before the truncation limit, the game is scored as a draw for win-rate purposes.
 
 The environment is the local `generals-bots` simulator, not the online
 generals.io service. Each turn your bot receives an observation containing:
@@ -18,11 +24,30 @@ opponent_cells, fog_cells, structures_in_fog, owned/opponent land and army
 counts, and timestep
 ```
 
-Fog hides cells outside the visibility radius around your territory. Mountains
-are impassable. Cities and generals produce armies over time. A valid move sends
-army from one owned cell to an adjacent passable cell; moving into enemy or
-neutral territory captures it only when the moving army is larger than the
-defending army.
+## Game Rules
+
+The arena follows the local `generals-bots` simulator rules:
+
+- The grid contains passable empty cells, impassable mountains, neutral cities,
+  and one general per player.
+- You see every cell in the 3x3 neighborhood around your owned cells. Other
+  cells are fogged. Cities and mountains in fog may appear as
+  `structures_in_fog` obstacles.
+- Each turn both players choose one action. An action is either pass or move
+  from one owned source cell to one adjacent passable destination cell.
+- A non-split move sends `source_army - 1` armies and leaves one army behind.
+  A split move sends `source_army // 2` armies. Moves from cells with one army
+  are invalid and become no-ops.
+- Moving into your own cell reinforces it. Moving into neutral or enemy
+  territory is an attack. The attack captures the destination only when the
+  moving army is strictly larger than the defending army; the remaining army is
+  the absolute difference.
+- Capturing the enemy general immediately wins the game.
+- Army growth is deterministic: every owned cell gains one army when
+  `timestep % 50 == 0`, and owned generals/cities gain one army when
+  `timestep % 2 == 1`.
+- The default task setting uses 10x10 maps, truncates at 180 turns, and runs
+  one game per baseline matchup for quick iteration.
 
 ## Submission
 
