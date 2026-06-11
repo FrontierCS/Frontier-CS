@@ -1,0 +1,155 @@
+# Vector DB ANN Disk
+
+## Problem
+
+Build a fast approximate nearest-neighbor vector search engine for a
+SIFT100M-scale benchmark.
+
+The hidden benchmark contains exactly `100,000,000` base vectors with dimension
+`128`. Queries use the same dimension, distance is squared Euclidean distance,
+and each query asks for the top `10` nearest vector ids.
+
+The benchmark provides a pre-built graph index generated using the [DiskANN](https://github.com/microsoft/diskann)
+construction algorithm. The graph has maximum degree `64` and is stored on
+disk. Your objective is to maximize serving throughput while preserving search
+quality: submissions must reach `recall@10 >= 0.95`, and valid submissions are
+ranked by query throughput.
+
+The Harbor agent container starts with a small Rust skeleton project in
+`/app`. You may use it, modify it, or replace it entirely. You may also use any
+Rust crates, internal harness, data structures, and build layout you want, as
+long as the final project satisfies the judge contract below.
+
+The judge builds and runs your service with:
+
+```bash
+cargo build --release
+PORT=<port> cargo run --release --quiet
+```
+
+The Harbor environment uses the Ubuntu `apt` Rust toolchain:
+
+```text
+rustc 1.75
+cargo 1.75
+```
+
+If you add crates, choose versions compatible with this toolchain or pin
+transitive dependencies accordingly.
+
+The service and judge run with the task resource limits below. Design your
+search strategy for this budget:
+
+```text
+vCPUs: 8
+memory: 8 GiB
+query concurrency: 8
+timed queries per worker: 64
+```
+
+The graph and vector data may be substantially larger than the available
+memory. Submissions may load any information they deem useful into memory
+during the load phase, subject to the memory limit above.
+
+The load phase is executed once before queries begin and must complete within:
+
+```text
+600 seconds
+```
+
+The service must listen on `PORT` and implement these endpoints:
+
+```text
+POST /load
+POST /search
+```
+
+`/load` receives:
+
+```json
+{
+    "graph_path":"graph.bin",
+    "vector_path":"vectors.bin"
+}
+```
+
+and returns:
+
+```json
+{
+    "status":"ok"
+}
+```
+
+`/search` receives:
+
+```json
+{"vector":[0.1,0.2,...],"top_k":10}
+```
+
+and returns:
+
+```json
+{"results":[{"id":0,"distance":0.0}]}
+```
+
+## Local Harness
+
+The official evaluator uses hidden data and a black-box judge. You may call:
+
+```bash
+bash /app/submit.sh
+```
+
+at any time to submit the current `/app` project to the official judge and get
+score feedback.
+
+## Validity
+
+A submission is valid if:
+
+1. It builds successfully with `cargo build --release`.
+2. `cargo run --release --quiet` starts the service and implements the required HTTP
+   endpoints.
+3. Every returned id is in `[0, 100_000_000)`.
+4. Its `recall@10` is at least `0.95` against the hidden exact top-10 ground
+   truth.
+5. The `/load` phase completes within `600` seconds.
+
+## Scoring
+
+At trial startup, the Harbor judge sidecar prepares the hidden benchmark and
+runs a reference HTTP service through the same `/load` and `/search`
+client harnesses to produce ground-truth nearest neighbors and the trial-local
+scoring baseline:
+
+```text
+baseline_qps
+```
+
+Each submission is then timed independently.
+
+The load phase consists of a single `/load` call. Any preprocessing performed
+during `/load` must complete within the timeout above.
+
+After the load phase completes, the query phase uses 8 concurrent workers, each
+issuing 64 queries, and measures only `/search` throughput:
+
+```text
+candidate_qps
+```
+
+The reported `qps` is the raw query-only QPS.
+
+If the submission is invalid, if `recall@10 < 0.95`, or if
+`candidate_qps <= baseline_qps`, the score is `0`.
+
+Otherwise:
+
+```text
+score = 100 * (1 - sqrt(baseline_qps) / sqrt(candidate_qps))
+```
+
+The bounded and unbounded score fields both report this score. Harbor JSON
+results include the measured `qps`, `baseline_qps`, `recall_at_10`, load time,
+and runtime metrics under the `metrics` field.
