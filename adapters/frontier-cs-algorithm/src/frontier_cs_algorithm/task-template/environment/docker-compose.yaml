@@ -2,15 +2,49 @@ services:
   main:
     depends_on:
       judge:
-        condition: service_started
+        condition: service_healthy
     environment:
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
       PROBLEM_ID: "{problem_id}"
-      JUDGE_URL: "http://judge:8081"
+      JUDGE_URL: "http://judge:8082"
     volumes:
 {main_volumes}
+    networks:
+      - agent_net
 
   judge:
+    image: "python:3.12-slim"
+    depends_on:
+      judge-engine:
+        condition: service_started
+    command: ["python3", "/judge/judge_proxy.py"]
+    expose:
+      - "8082"
+    environment:
+      PORT: "8082"
+      PROBLEM_ID: "{problem_id}"
+      JUDGE_ENGINE_URL: "http://judge-engine:8081"
+      MAX_POLL_TIME: "{max_poll_time}"
+    volumes:
+      - ./judge_proxy.py:/judge/judge_proxy.py:ro
+      - ${{HOST_ARTIFACTS_PATH}}/judge/proxy:/logs/judge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 360
+      start_period: 5s
+    networks:
+      - agent_net
+      - judge_net
+
+  judge-engine:
 {judge_source}
     privileged: true
     shm_size: "4g"
@@ -26,3 +60,10 @@ services:
       SAVE_OUTPUTS: "false"
     volumes:
 {judge_volumes}
+    networks:
+      - judge_net
+
+networks:
+  agent_net:
+  judge_net:
+    internal: true
