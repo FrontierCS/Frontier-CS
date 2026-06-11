@@ -368,7 +368,7 @@ export class JudgeEngine {
             const finalScoreUnbounded = problem.cases.length > 0 ? (totalScoreUnbounded / problem.cases.length) * 100 : 0;
 
             // Remap individual case statuses based on scoreRatio
-            const finalCases = caseResults.map(caseResult => ({
+            const finalCases = caseResults.map(({ msg, output, ...caseResult }) => ({
                 ...caseResult,
                 status: caseResult.scoreRatio === 1.0 ? 'Correct' : 'Wrong Answer'
             }));
@@ -458,7 +458,7 @@ export class JudgeEngine {
             const finalScoreUnbounded = problem.cases.length > 0 ? (totalScoreUnbounded / problem.cases.length) * 100 : 0;
 
             // Remap individual case statuses for clarity
-            const finalCases = caseResults.map(caseResult => ({
+            const finalCases = caseResults.map(({ msg, output, ...caseResult }) => ({
                 ...caseResult,
                 status: caseResult.scoreRatio === 1.0 ? 'Correct' : 'Wrong Answer'
             }));
