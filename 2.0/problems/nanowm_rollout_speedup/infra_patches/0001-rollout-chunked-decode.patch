@@ -1,0 +1,23 @@
+diff --git a/src/sample/rollout.py b/src/sample/rollout.py
+index b83f0ee..3b62b99 100644
+--- a/src/sample/rollout.py
++++ b/src/sample/rollout.py
+@@ -225,8 +225,16 @@ def main(args):
+             generated_latents = torch.cat([generated_latents, new_latent], dim=1)
+             
+         print(f"Decoding and saving batch results...")
+-        gen_frames_batch = decode_latents(vae, generated_latents, vae_precision=vae_precision)
+-        gt_frames_batch = decode_latents(vae, gt_latents, vae_precision=vae_precision)
++        # Decode episode-by-episode: flattening B*T frames through the VAE in
++        # one call OOMs for long rollouts (e.g. 16 eps x 19 frames @ 256^2).
++        gen_frames_batch = torch.cat([
++            decode_latents(vae, generated_latents[i:i+1], vae_precision=vae_precision)
++            for i in range(generated_latents.shape[0])
++        ])
++        gt_frames_batch = torch.cat([
++            decode_latents(vae, gt_latents[i:i+1], vae_precision=vae_precision)
++            for i in range(gt_latents.shape[0])
++        ])
+         
+         for i in range(current_batch_size):
+             sample_id = start_idx + i
