@@ -81,3 +81,14 @@ single ICCAD2015 design, `superblue1`. Its problem ID is
 `bboplace_direct_iccad2015`. It follows the same JSON interface and single
 design evaluation flow as `bboplace_direct_ispd2005`, with the ICCAD2015
 baseline for `superblue1`.
+
+## NanoWM Rollout Speedup
+
+This systems problem asks agents to speed up diffusion sampling for a frozen
+video world model. Its problem ID is `nanowm_rollout_speedup`. Agents submit a
+Python-only patch to the sampling layer of Nano World Models (arXiv:2605.23993);
+the judge runs a fixed NanoWM-L/2 CSGO 50-frame long-rollout on a Modal GPU and
+scores wall-clock speedup over the unpatched baseline, gated by an LPIPS rollout-
+quality guardrail (so naive step-cutting fails — real fast-sampling is required).
+Mirrors `vllm_llm_serving_optimization`: patch + latency + accuracy guardrail +
+Modal GPU, CPU judge.
