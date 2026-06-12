@@ -74,6 +74,14 @@ within `quality_tolerance` LPIPS rise and decays inverse-proportionally beyond.
 the fp32 baseline (CI requires reference > baseline). The intended frontier
 (DPM-Solver++, caching, distillation) is left to the agent.
 
+**Validated end-to-end on Della H100 (local backend, 4 CSGO clips, 2026-06-12):**
+baseline 299.9 s / LPIPS 0.548 → bf16-patched 256.7 s / LPIPS 0.521 ⇒ **1.17×
+speedup, quality_multiplier 1.0, score 22.4** (reference > baseline ✓). Patch
+policy validated (accepts reference; rejects metric edits + env-var leakage);
+smoke path returns 1.0 with the empty reference on CPU. The frontier (seq@2 =
++31% LPIPS) leaves wide headroom above the 1.17× reference for real fast-sampling
+patches. **Pending:** end-to-end Modal execution (maintainer credentials).
+
 ## 7. Open items for maintainers
 
 - Modal end-to-end run + a deployed `modal_app` app name / GPU type confirmation.
