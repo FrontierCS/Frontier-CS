@@ -45,6 +45,9 @@ score 1.0 when GPU/Modal unconfigured (local CI). Score =
 ## 5. Reference
 `reference.patch`: one-line history-stabilization bump (stab→0.20) in
 `df_sample.dfot_sample` — the calibrated reliable drift reducer (§2).
+**Validated end-to-end on H100 (16 clips, local backend):** baseline tail-drift
+0.658 (1928 s) → reference 0.622 (1925 s, iso-wall-clock) ⇒ **5.5% reduction,
+wallclock_mult 1.0, score 5.54 > baseline** ✓. Patch policy + smoke pass.
 
 ## 6. Open items for maintainers
 Modal end-to-end run; bake-asset provenance (ckpt + held-out CSGO subset +
