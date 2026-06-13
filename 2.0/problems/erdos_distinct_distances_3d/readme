@@ -1,0 +1,78 @@
+# Erdos Distinct Distances (3D)
+
+## Problem
+
+Place exactly `N = 4096` distinct points in three-dimensional Euclidean space
+so that the number of distinct pairwise distances is as small as possible.
+
+This is the three-dimensional analogue of the distinct distances problem:
+given `n` points in R³, minimize the number of distinct Euclidean distances
+among all unordered pairs. If your construction naturally has a different
+minimum spacing, scale the coordinates before returning them.
+
+## Program Interface
+
+Submit a Python file defining one of the following:
+
+```python
+def solve(n: int) -> list[tuple[float, float, float]]:
+    ...
+```
+
+or:
+
+```python
+def generate_points(n: int) -> list[tuple[float, float, float]]:
+    ...
+```
+
+or:
+
+```python
+POINTS = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), ...]
+```
+
+The returned value must contain exactly 4096 three-dimensional points. No
+stdin is used.
+
+## Validity Constraints
+
+A solution is valid if:
+
+1. It returns exactly 4096 points.
+2. Every coordinate is a finite real number.
+3. No two points are closer than `1e-3`.
+
+The objective is translation-invariant. Very large coordinates are allowed as
+long as pairwise squared distances remain finite.
+
+## Objective
+
+For all unordered point pairs, count the number of distinct Euclidean distances.
+Let `D` be that count.
+
+Minimize `D`.
+
+Two squared distances are considered equal if they differ by at most `1e-9` in
+absolute value.
+
+## Scoring
+
+The score is naturally scaled to `[0, 100)`, without clipping against a fixed
+target. Let:
+
+```text
+baseline = N
+X = D
+```
+
+If the point set is invalid, or if `X >= baseline`, the score is `0`. Otherwise
+the score is:
+
+```text
+score = 100 * (baseline - X) / baseline
+      = 100 * (1 - D / N)
+```
+
+The bounded and unbounded score fields both report this score; evaluator
+messages also include `distinct_distances` for reference.
