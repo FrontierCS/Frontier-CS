@@ -1,23 +1,26 @@
 diff --git a/src/sample/rollout.py b/src/sample/rollout.py
-index b83f0ee..3b62b99 100644
+index b83f0ee..dc8b03c 100644
 --- a/src/sample/rollout.py
 +++ b/src/sample/rollout.py
-@@ -225,8 +225,16 @@ def main(args):
+@@ -225,8 +225,19 @@ def main(args):
              generated_latents = torch.cat([generated_latents, new_latent], dim=1)
              
          print(f"Decoding and saving batch results...")
 -        gen_frames_batch = decode_latents(vae, generated_latents, vae_precision=vae_precision)
 -        gt_frames_batch = decode_latents(vae, gt_latents, vae_precision=vae_precision)
-+        # Decode episode-by-episode: flattening B*T frames through the VAE in
-+        # one call OOMs for long rollouts (e.g. 16 eps x 19 frames @ 256^2).
-+        gen_frames_batch = torch.cat([
-+            decode_latents(vae, generated_latents[i:i+1], vae_precision=vae_precision)
-+            for i in range(generated_latents.shape[0])
-+        ])
-+        gt_frames_batch = torch.cat([
-+            decode_latents(vae, gt_latents[i:i+1], vae_precision=vae_precision)
-+            for i in range(gt_latents.shape[0])
-+        ])
++        # Decode in (episode, frame-chunk) tiles: flattening B*T frames through
++        # the VAE in one call OOMs for long rollouts (a single 150-frame decode
++        # allocates ~19 GiB). Chunk both episode and frame dims.
++        _DEC_FCHUNK = 24
++        def _decode_chunked(lat):
++            outs = []
++            for i in range(lat.shape[0]):
++                fr = [decode_latents(vae, lat[i:i+1, j:j+_DEC_FCHUNK], vae_precision=vae_precision)
++                      for j in range(0, lat.shape[1], _DEC_FCHUNK)]
++                outs.append(torch.cat(fr, dim=1))
++            return torch.cat(outs)
++        gen_frames_batch = _decode_chunked(generated_latents)
++        gt_frames_batch = _decode_chunked(gt_latents)
          
          for i in range(current_batch_size):
              sample_id = start_idx + i
