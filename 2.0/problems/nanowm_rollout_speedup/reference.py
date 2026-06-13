@@ -1,20 +1,10 @@
-"""CI/local reference entry for nanowm_rollout_speedup.
+"""Reference placeholder for the nanowm_rollout_speedup task.
 
-The real reference solution is `reference.patch` (a bf16-autocast sampling
-speedup). The Frontier-CS 2.0 CLI's default `evaluator.py <reference.py>` path
-expects a Python file; this shim points the evaluator at reference.patch so the
-standard `frontier eval` validation works. In smoke/no-GPU mode the evaluator
-validates the patch policy and returns a passing score.
+The Harbor task submits /app/solution.patch (a Python-only patch against a clean
+Nano World Models checkout, arXiv:2605.23993). This Python file exists only so the
+Frontier-CS 2.0 task layout stays conventional (cf. vllm_llm_serving_optimization,
+#145); the actual reference solution lives in reference.patch — a one-line
+bf16-autocast wrap of the diffusion sampling loop that yields a quality-preserving
+speedup over the fp32 baseline. See DESIGN.md for the calibration and the end-to-end
+Della H100 validation.
 """
-import sys
-from pathlib import Path
-
-REFERENCE_PATCH = str(Path(__file__).resolve().parent / "reference.patch")
-
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import json
-    from evaluator import evaluate
-    s, u, m, mt = evaluate(REFERENCE_PATCH)
-    print(json.dumps({"score": s, "score_unbounded": u, "message": m, "metrics": mt}, indent=2))
-    print(s)

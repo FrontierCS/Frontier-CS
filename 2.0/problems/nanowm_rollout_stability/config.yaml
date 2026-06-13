@@ -1,6 +1,10 @@
-tag: ai
+tag: systems
 runtime:
-  language: patch
+  # Submission is a Python-only source patch (the real reference is
+  # reference.patch). `language: python` keeps the file extension/CLI conventions
+  # standard (mirrors vllm_llm_serving_optimization, #145); there is no separate
+  # "patch" language in the framework.
+  language: python
   timeout_seconds: 21600
   environment: >-
     Python-only patch against a clean NanoWM checkout (Nano World Models,
