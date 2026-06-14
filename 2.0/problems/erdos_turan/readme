@@ -1,0 +1,79 @@
+# Erdos Turán
+
+## Problem
+
+Find the largest subset `S` of `{1, 2, ..., M}` where `M = 131072` that
+contains no three-term arithmetic progression.
+
+A **three-term arithmetic progression** (3-AP) is a triple `(a, b, c)` with
+`a, b, c ∈ S`, `a < b < c`, and `b − a = c − b`.
+
+This is the finite version of the Erdős–Turán conjecture and connects directly
+to the problem of bounding `r₃(N)`, the size of the largest 3-AP-free subset
+of `{1, ..., N}`.
+
+## Program Interface
+
+Submit a Python file defining one of the following:
+
+```python
+def solve(m: int) -> list[int]:
+    ...
+```
+
+or:
+
+```python
+def generate_set(m: int) -> list[int]:
+    ...
+```
+
+or:
+
+```python
+ELEMENTS = [1, 2, 4, ...]
+```
+
+The returned value must be a list of integers. No stdin is used.
+
+## Validity Constraints
+
+A solution is valid if:
+
+1. Every element is an integer in `{1, 2, ..., M}`.
+2. All elements are distinct.
+3. The set contains no three-term arithmetic progression.
+
+## Objective
+
+Let `K` be the number of elements in `S`.
+
+Maximize `K`.
+
+## Scoring
+
+The score is naturally scaled to `[0, 100)`, without clipping against a fixed
+target. Let:
+
+```text
+baseline = isqrt(M) = 362
+K = |S|
+```
+
+If the set is invalid, or if `K <= baseline`, the score is `0`. Otherwise the
+raw score is:
+
+```text
+raw_score = 100 * (K - baseline) / K
+```
+
+The reported score applies a cubic scale:
+
+```text
+score = 100 * (raw_score / 100)^3
+```
+
+This makes the simple baseline worth `0`, rewards every improvement above it,
+and keeps high-scoring constructions from saturating the benchmark too quickly.
+The bounded and unbounded score fields both report this cubic-scaled score;
+evaluator messages also include `raw_score` for reference.

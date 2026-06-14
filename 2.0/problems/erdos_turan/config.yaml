@@ -1,0 +1,9 @@
+tag: combinatorics
+runtime:
+  language: python
+  timeout_seconds: 10800
+  environment: "Python 3.11; numpy is available"
+  judge_apt_packages:
+    - python3-numpy
+  docker:
+    image: ubuntu:24.04
