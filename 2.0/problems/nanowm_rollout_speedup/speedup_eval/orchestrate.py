@@ -71,11 +71,14 @@ def _baseline(clips: int, run) -> dict:
     if cache.exists():
         try:
             data = json.loads(cache.read_text())
-            if data.get("clips", 0) >= clips:
+            # Deterministic seeding makes the cached baseline a valid common-random
+            # -numbers partner ONLY for the same clip set (== not >=) and same seed.
+            if data.get("clips") == clips and data.get("seed") == S.SEED:
                 return data
         except Exception:
             pass
     m = run(None, clips)
+    m["seed"] = S.SEED
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(m))

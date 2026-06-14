@@ -16,7 +16,8 @@ per-problem via Modal.
 ## 2. Why this is a real task (calibration)
 
 Measured on Della H100, NanoWM-L/2 CSGO, 50-frame rollout, 12 held-out episodes,
-LPIPS vs ground truth:
+LPIPS vs ground truth (means over **all** frames incl. the 4 context frames — the
+same convention the judge scores on; generated-only means are ~0.045 higher):
 
 | DDIM steps | speedup | LPIPS-vs-GT | Δ vs seq@50 |
 |---|---|---|---|
@@ -74,13 +75,18 @@ within `quality_tolerance` LPIPS rise and decays inverse-proportionally beyond.
 the fp32 baseline (CI requires reference > baseline). The intended frontier
 (DPM-Solver++, caching, distillation) is left to the agent.
 
-**Validated end-to-end on Della H100 (local backend, 4 CSGO clips, 2026-06-12):**
-baseline 299.9 s / LPIPS 0.548 → bf16-patched 256.7 s / LPIPS 0.521 ⇒ **1.17×
-speedup, quality_multiplier 1.0, score 22.4** (reference > baseline ✓). Patch
-policy validated (accepts reference; rejects metric edits + env-var leakage);
-smoke path returns 1.0 with the empty reference on CPU. The frontier (seq@2 =
-+31% LPIPS) leaves wide headroom above the 1.17× reference for real fast-sampling
-patches. **Pending:** end-to-end Modal execution (maintainer credentials).
+**Validated end-to-end on Della H100 (local backend, 16 CSGO clips, seed 42,
+sampling-region timed):** baseline 1102.1 s / LPIPS 0.523 → bf16-patched 944.0 s /
+LPIPS 0.532 ⇒ **1.17× speedup, LPIPS +1.7% (within the 3% guardrail),
+quality_multiplier 1.0, score 22.3** (reference > baseline ✓). The judge seeds the
+rollout deterministically per clip (common random numbers), so the baseline and
+patched arms share initial noise: a **no-op patch scores 0.15 (≈0, ungameable)**
+and residual wall-clock noise is **0.24%** (the region timer excludes model/VAE/
+dataset load and the VAE decode the patch cannot touch). Patch policy validated
+(accepts reference; rejects metric edits + env-var leakage); smoke path returns
+1.0 with the empty reference on CPU. The frontier (seq@2 = +31% LPIPS) leaves wide
+headroom above the 1.17× reference for real fast-sampling patches. **Pending:**
+end-to-end Modal execution (maintainer credentials).
 
 ## 7. Open items for maintainers
 

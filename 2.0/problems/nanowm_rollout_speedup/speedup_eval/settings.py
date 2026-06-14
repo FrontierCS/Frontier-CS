@@ -43,6 +43,11 @@ HISTORY_STAB = float(_get("FRONTIER_NWM_HISTORY_STAB", 0.02))
 QUICK_CLIPS = int(_get("FRONTIER_NWM_QUICK_CLIPS", 4))
 FINAL_CLIPS = int(_get("FRONTIER_NWM_FINAL_CLIPS", 16))
 BATCH_SIZE = int(_get("FRONTIER_NWM_BATCH_SIZE", 4))
+# Deterministic RNG seed (judge infra): per-clip seed = SEED + clip_index, so the
+# baseline (unpatched) and patched arms draw identical initial noise per clip
+# (common random numbers). Makes a no-op patch score exactly 0 and the cached
+# baseline a valid CRN partner. Vary only for multi-seed robustness runs.
+SEED = int(_get("FRONTIER_NWM_SEED", 42))
 # Quality guardrail: patched rollout LPIPS may rise at most this (relative)
 # above the baseline (unpatched seq@50) LPIPS before the score is penalized.
 QUALITY_TOLERANCE = float(_get("FRONTIER_NWM_QUALITY_TOLERANCE", 0.03))

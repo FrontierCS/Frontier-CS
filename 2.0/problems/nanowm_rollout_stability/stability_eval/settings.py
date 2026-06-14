@@ -47,6 +47,11 @@ DRIFT_TAIL_START = int(_get("FRONTIER_NWM_DRIFT_TAIL_START", 60))
 QUICK_CLIPS = int(_get("FRONTIER_NWM_QUICK_CLIPS", 8))
 FINAL_CLIPS = int(_get("FRONTIER_NWM_FINAL_CLIPS", 24))
 BATCH_SIZE = int(_get("FRONTIER_NWM_BATCH_SIZE", 2))
+# Deterministic RNG seed (judge infra): per-clip seed = SEED + clip_index, so the
+# baseline (unpatched) and patched arms draw identical initial noise per clip
+# (common random numbers). Makes a no-op patch score exactly 0 and the cached
+# baseline a valid CRN partner. Vary only for multi-seed robustness runs.
+SEED = int(_get("FRONTIER_NWM_SEED", 42))
 # Wall-clock guardrail: the patched rollout must not exceed the baseline's
 # generation wall-clock by more than this (relative) — else drift is being
 # bought with more compute (the speedup task's axis), so penalize.

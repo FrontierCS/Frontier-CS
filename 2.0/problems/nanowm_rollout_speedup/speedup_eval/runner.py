@@ -61,7 +61,7 @@ def run_rollout(repo: Path, config: Path, ckpt: Path, save: Path, clips: int, st
            "--batch_size", str(S.BATCH_SIZE), "--rollout_length", str(S.ROLLOUT_LENGTH),
            "--history_length", str(S.HISTORY_LENGTH), "--scheduling_mode", S.SCHEDULING_MODE,
            "--num_sampling_steps", str(steps), "--history_stabilization_level", str(S.HISTORY_STAB),
-           "--fps", "8"]
+           "--fps", "8", "--seed", str(S.SEED)]
     t0 = time.time()
     r = subprocess.run(cmd, cwd=str(repo), env=env, capture_output=True, text=True)
     wall = time.time() - t0

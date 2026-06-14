@@ -17,16 +17,20 @@ compute the drift is largely model-intrinsic, so reducing it is genuinely hard.
 But it is NOT impossible: a paired test (NanoWM-L/2, 80-frame, tail f≥60) shows
 the rollout PROCEDURE moves drift reliably above noise —
 
-| setting (fixed steps=50) | tail-drift | 
+| setting (fixed steps=50) | tail-drift (mean over 3 seeds) |
 |---|---|
-| stab=0.02 (baseline) | 0.652 |
-| stab=0.20 (reference) | **0.629** |
+| stab=0.02 (baseline) | 0.655 |
+| stab=0.20 (reference) | **0.610** |
 
-reduction 0.023 ± 0.009 SE, **73% per-clip win, t≈2.5 over 22 clips**. So a
-reliably-better-than-baseline reference exists (task is well-posed/solvable);
-substantially beating it requires real drift-reduction work (the open challenge).
-The earlier 6-clip read showed it "within noise" — small effects need enough
-clips, hence final_clips=24.
+With deterministic common-random-numbers pairing (the judge seeds each clip, so
+baseline and patched share initial noise), the reference reduces tail-drift by
+**6.8% ± 1.2% across 3 seeds** (per-seed 8.3 / 6.2 / 6.1%, 74% per-clip win);
+pooled over 66 paired clip-runs the effect is **paired t=5.15, p<1e-4, Wilcoxon
+p<1e-4**. So a clearly-better-than-baseline reference exists (task well-posed/
+solvable); substantially beating it requires real drift-reduction work (the open
+challenge). CRN pairing was essential: an unpaired/unseeded read diluted the
+effect into noise (the original marginal single-seed t≈2.4), so the judge now
+seeds deterministically and a no-op patch scores exactly 0.
 
 ## 3. Fixed-compute constraint (why it's distinct from speedup)
 Adding denoising steps reduces drift (paper Fig 6) but costs compute — that's the
@@ -45,9 +49,10 @@ score 1.0 when GPU/Modal unconfigured (local CI). Score =
 ## 5. Reference
 `reference.patch`: one-line history-stabilization bump (stab→0.20) in
 `df_sample.dfot_sample` — the calibrated reliable drift reducer (§2).
-**Validated end-to-end on H100 (16 clips, local backend):** baseline tail-drift
-0.658 (1928 s) → reference 0.622 (1925 s, iso-wall-clock) ⇒ **5.5% reduction,
-wallclock_mult 1.0, score 5.54 > baseline** ✓. Patch policy + smoke pass.
+**Validated end-to-end on H100 (22 clips × 3 seeds, local backend, CRN-paired):**
+tail-drift 0.655 → 0.610 at iso-wall-clock (gen-time Δ ≤0.2%, wallclock_mult 1.0)
+⇒ **6.8% ± 1.2% reduction, score 6.8 > baseline** ✓ (pooled paired t=5.15,
+p<1e-4; a no-op patch scores 0.000). Patch policy + smoke pass.
 
 ## 6. Open items for maintainers
 Modal end-to-end run; bake-asset provenance (ckpt + held-out CSGO subset +
