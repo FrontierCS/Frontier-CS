@@ -1,0 +1,79 @@
+# Erdos Heilbronn
+
+## Problem
+
+Place exactly `N = 64` distinct points in the unit square `[0, 1]²` so that
+the area of the smallest triangle formed by any three of them is as **large**
+as possible.
+
+This is the Heilbronn triangle problem: for any arrangement of `N` points,
+some three of them must form a triangle with very small area. The challenge is
+to make the unavoidable smallest triangle as large as possible.
+
+## Program Interface
+
+Submit a Python file defining one of the following:
+
+```python
+def solve(n: int) -> list[tuple[float, float]]:
+    ...
+```
+
+or:
+
+```python
+def generate_points(n: int) -> list[tuple[float, float]]:
+    ...
+```
+
+or:
+
+```python
+POINTS = [(0.0, 0.0), (1.0, 0.0), ...]
+```
+
+The returned value must contain exactly 64 two-dimensional points. No stdin
+is used.
+
+## Validity Constraints
+
+A solution is valid if:
+
+1. It returns exactly 64 points.
+2. Every coordinate is a finite real number in `[0, 1]`.
+3. No two points are identical (Euclidean distance ≥ `1e-9`).
+
+## Objective
+
+For every unordered triple of points, compute the area of the triangle they
+form. Let `Δ` be the minimum such area over all triples.
+
+Maximize `Δ`.
+
+## Scoring
+
+The score is naturally scaled to `[0, 100)`, without clipping against a fixed
+target. Let:
+
+```text
+baseline = 1 / (4 × N²) = 1 / 16384
+Δ = minimum triangle area
+```
+
+If the point set is invalid, or if `Δ ≤ baseline`, the score is `0`. Otherwise
+the raw score is:
+
+```text
+raw_score = 100 × (1 − baseline / Δ)
+```
+
+The reported score applies a cubic scale:
+
+```text
+score = 100 × (raw_score / 100)³
+```
+
+This makes the simple baseline worth `0`, rewards every improvement above it,
+and keeps high-scoring constructions from saturating the benchmark too quickly.
+The bounded and unbounded score fields both report this cubic-scaled score;
+evaluator messages also include `raw_score` for reference.
