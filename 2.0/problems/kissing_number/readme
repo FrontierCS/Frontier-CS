@@ -1,0 +1,69 @@
+# Kissing Number
+
+## Problem
+
+Find the largest set of unit vectors in **R^9** such that the dot product
+between any two distinct vectors is at most **1/2**.
+
+This is equivalent to placing the maximum number of non-overlapping unit
+spheres that each touch a central unit sphere in 9-dimensional space — the
+**kissing number problem** for dimension d = 9.
+
+## Program Interface
+
+Submit a Python file defining one of the following:
+
+```python
+def solve(d: int) -> list[list[float]]:
+    ...
+```
+
+or:
+
+```python
+def generate_vectors(d: int) -> list[list[float]]:
+    ...
+```
+
+or:
+
+```python
+VECTORS = [[...], [...], ...]
+```
+
+Each vector must be a list (or array-like) of `d` floats. No stdin is used.
+
+## Validity Constraints
+
+A solution is valid if:
+
+1. Every vector has exactly `d = 9` components.
+2. Every vector is a unit vector: `|v| = 1` (tolerance `1e-6`).
+3. All vectors are distinct (pairwise L2 distance > `1e-6`).
+4. The dot product between any two distinct vectors is at most `1/2`
+   (tolerance `1e-9`).
+
+## Objective
+
+Let `K` be the number of vectors.
+
+Maximize `K`.
+
+## Scoring
+
+The score is linearly scaled against a known upper bound. Let:
+
+```text
+upper_bound = 364   (best known upper bound for the d=9 kissing number)
+K = number of valid vectors
+```
+
+If the solution is invalid, or if `K = 0`, the score is `0`. Otherwise:
+
+```text
+score = 100 * K / upper_bound
+```
+
+The best known construction achieves K = 306, giving a score of about 84.
+The exact kissing number for d = 9 is unknown; improvements over 306 are
+open research problems.
