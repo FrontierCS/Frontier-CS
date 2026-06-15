@@ -9,8 +9,8 @@ The hidden benchmark contains exactly `100,000,000` base vectors with dimension
 `128`. Queries use the same dimension, distance is squared Euclidean distance,
 and each query asks for the top `10` nearest vector ids.
 
-The benchmark provides a pre-built graph index generated using the [DiskANN](https://github.com/microsoft/diskann)
-construction algorithm. The graph has maximum degree `64` and is stored on
+The benchmark provides a pre-built graph index generated using the [DiskANN](https://github.com/g4197/FreshDiskANN-baseline)
+construction algorithm. The graph has maximum degree and is stored on
 disk. Your objective is to maximize serving throughput while preserving search
 quality: submissions must reach `recall@10 >= 0.95`, and valid submissions are
 ranked by query throughput.
@@ -64,14 +64,43 @@ POST /load
 POST /search
 ```
 
+Important: submissions must implement an online ANN service for the vectors and
+graph provided through `/load`. Timed query vectors are evaluator inputs, not a
+static dataset contract; the evaluator may perturb, resample, or otherwise vary
+queries between runs. Do not depend on fixed query files, query ordering,
+ground-truth files, baseline files, or any judge-side sidecar data. In
+particular, attempting to locate/read/cache `truth.bin`, `baseline.json`, or
+precomputed answers from the benchmark directory is outside the task contract
+and will be treated as invalid behavior.
+
+Optimization guidance: after a valid graph-based ANN implementation exists,
+minor parameter sweeps over search-list size, beam width, or cache limits tend
+to provide limited gains. Prefer substantive algorithmic and I/O improvements,
+such as better graph traversal, batching/asynchronous disk reads, candidate
+management, vector/PQ distance computation, and cache design. A well-designed
+ANN algorithmic change is expected to be a better acceleration path than
+repeated manual tuning of a few constants.
+
 `/load` receives:
 
 ```json
 {
-    "graph_path":"graph.bin",
-    "vector_path":"vectors.bin"
+    "index_path":"graph.bin",
+    "vector_path":"vectors.bin",
+    "vector_dtype":"uint8",
+    "pq_compressed_path":"pq_compressed.bin",
+    "pq_pivots_path":"pq_pivots.bin"
 }
 ```
+
+For compatibility, the evaluator also accepts/sends `graph_path` as an alias
+for `index_path`, and `pq_vector_path` as an alias for `pq_compressed_path`.
+`vector_dtype` is optional and may be `float32`, `uint8`, or `int8`; services
+should not assume the vector file stores `float32` rows. The evaluator does not
+infer vector type from file extension, so non-`float32` vector files must provide
+this field or set `FRONTIER_VECTOR_DB_VECTOR_DTYPE`. Query files default to the
+same dtype as vectors; set `FRONTIER_VECTOR_DB_QUERY_DTYPE` only if an external
+query file intentionally uses a different dtype. (These files follow the same format and organization as those used in the [provided repository](https://github.com/g4197/FreshDiskANN-baseline). You can refer to the repository to load the graph, compressed vectors, and other required data structures.)
 
 and returns:
 
@@ -103,6 +132,49 @@ bash /app/submit.sh
 
 at any time to submit the current `/app` project to the official judge and get
 score feedback.
+
+For local/server smoke testing against the SIFT100M DiskANN files, run:
+
+```bash
+bash run_sift100m_smoke.sh /path/to/rust/project
+```
+
+By default this uses:
+
+```text
+~/nvme7/sift/index_100M/100M.u8bin
+~/nvme7/sift/index_100M/100M_disk.index
+~/nvme7/sift/index_100M/100M_pq_pivots.bin
+~/nvme7/sift/index_100M/100M_pq_compressed.bin
+~/nvme7/sift/index_100M/query.bin
+~/nvme7/sift/index_100M/truth.bin
+~/nvme7/sift/index_100M/baseline.json
+~/nvme3/frontier_vector_db_ann_disk_work
+```
+
+This smoke mode validates build, load, search, ids, and throughput. It skips
+recall scoring if `truth.bin` or `baseline.json` is missing. It uses the first
+`10,000` queries from `query.bin` by default.
+
+To run the large-file real-test setup through Harbor, run the task normally:
+
+```bash
+uv run frontier harbor trial 2.0 vector_db_ann_disk -a codex -m gpt-5.5 --force-build --json
+```
+
+The fixed SIFT100M paths and dtype are configured in this problem's
+`config.yaml` and rendered into the Harbor judge sidecar. The host data
+directory defaults to `$HOME/nvme7/sift/index_100M`; set
+`FRONTIER_VECTOR_DB_SIFT_DIR=/path/to/index_100M` if your server uses a
+different location. By default, this Harbor setup also expects `query.bin`,
+`truth.bin`, and `baseline.json` in that directory for local recall scoring.
+It uses the first `10,000` queries from `query.bin`; `truth.bin` must contain
+the matching `10,000 * 10` raw `uint32` ids, and `baseline.json` must report
+the baseline measured on the same query set. These files are evaluator inputs
+only; solutions must not read them or assume they are visible to the submitted
+service. Temporary build/cache files are written under
+`$HOME/nvme3/frontier_vector_db_ann_disk_work` by default; set
+`FRONTIER_VECTOR_DB_WORK_DIR=/path/to/work` to move them.
 
 ## Validity
 

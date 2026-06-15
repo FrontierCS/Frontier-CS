@@ -26,7 +26,13 @@ async fn handle_load(
     State(db): State<Arc<VectorDB>>,
     Json(req): Json<LoadRequest>,
 ) -> Json<LoadResponse> {
-    db.load(&req.graph_path, &req.vector_path);
+    db.load(
+        req.index_path(),
+        &req.vector_path,
+        req.vector_dtype.as_deref(),
+        req.pq_compressed_path(),
+        req.pq_pivots_path.as_deref(),
+    );
     Json(LoadResponse {
         status: "ok".to_string(),
     })
