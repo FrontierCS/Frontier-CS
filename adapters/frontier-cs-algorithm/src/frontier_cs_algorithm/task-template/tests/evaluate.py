@@ -1,84 +1,65 @@
 #!/usr/bin/env python3
 """
 Harbor verifier for Frontier-CS algorithmic problems.
-Submits the agent's C++ code to the go-judge HTTP API and retrieves the score.
+Submits the agent's C++ code to the black-box judge proxy and retrieves the score.
 """
 
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 import requests
 
-JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8081")
+JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
 PROBLEM_ID = os.environ.get("PROBLEM_ID", "0")
 SOLUTION_PATH = Path("/app/solution.cpp")
 REWARD_TXT = Path("/logs/verifier/reward.txt")
 REWARD_JSON = Path("/logs/verifier/reward.json")
-JUDGE_SUBMISSIONS_DIR = Path("/logs/artifacts/judge/submissions")
 VERIFIER_SUBMISSIONS_LOG = Path("/logs/verifier/submissions.jsonl")
 JUDGE_RESULT_JSON = Path("/logs/verifier/judge_result.json")
-POLL_INTERVAL = 2  # seconds
 MAX_POLL_TIME = int(os.environ.get("MAX_POLL_TIME", "600"))  # seconds
 
 
-def _submission_sort_key(path: Path) -> tuple[int, str]:
-    try:
-        return (int(path.parent.name), path.parent.name)
-    except ValueError:
-        return (10**18, path.parent.name)
-
-
 def judge_submission_records() -> list[dict]:
-    """Rebuild the iterative submission log from judge-owned artifacts."""
-    if not JUDGE_SUBMISSIONS_DIR.exists():
+    """Fetch sanitized iterative submission records from the judge proxy."""
+    try:
+        response = requests.get(f"{JUDGE_URL}/submissions", timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        print(f"WARN: failed to fetch judge submissions: {exc}")
         return []
 
-    records: list[dict] = []
-    for result_path in sorted(
-        JUDGE_SUBMISSIONS_DIR.glob("*/*/result.json"), key=_submission_sort_key
-    ):
-        try:
-            result = json.loads(result_path.read_text())
-        except (OSError, json.JSONDecodeError):
+    records = payload.get("submissions", [])
+    if not isinstance(records, list):
+        return []
+
+    normalized: list[dict] = []
+    for record in records:
+        if not isinstance(record, dict):
             continue
-
-        meta: dict = {}
-        meta_path = result_path.parent / "meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-            except (OSError, json.JSONDecodeError):
-                meta = {}
-
-        record_pid = str(meta.get("pid") or result_path.parent.parent.name)
-        if record_pid != str(PROBLEM_ID):
-            continue
-
-        score_raw = result.get("score") or 0.0
+        score_raw = record.get("score") or 0.0
         try:
             reward = float(score_raw) / 100.0
         except (TypeError, ValueError):
             reward = 0.0
-
-        records.append(
+        normalized.append(
             {
-                "ts": meta.get("ts"),
-                "status": result.get("status", "unknown"),
-                "sid": meta.get("sid") or result_path.parent.name,
-                "problem_id": record_pid,
+                "ts": record.get("ts"),
+                "status": record.get("status", "unknown"),
+                "submission_role": record.get("submission_role", "agent"),
+                "submission_uuid": record.get("submission_uuid"),
+                "problem_id": record.get("problem_id") or PROBLEM_ID,
                 "score": reward,
                 "score_raw": score_raw,
-                "score_unbounded": result.get("scoreUnbounded"),
-                "detail": result.get("message")
-                or result.get("detail")
-                or result.get("result")
-                or "",
-                "raw_result": result,
+                "score_unbounded": record.get("score_unbounded", score_raw),
+                "detail": record.get("message") or "",
+                "metrics": record.get("metrics") or {},
             }
         )
-    return records
+    return normalized
 
 
 def write_submissions_log(records: list[dict]) -> None:
@@ -95,6 +76,8 @@ def best_submission(records: list[dict]) -> dict | None:
             reward = float(record.get("score", 0.0))
         except (TypeError, ValueError):
             reward = 0.0
+        if record.get("submission_role", "agent") != "agent":
+            continue
         if record.get("status") != "done":
             continue
         if best is None or reward > float(best.get("score", 0.0)):
@@ -124,6 +107,37 @@ def write_reward(
             sidecar[key] = value
     REWARD_JSON.write_text(json.dumps(numeric_rewards, indent=2))
     JUDGE_RESULT_JSON.write_text(json.dumps(sidecar, indent=2))
+
+
+def wait_for_judge() -> bool:
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            response = requests.get(f"{JUDGE_URL}/health", timeout=5)
+            if response.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+    return False
+
+
+def evaluate_with_judge(code: str) -> dict:
+    response = requests.post(
+        f"{JUDGE_URL}/evaluate",
+        json={
+            "submission_uuid": str(uuid.uuid4()),
+            "submission_role": "final",
+            "problem_id": PROBLEM_ID,
+            "code": code,
+        },
+        timeout=MAX_POLL_TIME,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") not in ("done", "error"):
+        raise RuntimeError(str(result.get("message") or result))
+    return result
 
 
 def main():
@@ -170,74 +184,32 @@ def main():
 
     # 2. Wait for judge availability (may take time to start)
     print("Waiting for judge...")
-    judge_ready = False
-    for attempt in range(30):
-        try:
-            r = requests.get(f"{JUDGE_URL}/problems", timeout=5)
-            if r.status_code == 200:
-                judge_ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(2)
-
-    if not judge_ready:
+    if not wait_for_judge():
         print(f"ERROR: Judge not available at {JUDGE_URL} after 60s")
-        print("Check sibling service 'judge' and FRONTIER_CS_ALGORITHMIC_PATH")
         write_reward(0.0, "Judge not available")
         return
 
     print("Judge is ready.")
 
-    # 3. Submit
+    # 3. Evaluate
     print("Submitting...")
     try:
-        r = requests.post(
-            f"{JUDGE_URL}/submit",
-            files={"code": ("solution.cpp", code)},
-            data={"pid": PROBLEM_ID, "lang": "cpp"},
-            timeout=30,
-        )
-        r.raise_for_status()
-        sid = r.json()["sid"]
-        print(f"Submission ID: {sid}")
+        result = evaluate_with_judge(code)
     except Exception as e:
-        print(f"ERROR: Submit failed: {e}")
-        write_reward(0.0, f"Submit failed: {e}")
-        return
-
-    # 4. Poll for result
-    print("Evaluating", end="", flush=True)
-    start = time.time()
-    result = None
-
-    while time.time() - start < MAX_POLL_TIME:
-        try:
-            r = requests.get(f"{JUDGE_URL}/result/{sid}", timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                status = data.get("status")
-                if status in ("done", "error"):
-                    result = data
-                    break
-                if status == "queued":
-                    print(".", end="", flush=True)
-            elif r.status_code == 404:
-                print(".", end="", flush=True)
-        except Exception:
-            pass
-        time.sleep(POLL_INTERVAL)
-
-    print()
-
-    if result is None:
-        print(f"ERROR: Timed out after {MAX_POLL_TIME}s")
-        if write_best_submission_reward("final evaluation timed out"):
+        print(f"ERROR: Evaluation failed: {e}")
+        records = judge_submission_records()
+        write_submissions_log(records)
+        best = best_submission(records)
+        if write_best_submission_reward(f"final evaluation failed: {e}"):
             return
-        write_reward(0.0, "Evaluation timed out")
+        write_reward(0.0, f"Evaluation failed: {e}")
         return
 
-    # 5. Parse result
+    records = judge_submission_records()
+    write_submissions_log(records)
+    best = best_submission(records)
+
+    # 4. Parse result
     if result.get("status") == "error":
         msg = result.get("message") or result.get("error") or "Unknown error"
         print(f"ERROR: {msg}")
@@ -255,7 +227,7 @@ def main():
 
     score = result.get("score") or 0.0  # 0-100
     reward = float(score) / 100.0  # normalize to 0-1
-    unbounded = result.get("scoreUnbounded")
+    unbounded = result.get("score_unbounded")
     if best is not None and float(best.get("score", 0.0)) > reward:
         write_best_submission_reward("final solution scored below best submission")
         return
@@ -280,7 +252,8 @@ def main():
                 "score": score,
                 "score_unbounded": unbounded,
                 "status": result.get("status"),
-                "raw_result": result,
+                "detail": result.get("message") or "",
+                "metrics": result.get("metrics") or {},
             },
             indent=2,
         )

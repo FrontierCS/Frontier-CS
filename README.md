@@ -24,6 +24,7 @@
 
 ## News
 
+- **Jun 11, 2026:** [Roadmap to FrontierCS 2.0](https://frontier-cs.org/blog/frontiercs-2-roadmap/): agent-native algorithmic tasks, released private tests, controlled feedback infrastructure, and 10 repo-level preview tasks.
 - **May 27, 2026:** Frontier-CS 2.0 is underway: agent-horizon friendly, verifiable, and harborized from the start.
 - **May 26, 2026:** The formerly private algorithmic test cases are now public, making full local, batch, and agent-based evaluation possible without internal repository access.
 - **May 12, 2026:** We now provide a Harbor adapter for the Frontier-CS Algorithmic track. See our [Harbor blog post](https://frontier-cs.org/blog/harbor/).
@@ -140,8 +141,8 @@ isolated from Frontier-CS's own `uv sync` environment.
 Frontier-CS 2.0 is agent-first: current 2.0 problems are meant to be run
 through Harbor-compatible agents rather than direct one-shot solution files.
 Problem IDs are their problem directory names, such as `erdos_unit_distance`,
-the small `erdos_demo`, and BBOPlace variants such as `bboplace_ispd2005` and
-`bboplace_direct_ispd2005`.
+the small `erdos_demo`, the visual `erdos_visual_100`, and BBOPlace variants
+such as `bboplace_ispd2005` and `bboplace_direct_ispd2005`.
 
 ```bash
 # List 2.0 problems
@@ -152,6 +153,9 @@ uv run frontier harbor trial 2.0 erdos_unit_distance -a codex -m gpt-5.5 --json
 
 # Run the small N=10 demo task
 uv run frontier harbor trial 2.0 erdos_demo -a codex -m gpt-5.5 --json
+
+# Run the N=100 visual Erdos task
+uv run frontier harbor trial 2.0 erdos_visual_100 -a codex -m gpt-5.5 --json
 
 # Run a BBOPlace placement task
 uv run frontier harbor trial 2.0 bboplace_ispd2005 -a codex -m gpt-5.5 --json

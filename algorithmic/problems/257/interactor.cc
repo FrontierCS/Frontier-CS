@@ -14,9 +14,15 @@ struct Block {
     int end_idx;   // 1-based, inclusive
 };
 
+// Dynamic scoring multipliers (based on k = number of distinct blocks).
+// Full score if queries <= C_BASE * k; zero score if queries >= C_ZERO * k.
+// Tune these to set how aggressively few-query solutions are rewarded.
+const double C_BASE = 1.0;
+const double C_ZERO = 12.0;
+
 // Sparse Table resources
 // Max N is 200,000, so max distinct blocks is also 200,000.
-const int MAX_BLOCKS = 200005; 
+const int MAX_BLOCKS = 200005;
 const int LOG_BLOCKS = 19;     // 2^18 = 262144
 int st[MAX_BLOCKS][LOG_BLOCKS];
 vector<Block> blocks;
@@ -83,13 +89,14 @@ int main(int argc, char* argv[]) {
         // 4. Send N to user
         cout << n << endl;
 
-        // 5. Define Dynamic Scoring Limits based on N
-        // As requested: Determined by this point's n.
-        // We set K_BASE = N and K_ZERO = 2*N.
-        long long k_base = n;
-        long long k_zero = 2LL * n;
-        
-        // Safety for very small n
+        // 5. Define Dynamic Scoring Limits based on K (number of distinct blocks).
+        // k forces solutions to exploit the sorted/mode structure instead of
+        // trivially scanning every position (which would take n queries).
+        long long k = (long long)blocks.size();
+        long long k_base = (long long)(C_BASE * (double)k);
+        long long k_zero = (long long)(C_ZERO * (double)k);
+
+        // Safety for very small k
         if (k_base < 1) k_base = 1;
         if (k_zero <= k_base) k_zero = k_base + 1;
 
@@ -185,19 +192,22 @@ int main(int argc, char* argv[]) {
         double current_unbounded = 0.0;
         
         if (solved) {
-            // Formula: ratio = ((K_ZERO - Q) / (K_ZERO - K_BASE))^2
-            double num = (double)(k_zero - queries);
-            double den = (double)(k_zero - k_base);
-            double r = num / den;
-            current_unbounded = r * r;
+            // Single unbounded quadratic scoring curve in the query count:
+            //   r = 1.0  when queries == k_base   (-> 100 after the judge's *100)
+            //   r = 0.0  when queries == k_zero
+            //   r > 1.0  when queries <  k_base   (unbounded: rewards extra-efficient
+            //                                      solutions with a score above 100)
+            // Clamp r at 0 from below so the parabola does not turn back upward once
+            // queries exceed k_zero (and so the value stays >= 0 for the judge regex).
+            double r = (double)(k_zero - queries) / (double)(k_zero - k_base);
+            if (r < 0.0) r = 0.0;
+            double curve = r * r;
 
-            if (queries <= k_base) {
-                current_ratio = 1.0;
-            } else if (queries >= k_zero) {
-                current_ratio = 0.0;
-            } else {
-                current_ratio = current_unbounded;
-            }
+            // Unbounded score: report the raw curve (may exceed 1 -> scoreUnbounded > 100).
+            current_unbounded = curve;
+
+            // Bounded score: same curve clipped to 1.0, i.e. clipped to 100 on output.
+            current_ratio = (curve > 1.0) ? 1.0 : curve;
         } else {
             // Not solved (or WA, though WA usually quits immediately above)
             current_ratio = 0.0;
@@ -213,11 +223,15 @@ int main(int argc, char* argv[]) {
     }
 
     // 8. Average the scores
-    double final_score_ratio = total_ratio / case_count;
     double final_unbounded = total_unbounded_ratio / case_count;
 
+    // Bounded score is the unbounded average clipped to 100 (i.e. ratio clipped to 1.0).
+    double final_score_ratio = total_ratio / case_count;
+    if (final_score_ratio > 1.0) final_score_ratio = 1.0;
+    if (final_score_ratio < 0.0) final_score_ratio = 0.0;
+
     // Output formatted exactly as requested
-    quitp(final_score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", 
+    quitp(final_score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f",
           total_queries_all, final_score_ratio, final_unbounded);
 
     return 0;

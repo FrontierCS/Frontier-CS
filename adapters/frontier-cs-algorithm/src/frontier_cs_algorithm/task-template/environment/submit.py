@@ -6,16 +6,14 @@ graded judge. Each call:
 
 1. Writes a `started` record to /logs/agent/submissions.jsonl (so we know the
    call existed even if everything downstream fails).
-2. POSTs /app/solution.cpp (or the first arg) to the judge sidecar.
-3. Polls until the judge returns done/error.
-4. Writes a `done`/`error` record with the same submission_uuid, then prints
+2. POSTs /app/solution.cpp (or the first arg) to the black-box judge sidecar.
+3. Writes a `done`/`error` record with the same submission_uuid, then prints
    a concise score + feedback summary so the agent sees it on stdout.
 
 Exit code semantics:
 - 0: judge returned a result (score may be low — that's still success).
 - 2: solution file missing / empty.
-- 3: judge submit request failed.
-- 4: judge polling timed out.
+- 3: judge request failed.
 - 5: unexpected runtime error.
 
 The post-hoc analysis joins submissions.jsonl with the agent's trajectory
@@ -33,11 +31,10 @@ from pathlib import Path
 
 import requests
 
-JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8081")
+JUDGE_URL = os.environ.get("JUDGE_URL", "http://judge:8082").rstrip("/")
 PROBLEM_ID = os.environ.get("PROBLEM_ID", "")
 SUBMISSIONS_LOG = Path("/logs/agent/submissions.jsonl")
-POLL_INTERVAL = 2.0
-MAX_POLL_TIME = float(os.environ.get("SUBMIT_MAX_POLL_TIME", "600"))
+JUDGE_TIMEOUT_SECONDS = float(os.environ.get("SUBMIT_MAX_POLL_TIME", "600"))
 
 
 def now_iso() -> str:
@@ -52,6 +49,44 @@ def log_record(record: dict) -> None:
     SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SUBMISSIONS_LOG.open("a") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def wait_for_judge() -> None:
+    deadline = time.time() + JUDGE_TIMEOUT_SECONDS
+    last_error: Exception | None = None
+    printed_waiting = False
+    while time.time() < deadline:
+        try:
+            response = requests.get(f"{JUDGE_URL}/health", timeout=5)
+            if response.status_code == 200:
+                return
+            last_error = RuntimeError(response.text)
+        except Exception as exc:
+            last_error = exc
+        if not printed_waiting:
+            print("[submit] waiting for judge service", flush=True)
+            printed_waiting = True
+        time.sleep(1)
+    raise RuntimeError(f"judge service is not ready at {JUDGE_URL}: {last_error}")
+
+
+def evaluate_with_judge(submission_uuid: str, code: str) -> dict:
+    wait_for_judge()
+    response = requests.post(
+        f"{JUDGE_URL}/evaluate",
+        json={
+            "submission_uuid": submission_uuid,
+            "submission_role": "agent",
+            "problem_id": PROBLEM_ID,
+            "code": code,
+        },
+        timeout=JUDGE_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") not in ("done", "error"):
+        raise RuntimeError(str(result.get("message") or result))
+    return result
 
 
 def main() -> int:
@@ -100,16 +135,11 @@ def main() -> int:
         return 2
 
     try:
-        r = requests.post(
-            f"{JUDGE_URL}/submit",
-            files={"code": ("solution.cpp", code)},
-            data={"pid": PROBLEM_ID, "lang": "cpp"},
-            timeout=30,
-        )
-        r.raise_for_status()
-        sid = r.json()["sid"]
+        start = time.time()
+        result = evaluate_with_judge(sub_uuid, code)
+        elapsed_seconds = time.time() - start
     except Exception as exc:
-        msg = f"Submit request failed: {exc}"
+        msg = f"Judge request failed: {exc}"
         print(f"[submit] ERROR: {msg}", file=sys.stderr)
         log_record(
             {
@@ -121,74 +151,48 @@ def main() -> int:
         )
         return 3
 
-    print(f"[submit] uuid={sub_uuid} sid={sid} pid={PROBLEM_ID} evaluating...")
-
-    start = time.time()
-    result: dict | None = None
-    while time.time() - start < MAX_POLL_TIME:
-        try:
-            r = requests.get(f"{JUDGE_URL}/result/{sid}", timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") in ("done", "error"):
-                    result = data
-                    break
-        except Exception:
-            pass
-        time.sleep(POLL_INTERVAL)
-
-    if result is None:
-        msg = f"Polling timed out after {MAX_POLL_TIME}s"
-        print(f"[submit] ERROR: {msg}", file=sys.stderr)
-        log_record(
-            {
-                "submission_uuid": sub_uuid,
-                "ts": now_iso(),
-                "status": "error",
-                "sid": sid,
-                "error": msg,
-            }
-        )
-        return 4
-
     score_raw = result.get("score") or 0.0
     try:
         score = float(score_raw) / 100.0
     except (TypeError, ValueError):
         score = 0.0
     status = result.get("status", "unknown")
-    detail = result.get("message") or result.get("detail") or ""
+    detail = result.get("message") or ""
+    score_unbounded = result.get("score_unbounded", score_raw)
+    metrics = result.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        metrics = {}
 
     log_record(
         {
             "submission_uuid": sub_uuid,
             "ts": now_iso(),
             "status": status,
-            "sid": sid,
             "score": score,
             "score_raw": score_raw,
+            "score_unbounded": score_unbounded,
             "detail": detail,
-            "raw_result": result,
+            "elapsed_seconds": elapsed_seconds,
             "code_chars": code_chars,
+            "metrics": metrics,
         }
     )
 
-    print(f"[submit] uuid={sub_uuid} sid={sid}")
+    print(f"[submit] uuid={sub_uuid}")
     print(
         f"[submit] status={status} score={score:.4f} "
         f"(raw={score_raw}/100) code_chars={code_chars}"
     )
+    if score_unbounded != score_raw:
+        print(f"[submit] unbounded={score_unbounded}")
     if detail:
         snippet = detail if len(detail) <= 500 else detail[:500] + "..."
         print(f"[submit] detail: {snippet}")
-    cases = result.get("cases") or result.get("results") or []
-    if isinstance(cases, list) and cases:
-        passed = sum(
-            1
-            for c in cases
-            if isinstance(c, dict) and (c.get("score") or 0) > 0
+    if metrics:
+        metric_text = " ".join(
+            f"{key}={value}" for key, value in sorted(metrics.items())
         )
-        print(f"[submit] cases: {passed}/{len(cases)} passed")
+        print(f"[submit] metrics: {metric_text}")
 
     return 0
 

@@ -47,9 +47,9 @@ the average of per-case scores normalized to `[0, 1]` and written to
   are shallow-cloned into a temp directory and cleaned up on exit.
 - **172 tasks generated**: one per problem; type detection (`default` vs
   `interactive`) drives prompt and verifier choices.
-- **HTTP judge sidecar**: every task's `docker-compose.yaml` brings up the
-  upstream Frontier-CS judge as a `judge` service; the verifier in `main`
-  POSTs `/app/solution.cpp` and polls for the score.
+- **HTTP judge sidecar**: every task's `docker-compose.yaml` exposes a
+  `judge` service that accepts C++ submissions and returns sanitized aggregate
+  scores to the agent and verifier.
 - **Interactive graded submissions**: agents can run `bash /app/submit.sh`
   during a trial to grade the current solution with the same judge used by the
   final verifier.
@@ -59,7 +59,7 @@ the average of per-case scores normalized to `[0, 1]` and written to
   solution but before leaving a better final file.
 - **Process reward artifacts**: `/logs/agent/submissions.jsonl` is used for
   live progress display; final scoring rebuilds `/logs/verifier/submissions.jsonl`
-  from judge-owned artifacts under `/logs/artifacts/judge/submissions`.
+  from sanitized judge-side submission records.
 - **Per-task verifier timeout**: scaled as
   `max(120, n_cases * time_limit_seconds * 5 + 60)` so harder problems
   with many cases do not time out before the judge finishes.
@@ -72,9 +72,10 @@ the average of per-case scores normalized to `[0, 1]` and written to
 - **Reusable local images**: optional `--build-local-images` and
   `--use-published-judge` flags emit tasks that reuse a prebuilt main and/or
   judge image, which is much faster for repeated local runs.
-- **Cleaner default artifacts**: judge submissions stay under the Harbor
-  job's `artifacts/`, while judge `data` lives in a Docker-managed volume by
-  default; `--preserve-judge-artifacts` opts into bind-mounting it.
+- **Cleaner default artifacts**: agent- and verifier-visible submission logs
+  contain sanitized scores and metadata. Raw judge-engine submissions and data
+  live in Docker-managed volumes by default; `--preserve-judge-artifacts` opts
+  into bind-mounting them for debugging.
 
 ## Generated Task Structure
 
@@ -86,6 +87,7 @@ frontier-cs-algorithm/
 │   ├── environment/              # Docker bring-up
 │   │   ├── Dockerfile            # main image (g++, python, agent CLIs)
 │   │   ├── docker-compose.yaml   # main + judge services
+│   │   ├── judge_proxy.py        # sanitized judge-facing HTTP endpoint
 │   │   ├── submit.sh             # agent-facing iterative submit entry point
 │   │   ├── submit.py             # submit helper + submissions.jsonl logging
 │   │   ├── AGENT.md              # parity-mode agent rules
@@ -96,7 +98,7 @@ frontier-cs-algorithm/
 │   │   └── reference.cpp         # only when upstream ships one
 │   └── tests/
 │       ├── test.sh               # Harbor verifier entry point
-│       └── evaluate.py           # POSTs to judge, polls, writes reward
+│       └── evaluate.py           # submits to judge and writes reward artifacts
 ```
 
 The adapter package itself follows the standard `src/` layout produced by
@@ -202,9 +204,9 @@ Available flags:
 - `--use-published-judge` — Pull the published judge image
   (`yanagiorigami/frontier-cs-harbor-judge:latest`) and retag it locally so
   generated tasks can keep referencing the stable local tag.
-- `--preserve-judge-artifacts` — Bind-mount the judge `data` directory into
-  the Harbor job artifacts (debugging only; default keeps it in a Docker
-  volume).
+- `--preserve-judge-artifacts` — Bind-mount raw judge-engine submissions and
+  `data` into the Harbor job artifacts (debugging only; default keeps them in
+  Docker volumes).
 
 Each generated task lives at `datasets/frontier-cs-algorithm/frontier-cs-algorithm-{id}/`
 (top-level `datasets/frontier-cs-algorithm/` matches the adapter folder; each
@@ -365,10 +367,13 @@ images.
 agent's transcript; for token-limit truncations the agent simply ran out of
 budget before emitting a final solution.
 
-**Judge returns `Unknown error`** — look at the raw judge artifacts under
-`artifacts/judge/submissions/<id>/{source.code,result.json}`. Use
-`--preserve-judge-artifacts` when generating tasks if you also need the
-judge `data` directory for debugging.
+**Judge returns `Unknown error`** — first inspect
+`verifier/judge_result.json`, `verifier/submissions.jsonl`, and the sanitized
+judge-side log under `artifacts/judge/proxy/submissions.jsonl`. If you need raw
+judge-engine internals for debugging, regenerate the task with
+`--preserve-judge-artifacts` and inspect
+`artifacts/judge/submissions/<id>/{source.code,result.json}` plus
+`artifacts/judge/data`.
 
 **Docker path issues** — confirm `FRONTIER_CS_ALGORITHMIC_PATH` points at
 the `algorithmic` directory of a Frontier-CS checkout, not the repo root.
