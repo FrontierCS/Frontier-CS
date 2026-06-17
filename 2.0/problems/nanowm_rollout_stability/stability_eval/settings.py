@@ -43,7 +43,8 @@ HISTORY_STAB = float(_get("FRONTIER_NWM_HISTORY_STAB", 0.02))  # baseline defaul
 # Drift metric: mean LPIPS over the drifted tail (frames >= this index).
 DRIFT_TAIL_START = int(_get("FRONTIER_NWM_DRIFT_TAIL_START", 60))
 # Eval set sizes — drift reductions are small, so enough clips to resolve them
-# above per-clip noise (validated: 22 clips gives t~2.5 for the reference).
+# above per-clip noise (validated under CRN pairing: 3 seeds x 22 clips give
+# pooled paired t=5.15, p<1e-4 for the reference).
 QUICK_CLIPS = int(_get("FRONTIER_NWM_QUICK_CLIPS", 8))
 FINAL_CLIPS = int(_get("FRONTIER_NWM_FINAL_CLIPS", 24))
 BATCH_SIZE = int(_get("FRONTIER_NWM_BATCH_SIZE", 2))

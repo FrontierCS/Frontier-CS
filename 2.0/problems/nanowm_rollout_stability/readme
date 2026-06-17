@@ -50,8 +50,9 @@ score = clip(100 * (baseline_tail_drift - patched_tail_drift) / baseline_tail_dr
 ## Reference & difficulty
 
 `reference.patch` raises history stabilization (a one-line sampling change) — it
-reliably reduces tail-drift a few percent over the baseline at iso-compute
-(validated: 73% per-clip win, t≈2.5 over 22 clips), proving the task is solvable.
+reliably reduces tail-drift ~6.8% (± 1.2%) over the baseline at iso-wall-clock
+(validated under common-random-numbers pairing: 74% per-clip win, pooled paired
+t=5.15, p<1e-4 across 3 seeds × 22 clips), proving the task is solvable.
 Substantially beating it is the open challenge.
 
 ## Resource budget

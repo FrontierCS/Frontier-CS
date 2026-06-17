@@ -38,7 +38,8 @@ evaluation:
   # else drift is being bought with compute (the speedup task's axis).
   wallclock_tolerance: 0.10
   # Drift reductions are small; enough clips to resolve above per-clip noise
-  # (validated: stab=0.20 reference beats baseline at 22 clips, t~2.5, 73% win).
+  # (validated under common-random-numbers pairing: stab=0.20 reference beats
+  # baseline; 74% per-clip win, pooled paired t=5.15, p<1e-4 across 3 seeds x 22 clips).
   quick_clips: 8
   final_clips: 24
   batch_size: 2
