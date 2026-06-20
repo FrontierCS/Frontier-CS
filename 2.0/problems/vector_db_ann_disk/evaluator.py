@@ -775,6 +775,25 @@ def _ensure_benchmark() -> Benchmark:
         baseline_seconds = float(meta["baseline_seconds"])
         baseline_qps = float(meta["baseline_qps"])
         baseline_load_seconds = float(meta["baseline_load_seconds"])
+        # Anti-cheat: the candidate service is built and run by this judge in the
+        # same container and could otherwise read the ground truth / baseline
+        # straight off disk and fabricate perfect results. They are now held in
+        # memory (truth + baseline_* above and the cached _BENCHMARK), so remove
+        # the files before any candidate runs. _ensure_benchmark caches globally,
+        # so later submissions reuse the in-memory copy and never need the files.
+        # Only for the real baked benchmark (small-N local CI keeps its cache and
+        # has no candidate-isolation concern). Opt out with FRONTIER_VECTOR_DB_KEEP_TRUTH.
+        keep = os.environ.get("FRONTIER_VECTOR_DB_KEEP_TRUTH", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if N_BASE > LOCAL_GENERATION_LIMIT and not keep:
+            for secret_path in (truth_path, meta_path):
+                try:
+                    secret_path.unlink()
+                except OSError:
+                    pass
     elif SMOKE_ONLY:
         truth = None
         baseline_seconds = 0.0
