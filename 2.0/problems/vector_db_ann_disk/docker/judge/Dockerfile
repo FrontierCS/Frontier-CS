@@ -66,6 +66,7 @@ RUN chmod 700 /data/private_100M && chmod 600 /data/private_100M/* && \
 # and never referenced by /load.
 ENV FRONTIER_VECTOR_DB_N=${N} \
     FRONTIER_VECTOR_DB_Q=${Q} \
+    FRONTIER_VECTOR_DB_ITER_Q=2000 \
     FRONTIER_VECTOR_DB_VECTOR_DTYPE=uint8 \
     FRONTIER_VECTOR_DB_QUERY_DTYPE=uint8 \
     FRONTIER_VECTOR_DB_SMOKE_ONLY=0 \

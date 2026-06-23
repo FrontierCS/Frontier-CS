@@ -73,6 +73,30 @@ layering `cargo`/`rustc` + `numpy`/`faiss-cpu` from `config.yaml`.
   8 GiB eval container — a deliberate bake. Adjust if you want a different
   reference.
 
+## Running locally on constrained Docker (rootless / vfs / limited disk)
+
+The baked judge image is **large (~58 GB)** because the SIFT100M data lives
+inside it. On a host with `overlay2` and ample disk this is fine. But on a
+**rootless daemon using the `vfs` storage driver** (no copy-on-write), every
+derived image layer and every container re-copies the full image, so a single
+trial can need **~3x** the image size in scratch space, and a near-full shared
+disk can be exhausted.
+
+For those hosts, use a **mount-data variant**: build a tiny base image (ubuntu +
+the pinned evaluator ENV + the small `private_100M` secrets) and bind-mount the
+54 GB `index_100M` read-only into the judge service at `/data/index_100M`
+instead of baking it. The data then lives once on the host. Other rootless
+gotchas: set `DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock`; pass
+`--cpus ignore` to `harbor trial start` if the `cpu` cgroup controller is not
+delegated (only `memory`/`pids` usually are); and inject agent credentials via
+**env vars** (e.g. `OPENAI_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), since
+`docker cp` of host-owned credential files fails under the user namespace.
+
+Note also that iterative `submit.sh` evaluations time only
+`FRONTIER_VECTOR_DB_ITER_Q` queries (default 2000) for fast feedback; the final
+verifier (`FRONTIER_SUBMISSION_ROLE=final`) always times the full
+`FRONTIER_VECTOR_DB_Q` set.
+
 ## Security note (anti-cheat)
 
 The candidate service is built and run by the judge **in this same container**,

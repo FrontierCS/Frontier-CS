@@ -129,6 +129,15 @@ bash /app/submit.sh
 at any time to submit the current `/app` project to the official judge and get
 score feedback.
 
+Each evaluation rebuilds your project, runs `/load` once (loading the on-disk
+index can take tens of seconds), then runs the timed query phase, so a single
+submission takes on the order of a few minutes to score. Submissions are
+asynchronous: prefer to let a running evaluation finish and read its score
+rather than cancelling and resubmitting repeatedly. To keep iterative feedback
+responsive, an agent `submit.sh` evaluation times only a representative subset
+of the query set (see below); the final score is always computed over the full
+set.
+
 ## Validity
 
 A submission is valid if:
@@ -166,3 +175,15 @@ score = 100 * (1 - sqrt(baseline_qps) / sqrt(candidate_qps))
 The bounded and unbounded score fields both report this score. Harbor JSON
 results include the measured `qps`, `baseline_qps`, `recall_at_10`, load time,
 and runtime metrics under the `metrics` field.
+
+### Iterative feedback vs. final scoring
+
+To make the `submit.sh` loop responsive, an iterative (agent) submission times
+only a representative subset of the query set (`2000` queries by default) and
+reports it as a fast estimate; its message is prefixed with `[iterative]` and
+states how many queries were used. The **final verifier** always times the full
+query set (`Q = 10000`) and reports the authoritative `[final]` score using the
+exact same scoring rule. recall@10 and QPS are stable averages, so the iterative
+estimate closely tracks the final score; use it to iterate quickly, and rely on
+the final score for the definitive number. (The subset size is the `metrics`
+field `n_queries`; the full count is `n_queries_full`.)

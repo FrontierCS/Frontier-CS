@@ -66,6 +66,10 @@ QUERIES_PER_WORKER = _config_int(
 N_QUERIES = _config_int(
     "FRONTIER_VECTOR_DB_Q", CONCURRENCY * QUERIES_PER_WORKER
 )
+# Iterative (agent `submit.sh`) feedback times only this many queries for a fast
+# turnaround; the final verifier (FRONTIER_SUBMISSION_ROLE=final) always times
+# the full N_QUERIES set for the authoritative score. See evaluate().
+ITER_QUERIES = _config_int("FRONTIER_VECTOR_DB_ITER_Q", 2000)
 TOP_K = _config_int("FRONTIER_VECTOR_DB_TOP_K", 10)
 SEED = _config_int("FRONTIER_VECTOR_DB_SEED", 20260528)
 GRAPH_DEGREE = _config_int("FRONTIER_VECTOR_DB_GRAPH_DEGREE", 64)
@@ -711,7 +715,7 @@ def _measure_reference_baseline(
             pq_pivots_path,
         )
         results, latencies, baseline_seconds = _run_queries(
-            f"http://127.0.0.1:{port}", queries
+            f"http://127.0.0.1:{port}", queries, N_QUERIES
         )
         return results, latencies, baseline_seconds, load_seconds
     finally:
@@ -858,21 +862,21 @@ def _search_one(base_url: str, query_index: int, vector: np.ndarray) -> tuple[in
 
 
 def _run_queries(
-    base_url: str, queries: np.ndarray
+    base_url: str, queries: np.ndarray, n_eval: int
 ) -> tuple[np.ndarray, list[float], float]:
-    for i in range(min(WARMUP, N_QUERIES)):
+    for i in range(min(WARMUP, n_eval)):
         try:
             _search_one(base_url, i, queries[i])
         except Exception:
             pass
 
-    results = np.zeros((N_QUERIES, TOP_K), dtype=np.uint32)
+    results = np.zeros((n_eval, TOP_K), dtype=np.uint32)
     latencies: list[float] = []
     start = time.perf_counter()
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
         futures = [
             pool.submit(_search_one, base_url, i, queries[i])
-            for i in range(N_QUERIES)
+            for i in range(n_eval)
         ]
         for future in as_completed(futures):
             query_index, ids, latency_ms = future.result()
@@ -890,9 +894,10 @@ def _run_queries(
 
 def _recall_at_k(results: np.ndarray, truth: np.ndarray) -> float:
     hits = 0
+    n = len(results)
     for got, expected in zip(results, truth):
         hits += len(set(int(x) for x in got) & set(int(x) for x in expected))
-    return hits / float(N_QUERIES * TOP_K)
+    return hits / float(max(n, 1) * TOP_K)
 
 
 def evaluate(solution_path: str):
@@ -906,6 +911,15 @@ def evaluate(solution_path: str):
         benchmark = _ensure_benchmark()
     except Exception as exc:
         return _invalid(f"benchmark preparation failed: {exc}")
+
+    # The judge sets FRONTIER_SUBMISSION_ROLE per submission: "final" for the
+    # verifier (authoritative, full query set) and "agent" for iterative
+    # `submit.sh` feedback (fast subset). Timing only n_eval queries keeps the
+    # iterative loop responsive so agents get a real score without cancelling.
+    is_final = (
+        os.environ.get("FRONTIER_SUBMISSION_ROLE", "agent").strip().lower() == "final"
+    )
+    n_eval = N_QUERIES if is_final else max(1, min(N_QUERIES, ITER_QUERIES))
 
     with tempfile.TemporaryDirectory(prefix="frontier_vector_db_ann_disk_") as tmp:
         workdir = Path(tmp) / "project"
@@ -946,7 +960,9 @@ def evaluate(solution_path: str):
                 benchmark.pq_vector_path,
                 benchmark.pq_pivots_path,
             )
-            results, latencies, candidate_seconds = _run_queries(base_url, queries)
+            results, latencies, candidate_seconds = _run_queries(
+                base_url, queries, n_eval
+            )
         except Exception as exc:
             stderr = b""
             if process.poll() is not None and process.stderr is not None:
@@ -975,7 +991,7 @@ def evaluate(solution_path: str):
         if benchmark.truth is not None
         else None
     )
-    qps = N_QUERIES / candidate_seconds
+    qps = n_eval / candidate_seconds
     if recall is None:
         score = 0.0
     elif recall < TARGET_RECALL or qps <= benchmark.baseline_qps:
@@ -997,18 +1013,26 @@ def evaluate(solution_path: str):
         "p99_latency_ms": float(np.percentile(latencies, 99)) if latencies else 0.0,
         "concurrency": float(CONCURRENCY),
         "n_base": float(N_BASE),
-        "n_queries": float(N_QUERIES),
+        "n_queries": float(n_eval),
+        "n_queries_full": float(N_QUERIES),
+        "submission_role": "final" if is_final else "agent",
         "top_k": float(TOP_K),
         "graph_degree": float(GRAPH_DEGREE),
         "smoke_only": bool(recall is None),
     }
     recall_text = "skipped" if recall is None else f"{recall:.6f}"
+    mode = "final" if is_final else "iterative"
     message = (
-        f"N={N_BASE}; Q={N_QUERIES}; top_k={TOP_K}; "
+        f"[{mode}] N={N_BASE}; Q={n_eval}; top_k={TOP_K}; "
         f"recall_at_10={recall_text}; qps={qps:.6f}; "
         f"baseline_qps={benchmark.baseline_qps:.6f}; "
         f"load_seconds={load_seconds:.6f}; score={score:.6f}"
     )
+    if not is_final:
+        message += (
+            f" (fast estimate over {n_eval} of {N_QUERIES} queries; "
+            f"the final verifier scores all {N_QUERIES})"
+        )
     return score, score, message, metrics
 
 
