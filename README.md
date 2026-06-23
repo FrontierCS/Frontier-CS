@@ -19,11 +19,11 @@
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-68-blue" alt="Research Problems">
   <img src="https://img.shields.io/badge/Algorithmic_Problems-188-green" alt="Algorithmic Problems">
-  <img src="https://img.shields.io/badge/2.0_Problems-10-purple" alt="2.0 Problems">
+  <img src="https://img.shields.io/badge/2.0_Problems-11-purple" alt="2.0 Problems">
 </p>
 
 ## News
-
+- **Jun 23, 2026:** Frontier-CS is featured in the [Seed 2.1 Model Card](https://lf3-static.bytednsdoc.com/obj/eden-cn/lapzild-tss/ljhwZthlaukjlkulzlp/seed2.1/Seed2_1_Model_Card.pdf) for frontier research evaluation.
 - **Jun 11, 2026:** [Roadmap to FrontierCS 2.0](https://frontier-cs.org/blog/frontiercs-2-roadmap/): agent-native algorithmic tasks, released private tests, controlled feedback infrastructure, and 10 repo-level preview tasks.
 - **May 27, 2026:** Frontier-CS 2.0 is underway: agent-horizon friendly, verifiable, and harborized from the start.
 - **May 26, 2026:** The formerly private algorithmic test cases are now public, making full local, batch, and agent-based evaluation possible without internal repository access.
