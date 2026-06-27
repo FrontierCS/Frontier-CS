@@ -40,9 +40,11 @@ environment:
   build_timeout_seconds: 5400
 evaluation:
   # GPU served on Modal (one per environment); judge container is CPU-only.
+  # H100 matches the hardware the reference + noise floor were calibrated on, so
+  # the production scoring path and the validated numbers share one GPU SKU.
   model: nanowm_l2_csgo
   dataset: game/csgo
-  gpu: L40S
+  gpu: H100
   # FIXED rollout invocation (the agent's patch changes sampler internals, not these).
   rollout_length: 50
   history_length: 4
@@ -54,10 +56,23 @@ evaluation:
   # Calibrated: seq@20 is already +5% over seq@50, so a 3% tolerance forces real
   # fast-sampling work (DPM-Solver++, caching, distillation), not naive step cuts.
   quality_tolerance: 0.03
+  # (E) Speedup at which the latency score saturates to 100: score is
+  # 100*log2(speedup)/log2(target). The old bare 100*log2 capped everything >=2x
+  # at 100; 4x keeps a gradient across the achievable range (causal-prefix ~3x).
+  speedup_target: 4.0
+  # (A) Faithfulness BACKSTOP: mean LPIPS between PATCHED and BASELINE rollout
+  # frames (paired final run), always reported; penalty only past this generous
+  # threshold so it catches an egregious rollout SUBSTITUTION, not legitimate
+  # iso-quality speedups. Calibrated on H100: bf16 reference drifts 0.206 from the
+  # fp32 baseline (iso-quality vs GT, different trajectory), so 0.30 clears it with
+  # margin while still flagging ~half-divergent substitutions; causal-prefix ~0.
+  faithfulness_tol: 0.30
   quick_clips: 4           # iterative (agent-role) public feedback
   final_clips: 16          # final (verifier-role) evaluation
   batch_size: 4
-  baseline_cache_path: /opt/nanowm/baseline/baseline_metrics.json
+  # Key MUST be `baseline_cache` (settings.py strips the FRONTIER_NWM_ prefix and
+  # looks up `baseline_cache`); `baseline_cache_path` was silently ignored.
+  baseline_cache: /opt/nanowm/baseline/baseline_metrics.json
 submission:
   kind: file
   path: /app/solution.patch

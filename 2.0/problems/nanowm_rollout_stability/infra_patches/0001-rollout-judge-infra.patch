@@ -1,5 +1,32 @@
+diff --git a/src/sample/evaluate_metrics.py b/src/sample/evaluate_metrics.py
+index cc6846d..6132034 100644
+--- a/src/sample/evaluate_metrics.py
++++ b/src/sample/evaluate_metrics.py
+@@ -34,7 +34,21 @@ def main():
+     parser.add_argument("--history_length", type=int, default=1, help="Number of history frames (context)")
+     
+     args = parser.parse_args()
+-    
++
++    # Deterministic metric (judge infra): the scored LPIPS runs on GPU by default,
++    # so without this the AlexNet/VGG convs are cuDNN-nondeterministic and the
++    # baseline vs patched arms (separate metric processes) can differ even for a
++    # no-op patch -- reintroducing the run-to-run noise the rollout determinism
++    # is meant to remove. Mirror rollout.py: deterministic kernels + TF32 off.
++    # NWM_DETERMINISM_STRICT=1 makes a missing deterministic kernel raise (proof).
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if args.device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     video_dir = Path(args.video_dir)
+     if not video_dir.exists():
+         print(f"Directory {video_dir} does not exist.")
 diff --git a/src/sample/rollout.py b/src/sample/rollout.py
-index b83f0ee..d4bfd6a 100644
+index b83f0ee..6ea2d7b 100644
 --- a/src/sample/rollout.py
 +++ b/src/sample/rollout.py
 @@ -9,6 +9,7 @@ Uses the sliced dataset for evaluation consistency.
@@ -10,13 +37,90 @@ index b83f0ee..d4bfd6a 100644
  sys.path.append(os.path.split(sys.path[0])[0])
  
  import torch
-@@ -131,9 +132,20 @@ def main(args):
+@@ -37,7 +38,35 @@ torch.backends.cudnn.allow_tf32 = True
+ def main(args):
+     torch.set_grad_enabled(False)
+     device = "cuda" if torch.cuda.is_available() else "cpu"
+-    
++
++    # Deterministic numerics (judge infra, outside the agent's editable sampling
++    # scope). Goal: the baseline (unpatched) and patched arms share an identical
++    # numerical pipeline -- not just identical initial noise from the per-clip
++    # seed below, but identical arithmetic -- so a cached/separate-run baseline is
++    # a valid common-random-numbers partner. Otherwise GPU reduction/atomic
++    # nondeterminism (and TF32, which upstream turns ON at import) reintroduce
++    # ~2-3% run-to-run LPIPS noise, the same magnitude as the speedup quality
++    # guardrail and the stability drift effect. CUBLAS_WORKSPACE_CONFIG is
++    # exported by the launcher before the process starts (cuBLAS needs it set
++    # before the first CUDA call).
++    #
++    # CAVEAT: warn_only=True (the default) means any op WITHOUT a deterministic
++    # CUDA kernel (an atomicAdd scatter/index_add, some interpolate variants)
++    # runs nondeterministically and is only WARNED about, so bit-stability is not
++    # guaranteed until proven for this exact model+VAE+decode on the production
++    # GPU. Run ONCE during H100 calibration with NWM_DETERMINISM_STRICT=1
++    # (warn_only=False) to PROVE no op falls back -- it raises instead of warning
++    # if one does -- and re-establish no-op-CRN-pair -> 0.0 there. Production may
++    # then stay strict (a fallback raises -> judged an infra error and re-run,
++    # never a silently corrupted score) or relax to warn_only once proven clean.
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     save_dir = Path(args.save_path)
+     save_dir.mkdir(parents=True, exist_ok=True)
+     
+@@ -109,6 +138,13 @@ def main(args):
+     if dataset.slice_mode != "exhaustive":
+         raise ValueError(f"Rollout requires exhaustive slice_mode, got '{dataset.slice_mode}'")
+ 
++    # Clip parallelism (judge infra): this process handles the GLOBAL clip window
++    # [clip_offset, clip_offset+num_samples) of the filtered valid-slice list, so
++    # the scored pair can be fanned out across Modal containers (one chunk each)
++    # yet stay bit-identical to one sequential run -- the per-batch reseed below
++    # keys on the GLOBAL start_idx, so aligned chunks reproduce the same batches.
++    # Search far enough to cover the window's far end.
++    _clip_offset = int(getattr(args, "clip_offset", 0))
+     valid_slice_indices = []
+     for i in range(len(dataset)):
+         slice_idx = dataset.slice_indices[i]
+@@ -118,22 +154,38 @@ def main(args):
+         total_len = dataset.data_source.get_seq_length(traj_idx)
+         if (total_len - start_frame) >= rollout_length * frame_interval:
+             valid_slice_indices.append(i)
+-        if len(valid_slice_indices) >= args.num_samples:
++        if len(valid_slice_indices) >= _clip_offset + args.num_samples:
+             break
+             
+     num_samples = len(valid_slice_indices)
+-    if num_samples < args.num_samples:
+-        print(f"Warning: Only found {num_samples} valid slices with enough length (requested {args.num_samples})")
+-    
++    # Window [clip_offset, _window_hi) of the GLOBAL valid-slice list is this
++    # chunk's work; the seed and sample_id below use the global start_idx, so a
++    # chunk is bit-identical to the matching slice of one sequential run.
++    _window_hi = min(_clip_offset + args.num_samples, num_samples)
++    if _window_hi - _clip_offset < args.num_samples:
++        print(f"Warning: only {_window_hi - _clip_offset} of requested {args.num_samples} valid "
++              f"slices available from clip_offset {_clip_offset} (total valid {num_samples})")
++
+     print(f"\nRollout configuration:")
+-    print(f"  Total samples to process: {num_samples}")
++    print(f"  Clip window: [{_clip_offset}, {_window_hi}) of {num_samples} valid slices")
+     print(f"  Batch size: {batch_size}")
      print(f"  History length: {history_length}")
      print(f"  Rollout length: {rollout_length}")
-     
+-    
+-    for start_idx in range(0, num_samples, batch_size):
+-        end_idx = min(start_idx + batch_size, num_samples)
++
 +    gen_seconds = 0.0  # accumulated sampling-region wall-clock (excludes load/decode)
-     for start_idx in range(0, num_samples, batch_size):
-         end_idx = min(start_idx + batch_size, num_samples)
++    for start_idx in range(_clip_offset, _window_hi, batch_size):
++        end_idx = min(start_idx + batch_size, _window_hi)
          current_batch_size = end_idx - start_idx
 +
 +        # Deterministic, clip-keyed RNG (judge infra, outside the agent's editable
@@ -31,7 +135,7 @@ index b83f0ee..d4bfd6a 100644
          
          print(f"Processing batch {start_idx//batch_size + 1} (slices {start_idx} to {end_idx-1})...")
          
-@@ -181,7 +193,12 @@ def main(args):
+@@ -181,7 +233,12 @@ def main(args):
          gt_latents = encode_frames(vae, gt_visual, device, vae_precision=vae_precision)
          generated_latents = gt_latents[:, :history_length]
          
@@ -45,7 +149,7 @@ index b83f0ee..d4bfd6a 100644
          for t in tqdm(range(history_length, rollout_length), desc=f"Rollout progress"):
              context_latents = generated_latents[:, -history_length:]
              
-@@ -224,9 +241,25 @@ def main(args):
+@@ -224,9 +281,25 @@ def main(args):
              new_latent = pred_latents[:, history_length:history_length+1]
              generated_latents = torch.cat([generated_latents, new_latent], dim=1)
              
@@ -73,7 +177,7 @@ index b83f0ee..d4bfd6a 100644
          
          for i in range(current_batch_size):
              sample_id = start_idx + i
-@@ -234,6 +267,15 @@ def main(args):
+@@ -234,6 +307,15 @@ def main(args):
              save_video(gt_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_gt.mp4"), fps=args.fps)
              save_comparison_video(gt_frames_batch[i], gen_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_compare.mp4"), fps=args.fps)
              
@@ -89,22 +193,27 @@ index b83f0ee..d4bfd6a 100644
      print(f"Done! Processed {num_samples} samples.")
  
  if __name__ == "__main__":
-@@ -259,6 +301,9 @@ if __name__ == "__main__":
+@@ -259,6 +341,14 @@ if __name__ == "__main__":
                          help="DFoT stabilization noise level in [0, 1) for context frames. "
                               "0.0 disables; 0.02 is the DFoT default recommended starting point.")
      parser.add_argument("--use_fp16", action="store_true", help="Use fp16")
 +    parser.add_argument("--seed", type=int, default=42,
 +                        help="Deterministic RNG seed (judge infra). Per-clip seed = seed + clip_index "
 +                             "so the baseline and patched arms share initial noise (common random numbers).")
++    parser.add_argument("--clip_offset", type=int, default=0,
++                        help="Judge infra: process only the GLOBAL clip window "
++                             "[clip_offset, clip_offset+num_samples) of the filtered valid-slice list, "
++                             "so the scored pair can fan out across Modal containers bit-identically "
++                             "(the per-batch seed keys on the global index). Must be batch_size-aligned.")
      parser.add_argument("--vae_model_path", type=str, default=None,
                          help="Override the VAE path from the training config (e.g. local dir for offline nodes).")
  
-@@ -282,7 +327,7 @@ if __name__ == "__main__":
+@@ -282,7 +372,7 @@ if __name__ == "__main__":
  
      # Top-level / non-hierarchical CLI args
      for key in ('ckpt', 'save_path', 'num_samples', 'batch_size', 'rollout_length',
 -                'history_length', 'fps', 'eta', 'use_fp16', 'vae_model_path'):
-+                'history_length', 'fps', 'eta', 'use_fp16', 'vae_model_path', 'seed'):
++                'history_length', 'fps', 'eta', 'use_fp16', 'vae_model_path', 'seed', 'clip_offset'):
          val = cli_args.get(key)
          if val is not None:
              cli_overrides[key] = val

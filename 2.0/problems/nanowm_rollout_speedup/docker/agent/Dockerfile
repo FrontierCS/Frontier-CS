@@ -25,8 +25,15 @@ RUN git clone https://github.com/simchowitzlabpublic/nano-world-model /app/nano-
 COPY task_ctx/infra_patches/ /tmp/infra_patches/
 RUN cd /app/nano-world-model && for p in /tmp/infra_patches/*.patch; do \
         [ -e "$p" ] && git apply "$p" || true; done && \
+    { grep -q 'use_deterministic_algorithms' src/sample/evaluate_metrics.py \
+        && grep -q 'NWM_TIME_FILE' src/sample/rollout.py; } \
+      || { echo 'FATAL: infra patch did not apply (determinism / timer markers missing)'; exit 1; } && \
     git add -A && git -c user.email=t@e -c user.name=t commit -q -m base || true
 
 COPY task_ctx/harbor_app/ /app/
-COPY task_ctx/task_pkg/ /app/task/
+# NOTE: the eval package (task_pkg/speedup_eval + evaluator.py) is JUDGE-ONLY and is
+# deliberately NOT shipped to the agent. It carries settings.py (scoring knobs, seed,
+# val-file paths) and the scoring/orchestration source (incl. the frozen-model guard);
+# baking it into /app/task let the agent read judge internals directly. The judge image
+# keeps it under /opt/nanowm/task. The agent validates by submitting + reading feedback.
 RUN chmod +x /app/*.sh 2>/dev/null || true

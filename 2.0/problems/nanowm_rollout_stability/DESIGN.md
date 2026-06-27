@@ -40,8 +40,10 @@ compute*: stabilization, scheduling-matrix design, drift-aware caching that free
 time for re-grounding, periodic context re-anchoring, error correction, solvers.
 
 ## 4. Patch policy / GPU / scoring
-Identical to nanowm_rollout_speedup: Python-only allowlist (`src/diffusion/**`,
-`src/sample/sampling_utils.py`), deny model/VAE/metric/harness/data; Modal GPU
+Identical to nanowm_rollout_speedup: Python-only allowlist (`src/diffusion/**`
+only) — `src/sample/sampling_utils.py` is DENIED (it decodes+saves the generated
+frames the LPIPS metric reads, so editing it could blur the scored pixels);
+deny model/VAE/metric/harness/data; Modal GPU
 from a CPU judge (`stability_eval/{runner,orchestrate,modal_app}.py`); smoke
 score 1.0 when GPU/Modal unconfigured (local CI). Score =
 `clip(100·(base_tail−patched_tail)/base_tail,0,100)·wallclock_mult`.
@@ -58,3 +60,51 @@ p<1e-4; a no-op patch scores 0.000). Patch policy + smoke pass.
 Modal end-to-end run; bake-asset provenance (ckpt + held-out CSGO subset +
 cached baseline); confirm final_clips gives stable scoring on the judge's hidden
 set (the small effect needs ~20+ clips).
+
+## 7. Update — H100 + CRN hardening (this branch)
+
+All in judge infra (`infra_patches/0001-…`, `stability_eval/`); the agent-editable
+sampling scope and the shared 2.0 template are untouched. This matters more here
+than for speedup: the drift effect (~6.8%) is the same order as the run-to-run
+noise the audit measured, so a noisy baseline is more likely to swamp the signal.
+
+- **GPU is now H100, not L40S** (`config.yaml`, `modal_app.py`) — production
+  scoring and the calibrated numbers share one SKU.
+- **Determinism enforced** (deterministic kernels + TF32 off in `rollout.py`,
+  `CUBLAS_WORKSPACE_CONFIG` exported by the launcher) so per-clip seeding yields a
+  bit-stable pipeline, not just identical initial noise.
+- **Scored (final) run pairs baseline + patched in one job/GPU/process** (true
+  CRN, no cache); the cached path is iterative-only and keyed by a full config
+  fingerprint (incl. `drift_tail_start`).
+- Also fixed the `stability_eval/settings.py` docstring (was "speedup") and the
+  `modal_app` app-name default (was `nanowm-rollout-speedup`).
+
+**Validation status:** scoring/smoke re-verified on CPU (no-op CRN pair → 0.0;
+reference reproduces ~6.8; `score_unbounded == score` by construction for a
+relative reduction). **GPU/Modal end-to-end on H100 pending maintainer
+credentials** — the multi-seed drift numbers must be re-measured on the
+production path before being treated as final.
+
+## 8. Update — #7 tail-targeting hack closed (randomized scored horizon, this branch)
+
+The codex 7.83% submission added a module-global call counter (`% 76`, ==
+`ROLLOUT_LENGTH − HISTORY_LENGTH`) and ramped extra history-stabilization onto the
+late frames, saturating exactly at frame 64 == the scored tail (`drift_tail_start
+60`). `df_sample` never receives the horizon, so the only way it could target the
+tail was to HARDCODE the disclosed length (the README said "80-frame rollout").
+
+Fix: the **scored horizon is drawn at random per run** from `[64, 72]` (well below
+the agent-measurable nominal 80), decided once on the judge and threaded to both CRN
+arms and every fan-out chunk; the scored tail is derived from it (`tail = horizon −
+TAIL_FRAMES`). CRN + chunk bit-identity preserved (one horizon shared; per-batch
+global-index seed unchanged; `MAX ≤ nominal` keeps GT headroom and the 22-clip set).
+The README/DESIGN no longer disclose the horizon or the tail index. A no-GPU proof
+(`stability_eval/test_antihack_horizon.py`) shows the shipped counter's expected
+tail-targeting collapses from 100% (at the disclosed 80) to ≈0% over the band (even
+negative at the shorter horizons — its fixed ramp misfires). What survives is a
+**horizon-robust** "stabilize deeper frames more" schedule, which is the legitimate
+adaptive-stabilization behaviour the hack imitated (responds to real accumulated
+drift, generalizes, faithfully cleans the tail). The single-scalar shallowness (#6)
+is a separate depth limitation, not a reward-hack — see AUDIT_REPORT for the
+H100-sweep-gated redesign. **Pending:** re-confirm the band's SNR on H100 (the
+calibrated effect was measured at `tail≥60`); `MIN/MAX` are env-tunable.

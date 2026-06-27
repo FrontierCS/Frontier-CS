@@ -35,24 +35,47 @@ MAX_PATCH_BYTES = 256_000
 ALLOWED = (
     "src/diffusion/*.py",
     "src/diffusion/**/*.py",
-    "src/sample/sampling_utils.py",
 )
 DENIED = (
     "src/models/**", "src/latent_codecs/**",          # frozen model + VAE
     "src/sample/evaluate_metrics.py", "src/sample/plot_metrics.py",  # the metric
     "src/sample/rollout.py",                           # the judge harness
+    # sampling_utils.py is PLUMBING (VAE encode/decode, video IO, resize), NOT the
+    # diffusion sampler -- it decodes+saves the generated frames the LPIPS quality
+    # guardrail reads, so allowing it would let a submission blur ONLY the scored
+    # pixels and mask a quality regression (passing the guardrail unfairly). Frozen.
+    "src/sample/sampling_utils.py",
     "src/wm_datasets/**",                              # data loading / no bench detection
     "src/experiments/**", "src/main.py", "src/utils/**",
     "**/*.so", "**/*.pyx", "**/*.c", "**/*.cpp", "**/*.cu",  # no native
     "**/setup.py", "**/pyproject.toml", "**/requirements*.txt",
 )
 # Forbidden substrings in ADDED lines (no benchmark detection / env leakage /
-# timing short-circuits / hardcoded ground truth).
+# timing short-circuits / hardcoded ground truth / sandbox escape / reading the
+# held-out data). Defense-in-depth only -- substring matching is necessarily
+# imperfect, so the real guarantees are the path allowlist, the frozen metric,
+# and the sampler never receiving future GT frames. Tokens are chosen to be
+# high-value AND low-false-positive: e.g. we deliberately do NOT ban `eval(`
+# (would hit `model.eval()`), `compile(` (would hit `torch.compile()`), or
+# `open(` (legit solver caches), relying on the deeper guardrails for those.
 FORBIDDEN_TOKENS = (
+    # benchmark / judge / env detection + leakage. `environ` (not just
+    # `os.environ`) also catches `from os import environ` / aliased reads; the
+    # rollout injects CSGO_DATA_DIR (the held-out GT dir) into the patched
+    # subprocess env, so that key is banned outright.
     "FRONTIER_", "JUDGE_", "HARBOR_", "MODAL_", "HF_TOKEN", "NWM_TIME",
+    "environ", "os.getenv", "getenv(", "CSGO_DATA_DIR", "sys.modules",
+    # the metric / ground truth / held-out selection (no hard-coding or peeking)
     "csgo_validation_start_indices", "val_starts", "val_files", "gen_seconds",
     "evaluate_metrics", "lpips", "ground_truth", "gt_frames",
-    "os.environ", "subprocess", "socket", "/judge", "/opt/nanowm/baseline",
+    # held-out asset / data paths (no reading the GT episodes off disk)
+    "/judge", "/opt/nanowm", "/proc/", ".hdf5", "csgo_subset",
+    "train_split", "test_split",
+    # process / network / dynamic-exec escapes
+    "subprocess", "socket", "os.system", "os.popen", "os.exec", "os.fork",
+    "__import__", "importlib", "__builtins__", "ctypes", "marshal",
+    "urllib", "requests", "http.client",
+    # timing short-circuits
     "time.sleep", "while True",
 )
 
@@ -172,11 +195,39 @@ def evaluate(solution_path: str):
     try:
         baseline, patched = orchestrate.run_pair(patch_path, clips=clips, role=role)
     except Exception as exc:  # concise public error only
-        return 0.0, 0.0, f"evaluation failed: {type(exc).__name__}", {**pmetrics, "role": role}
+        # Attribute the failure: a patch that won't apply OR a patch whose code
+        # crashes the rollout/metric is the submission's fault (a legitimate 0);
+        # an orchestration/GPU error is judge-side infra. All score 0 per the 2.0
+        # convention, but `infra_error` lets the operator spot/re-run the latter
+        # instead of mistaking a transient GPU failure for a bad submission.
+        ml = str(exc).lower()
+        if isinstance(exc, RuntimeError) and "patch failed" in ml:
+            kind, infra, pub = "patch_apply", 0, "patch failed to apply"
+        elif isinstance(exc, RuntimeError) and ("rollout failed" in ml or "metrics failed" in ml):
+            kind, infra, pub = "execution", 0, "submission crashed during rollout/metrics"
+        else:
+            kind, infra, pub = "infra", 1, f"evaluation infra error: {type(exc).__name__}"
+        return 0.0, 0.0, pub, {**pmetrics, "role": role, "error_class": type(exc).__name__,
+                               "error_kind": kind, "infra_error": infra}
 
+    faith = patched.get("faithfulness_lpips")  # set only on the paired (final) run
+    if role == "final" and faith is None:
+        # Fail CLOSED. Faithfulness (patched-vs-baseline frame LPIPS) is the scored
+        # run's active backstop against a model swap/mutation the static policy can't
+        # see: any mutation that changes the OUTPUT frames raises faithfulness and is
+        # penalized (an iso-output mutation is a legitimate faster-equivalent). If it
+        # could not be computed (frames_lpips raised -- e.g. a patch that produced
+        # unreadable frames, or a transient infra failure), do NOT silently score with
+        # faithfulness_mult=1.0 (a free pass that disables the defense). Treat as an
+        # infra error to re-run; a submission that consistently breaks it keeps scoring 0.
+        return 0.0, 0.0, "faithfulness backstop unavailable on the scored run", {
+            **pmetrics, "role": role, "error_kind": "infra", "infra_error": 1,
+            "error_class": "FaithfulnessUnavailable"}
     res = scoring.provisional_score(
         {"all": baseline["gen_seconds"]}, {"all": patched["gen_seconds"]},
         baseline["lpips"], patched["lpips"], tolerance=S.QUALITY_TOLERANCE,
+        faithfulness_lpips=faith, faithfulness_tolerance=S.FAITHFULNESS_TOLERANCE,
+        speedup_target=S.SPEEDUP_SCORE_TARGET,
     )
     metrics = {
         **pmetrics, "role": role, "clips": clips,
@@ -186,11 +237,18 @@ def evaluate(solution_path: str):
         "patched_lpips": round(patched["lpips"], 4),
         "geomean_speedup": round(res["geomean_speedup"], 3),
         "quality_multiplier": round(res["quality_multiplier"], 3),
-        "score_formula": "100*log2(speedup)*quality_mult; quality_mult<1 if LPIPS rises >tol over baseline",
+        "faithfulness_lpips": round(faith, 4) if faith is not None else None,
+        "faithfulness_multiplier": round(res["faithfulness_multiplier"], 3),
+        "speedup_target": S.SPEEDUP_SCORE_TARGET,
+        "score_formula": ("100*log2(speedup)/log2(target) * quality_mult * faithfulness_mult; "
+                          "quality_mult<1 if LPIPS-vs-GT rises >tol over baseline; "
+                          "faithfulness_mult<1 if patched frames diverge >tol LPIPS from baseline frames"),
     }
+    _faith_str = (f", faith {faith:.3f} vs base-rollout (tol {S.FAITHFULNESS_TOLERANCE:.2f}"
+                  f", mult {res['faithfulness_multiplier']:.2f})" if faith is not None else "")
     msg = (f"speedup {res['geomean_speedup']:.2f}x "
            f"(lpips {patched['lpips']:.3f} vs baseline {baseline['lpips']:.3f}, "
-           f"tol {S.QUALITY_TOLERANCE:.0%}); score {res['score']:.1f}")
+           f"tol {S.QUALITY_TOLERANCE:.0%}){_faith_str}; score {res['score']:.1f}")
     return res["score"], res["score_unbounded"], msg, metrics
 
 

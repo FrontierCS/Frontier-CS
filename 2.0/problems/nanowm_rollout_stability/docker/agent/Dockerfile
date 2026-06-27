@@ -25,8 +25,16 @@ RUN git clone https://github.com/simchowitzlabpublic/nano-world-model /app/nano-
 COPY task_ctx/infra_patches/ /tmp/infra_patches/
 RUN cd /app/nano-world-model && for p in /tmp/infra_patches/*.patch; do \
         [ -e "$p" ] && git apply "$p" || true; done && \
+    { grep -q 'clip_offset' src/sample/rollout.py \
+        && grep -q 'use_deterministic_algorithms' src/sample/evaluate_metrics.py; } \
+      || { echo 'FATAL: infra patch did not apply (clip_offset / determinism markers missing)'; exit 1; } && \
     git add -A && git -c user.email=t@e -c user.name=t commit -q -m base || true
 
 COPY task_ctx/harbor_app/ /app/
-COPY task_ctx/task_pkg/ /app/task/
+# NOTE: the eval package (task_pkg/stability_eval + evaluator.py) is JUDGE-ONLY and is
+# deliberately NOT shipped to the agent. It carries settings.py (the scored rollout
+# horizon band, seed, val-file paths, drift-tail index) and the scoring/orchestration
+# source; baking it into /app/task let the agent read the judge internals directly
+# (e.g. the exact rollout length / tail window). The judge image keeps it under
+# /opt/nanowm/task. The agent validates patches by submitting and reading judge feedback.
 RUN chmod +x /app/*.sh 2>/dev/null || true

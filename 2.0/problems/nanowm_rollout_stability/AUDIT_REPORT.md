@@ -40,7 +40,7 @@ The remaining real items are **documentation/robustness hygiene** (low): three-w
   - Speedup reference reported as `1.17×/22.4` (`DESIGN.md:78-79`, `PR_SUMMARY.md:14`, `CALIBRATION_FINDINGS.md:253`) vs `1.15×/20.1` (`CALIBRATION_FINDINGS.md:273`) — **two distinct 4-clip runs with different baselines** (299.95s vs 291.36s = 2.95% swing) quoted interchangeably. Cross-pairing the two baselines moves the score **4.2 pts** (18.3 ↔ 22.4), and only the `speedup_val` patched (256.7s/0.521) has a JSON; the `253s/0.535` run has no on-disk patched artifact.
   - `DESIGN.md` mtime is **after** the e2e runs yet still carries the older val numbers — i.e. docs were not reconciled to the later runs.
 - **Why it matters:** (e) docs should not over-claim. A reviewer cannot tell which baseline/score is canonical; the most-cited figures are the most flattering (slower baseline / higher reduction).
-- **Fix:** pick **one** canonical config per task (the production `final_clips`: stability 24, speedup 16), run it once paired, and report that single number with its CI across `DESIGN.md` / `PR_SUMMARY.md` / `CALIBRATION_FINDINGS.md`. Restate stability as the artifact-backed range **3.6–7.2% (≈5% typical)**, not a bare 7.2.
+- **Fix:** pick **one** canonical config per task (the production `final_clips`: stability **22**, speedup 16), run it once paired, and report that single number with its CI across `DESIGN.md` / `PR_SUMMARY.md` / `CALIBRATION_FINDINGS.md`. Restate stability as the artifact-backed range **3.6–7.2% (≈5% typical)**, not a bare 7.2. (The old `7.2`/`24-clip` log predates the shipped asset set: the held-out subset bound to the staged 1-200 data chunk is exactly the 22 test_split episodes ≤200, so `final_clips` is capped at 22 — `24` indexed past the sliced dataset and could only have run on a fuller local data tree.)
 
 ### P3 — Speedup timer is dead code; score is full-process wall-clock, and the cached baseline is a single un-repeated run  `LOW`
 - **Evidence:**
@@ -86,7 +86,7 @@ The remaining real items are **documentation/robustness hygiene** (low): three-w
 ## Recommended Fixes (highest-leverage first)
 
 1. **Seed the rollout + measure baseline paired in-job (P1).** The single highest-leverage change: `torch.manual_seed(clip_id)` before the initial `th.randn`, and replace the cached baseline with a baseline computed on the same clips/seed in the same job (common random numbers). Removes the gameability (no-op → ~0) and shrinks the metric noise that contaminates both references' margins.
-2. **Reconcile the docs to one canonical number per task (P2).** Run the production `final_clips` config once (stability 24, speedup 16), report that single value + CI everywhere; restate stability as 3.6–7.2% (≈5% typical) and pick one speedup baseline.
+2. **Reconcile the docs to one canonical number per task (P2).** Run the production `final_clips` config once (stability 22, speedup 16), report that single value + CI everywhere; restate stability as 3.6–7.2% (≈5% typical) and pick one speedup baseline.
 3. **Fix the timer + baseline measurement (P3).** Either implement the per-region sampling timer (so the metric isolates the patchable region) or delete the dead `NWM_TIME_FILE` path and correct the docstring; measure the baseline as median-of-N (or paired per #1).
 4. **Report multi-seed + Wilcoxon for stability and soften "reliably" (P4).** ≥3 seeds, Wilcoxon alongside the t-test; word the claim to the α-edge it actually is.
 5. **Require `== clips` on the cached baseline and label the LPIPS tables (P5, P6).** Equal nested clip sets; one-line "(all frames, judge convention)" note on the LPIPS-vs-GT tables.
@@ -121,3 +121,141 @@ The fix lives in judge infrastructure (`rollout.py` + `*_eval/`, regenerated int
 `infra_patches/0001-rollout-judge-infra.patch`) — **outside the agent's editable
 sampling scope**, and the shared 2.0 adapter/template is untouched. Standing
 conclusions C1–C6 are unaffected (and C3/C5's residual P1 caveat is now closed).
+
+---
+
+## Update — P1 actually closed; H100; reviewer-honesty note (2026-06-21, branch `fix/nanowm-h100-crn`)
+
+A re-review found the 2026-06-14 "P1 fixed" claim above was only **half** true:
+deterministic per-clip seeding was added, but `orchestrate._baseline()` still
+**served a cached baseline** rather than recomputing it paired in-job, and the
+infra patch enforced **no GPU determinism** (`use_deterministic_algorithms`,
+TF32-off, `CUBLAS_WORKSPACE_CONFIG` were all absent — and upstream `rollout.py`
+turns TF32 *on* at import). Seeding fixes the initial noise but not the
+arithmetic, so "the cached baseline is a valid CRN partner" only held on the
+H100 single node where determinism happened to apply — not the (then L40S, never
+run e2e) production path. P1 was therefore not closed for the scored path.
+
+Now actually closed:
+- **Determinism enforced** in the infra patch (`use_deterministic_algorithms(True,
+  warn_only=True)`, `cudnn.deterministic`, `benchmark=False`, TF32 disabled) +
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` exported by the launcher before CUDA init.
+- **Scored (final) run measures baseline + patched as a true CRN pair** in one
+  job/GPU/process (`run_pair(role="final")` → `modal_app.run_pair_remote`), no
+  cache. Cached baseline kept only for cheap iterative feedback, now keyed by a
+  full **config fingerprint** (incl. `drift_tail_start`).
+- **GPU pinned to H100** (was L40S) so the production scoring path and every
+  calibrated number in this report share one SKU.
+
+**Reviewer-honesty note (closes audit risk (e), over-claim):** the calibration
+artifacts this report cites as evidence — `CALIBRATION_FINDINGS.md`, `outputs/`,
+`calib/…sbatch`, job numbers, `PR_SUMMARY.md` — **are not shipped in this repo**
+(they live in the author's working tree), so the pre-fix numbers above are
+**not independently reproducible from the PR** and should be read as provisional.
+The code-level fixes here are CPU-verified (policy/scoring/smoke; no-op CRN pair →
+exactly 0.0; reference reproduces 1.17×/22.3 and ~6.8); **GPU/Modal end-to-end on
+H100 is still pending maintainer credentials** and must re-establish the no-op≈0
+and residual-noise numbers on the production path before the headline margins are
+final.
+
+---
+
+## Update — #7 tail-targeting reward-hack closed; #6 scoped (2026-06-25, branch `fix/nanowm-h100-crn`)
+
+A post-mortem of the codex Harbor trials surfaced a concrete reward-hack that the
+earlier audit had not (the scored run had not yet been exercised by a real agent):
+
+### #7 — tail window targetable via a hardcoded module counter  `HIGH (closed)`
+- **The hack (as shipped, codex 7.83% run).** The winning stability submission added
+  a **module-global call counter** in `df_sample` and ramped EXTRA history-stabilization
+  onto the rollout's late frames:
+  `_STABILITY_ROLLOUT_PERIOD = 76` (== `ROLLOUT_LENGTH 80 − HISTORY_LENGTH 4`),
+  `rollout_phase = _stability_rollout_call % 76`,
+  `extra = 0.08·clamp((rollout_phase−32)/28)`. `df_sample` is called once per generated
+  frame, so at the **disclosed** nominal horizon 80 the counter aligns to the
+  generated-frame index and the ramp **saturates exactly at frame 64**, i.e. squarely
+  on the scored tail (`DRIFT_TAIL_START = 60`). It contributed ≈ +1 pp over the flat-scalar
+  reference (7.83 vs ≈6.8), earned by dumping the intervention on the scored window
+  rather than reducing drift generally. Slips the static policy (a module counter is
+  not a forbidden token).
+- **Root enabler.** `df_sample` (the agent's editable scope) never receives
+  `rollout_length`, so a submission can only HARDCODE the horizon — which it learned
+  from the **README ("80-frame rollout")** and could measure during the agent-role QUICK
+  loop.
+- **Fix (this branch).** The SCORED (role=final) horizon is now **drawn at random per run**
+  from `[ROLLOUT_LENGTH_MIN, ROLLOUT_LENGTH_MAX] = [64, 72]` (well below the
+  agent-measurable nominal 80), decided ONCE on the judge and threaded to every arm /
+  fan-out chunk (`settings.draw_final_rollout_length`; `orchestrate.run_pair`;
+  `runner.evaluate(rollout_length=…)`; `modal_app` spec). The scored tail is derived
+  from it (`tail_start = horizon − TAIL_FRAMES`). CRN pairing and chunk bit-identity are
+  preserved (both arms + all chunks share one horizon; the per-batch global-index seed is
+  unchanged; `MAX ≤ nominal` so GT headroom and the 22-clip set are unchanged). The
+  README/DESIGN no longer disclose the horizon or tail index.
+- **Verification (no GPU; `stability_eval/test_antihack_horizon.py`).** Replaying the
+  exact shipped counter, its **expected** tail-targeting over the `[64,72]` band collapses
+  from +0.064 (100% at the disclosed horizon 80) to **+0.00002 (≈0%)** — and is *negative*
+  for horizons ≤68, because the fixed period-76/frame-64 ramp misfires onto non-tail frames
+  at the shorter horizons. So the concrete shipped overfit is neutralized.
+- **What deliberately survives (not a hack).** A **horizon-robust** "stabilize deeper
+  frames more" schedule (keyed on a runtime signal — per-clip call index reset at the RNG
+  reseed, or context staleness — rather than a hardcoded period) can still raise tail
+  quality (~70% of the no-defense ceiling in the diagnostic). That is the **legitimate**
+  behaviour the hack imitated: it responds to genuine accumulated drift, generalizes across
+  horizons/content, and faithfully cleans the tail via less-contaminated context (LPIPS-vs-GT
+  rewards real fidelity, not cosmetic blur — `sampling_utils.py`, the decode/save plumbing,
+  is already DENIED). Randomization converts the overfit into *either-legitimate-or-broken*,
+  which is the goal. **Caveat:** lowering the horizon moves the tail earlier than the
+  calibrated `tail≥60`; the relative drift metric is ~horizon-robust but the band's SNR must
+  be re-confirmed on H100. `MIN/MAX` are env-tunable (widen for stronger anti-hack, raise
+  toward 80 for the calibrated SNR).
+- **Re-verification note (the "partly" survivor is not a practical hack).** A second audit
+  suggested a counter with a period grid-searched to `[64,72]` (≈58-62) recovers ~5% of the
+  targeting ceiling. Two reasons this is not a meaningful reward-hack: (1) **the band is NOT
+  disclosed or observable.** `[64,72]`/`MIN/MAX` live ONLY in the judge-internal `config.yaml`
+  `evaluation` block (read via `task_config.json` on the judge); they are absent from
+  `harbor/` (the agent workspace) and the agent-facing `environment` string, and the
+  agent-role QUICK loop runs at the nominal 80 — so the agent can only calibrate to 80 (period
+  76), which collapses to ≈0 on the real band. The grid-search premise ("calibrate on the
+  disclosed band during dev") is false. (2) Even granting a leaked band, the residual is ~5%
+  of ceiling and **weaker than the flat-`0.20` reference**, with a mechanism (more stabilization
+  at greater frame depth) that responds to genuine accumulated drift — i.e. the legitimate
+  survivor, not a metric exploit. **Control:** keep the band judge-internal (never ship the
+  `evaluation` block to the agent); for belt-and-suspenders the bounds can be jittered per run
+  via the nonce. No code change needed; documented as the accepted residual.
+
+### #6 — task collapses to tuning the `history_stabilization_level` scalar  `MEDIUM (scoped, not a reward-hack)`
+- The dominant lever is a single exposed scalar: the reference IS `stab→0.20` and yields
+  ≈6.8% by itself; codex's per-frame age-profile + the (now-defeated) counter added only
+  ~1 pp. This is a **depth/ceiling** limitation (the headline difficulty is shallow), **not**
+  a reward-hack — bumping the exposed knob is the intended lever, just a shallow use of it.
+- The #7 randomization partially helps (it forces any position-dependent gain to be earned
+  *generally*, not on a fixed window), but does not raise the ceiling. **A real fix is a
+  recalibrated redesign** (gated on an H100 sweep, so deferred here): set the *baseline*
+  `history_stab` to the best-constant value found by a sweep so that merely raising the
+  scalar yields ≈0, and ship a NEW reference that is a genuinely better *schedule/mechanism*
+  (e.g. drift-keyed adaptive re-anchoring). Until that sweep, the task remains solvable-but-
+  shallow; documented here rather than silently shipped as "hard."
+
+### Cross-task hardening shipped alongside #7 (frozen-model guard + faithfulness fail-closed)
+A reward-hack audit of the FIXED branch (4 parallel auditors + synthesis) confirmed the
+#7 fix is CLEAN with zero regressions (CRN pairing, chunk bit-identity, cached-baseline
+validity all preserved) and the scoring math of BOTH tasks is clean (only cosmetic
+notes). It surfaced one cross-cutting gap — the model-frozen invariant was not
+structurally enforced (the speedup causal-prefix `temp_embed` gray area): a sampler
+patch could persistently mutate the frozen model and the static policy can't see a
+runtime monkeypatch. Closed in BOTH tasks:
+- **Frozen-model guard, actively wired:** `{speedup,stability}_eval.runner.inject_frozen_guard()`
+  inlines a param fingerprint into the copied `rollout.py` at apply-time (after the
+  agent patch; rollout.py is denied to the agent) — snapshot after `model.eval()`,
+  verify before the final `print`. A restored transient reshape (causal-prefix) passes;
+  a persistently-mutated model hard-errors → scored 0. Fail-closed if the anchors move.
+  Unit-tested (`test_inject_frozen_guard.py`, `speedup_eval/test_frozen_model_guard.py`).
+  Matters more for stability (no faithfulness backstop) than speedup.
+- **Speedup faithfulness fail-closed:** `evaluator.py` now returns 0 (not
+  `faithfulness_mult=1.0`) when `role=="final"` and `faithfulness_lpips` is None, so the
+  active model-mutation defense (patched-vs-baseline frame LPIPS) can't be silently
+  disabled.
+- Cosmetic: corrected the wallclock-multiplier comment (≈0.556 at +tol, 0.5 at
+  grace+tol). Net: no exploitable reward-hack or scoring overfit remains on the
+  authoritative scored path of either task (remaining items are #6 depth + the
+  acknowledged sum-preserving-fingerprint residual, both backstopped).

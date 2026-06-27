@@ -30,10 +30,29 @@ def paired_speedups(baseline_s: dict[str, float], patched_s: dict[str, float]) -
     return out
 
 
-def score_from_speedup(speedup: float) -> float:
+def score_from_speedup(speedup: float, target: float = 2.0) -> float:
+    """Map geomean speedup -> [0, 100], reaching 100 at `target`x. target=2.0
+    reproduces the old bare 100*log2(speedup) (saturated at 2x, so everything
+    >=2x capped at 100 and became indistinguishable); a larger target keeps a
+    gradient across the achievable range."""
     if speedup <= 0:
         return 0.0
-    return max(0.0, min(100.0, 100.0 * math.log(speedup, 2)))
+    denom = math.log(max(target, 1.0 + 1e-9), 2)
+    return max(0.0, min(100.0, 100.0 * math.log(speedup, 2) / denom))
+
+
+def faithfulness_multiplier(faithfulness_lpips, tolerance: float) -> float:
+    """1.0 while the patched rollout frames stay within `tolerance` mean LPIPS of
+    the BASELINE rollout frames (a faithful acceleration); decays inverse-
+    proportionally beyond that (a different rollout substituted for the baseline).
+    `None` (no paired baseline frames, e.g. agent-role cached-baseline path) means
+    'not measured' -> no penalty."""
+    if faithfulness_lpips is None:
+        return 1.0
+    f = max(0.0, float(faithfulness_lpips))
+    if f <= tolerance:
+        return 1.0
+    return max(0.0, min(1.0, tolerance / f))
 
 
 def quality_multiplier(baseline_lpips: float, patched_lpips: float, tolerance: float) -> float:
@@ -53,16 +72,23 @@ def provisional_score(
     baseline_lpips: float,
     patched_lpips: float,
     tolerance: float,
+    faithfulness_lpips=None,
+    faithfulness_tolerance: float = 0.10,
+    speedup_target: float = 2.0,
 ) -> dict[str, float]:
     speedups = paired_speedups(baseline_seconds, patched_seconds)
     gm = geometric_mean(speedups) if speedups else 0.0
-    latency_score = score_from_speedup(gm)
+    latency_score = score_from_speedup(gm, target=speedup_target)
     qmult = quality_multiplier(baseline_lpips, patched_lpips, tolerance)
+    fmult = faithfulness_multiplier(faithfulness_lpips, faithfulness_tolerance)
+    gate = qmult * fmult
     return {
         "geomean_speedup": gm,
         "latency_score": latency_score,
         "quality_multiplier": qmult,
-        "score": max(0.0, min(100.0, latency_score * qmult)),
-        "score_unbounded": max(0.0, 100.0 * math.log(max(gm, 1e-9), 2)) * qmult,
+        "faithfulness_multiplier": fmult,
+        "faithfulness_lpips": (float(faithfulness_lpips) if faithfulness_lpips is not None else -1.0),
+        "score": max(0.0, min(100.0, latency_score * gate)),
+        "score_unbounded": max(0.0, 100.0 * math.log(max(gm, 1e-9), 2)) * gate,
         "clips_scored": float(len(speedups)),
     }

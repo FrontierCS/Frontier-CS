@@ -1,10 +1,11 @@
-"""nanowm_rollout_speedup evaluator (Frontier-CS 2.0 contract).
+"""nanowm_rollout_stability evaluator (Frontier-CS 2.0 contract).
 
 The agent submits a Python-only patch against a clean NanoWM checkout that
-speeds up the diffusion SAMPLING for a fixed CSGO long-rollout invocation
-(NanoWM-L/2, 50 frames, 4 context, nominal 50 DDIM steps). The judge applies the
-patch, runs the rollout on a Modal GPU, and scores wall-clock speedup over the
-unpatched baseline, gated by a rollout-quality (LPIPS-vs-GT) guardrail.
+reduces long-horizon DRIFT of a fixed CSGO long-rollout invocation (NanoWM-L/2,
+80 frames, 4 context, fixed 50 DDIM steps) at iso-wall-clock. The judge applies
+the patch, runs the rollout on a Modal GPU, and scores the relative reduction in
+tail-frame LPIPS-vs-GT over the unpatched baseline, gated by a wall-clock
+guardrail (so drift can't simply be bought with more compute).
 
 This file holds the self-contained static patch policy + scoring. Heavy
 orchestration (Modal sandbox, baseline caching) lives in `stability_eval/`. When
@@ -35,24 +36,48 @@ MAX_PATCH_BYTES = 256_000
 ALLOWED = (
     "src/diffusion/*.py",
     "src/diffusion/**/*.py",
-    "src/sample/sampling_utils.py",
 )
 DENIED = (
     "src/models/**", "src/latent_codecs/**",          # frozen model + VAE
     "src/sample/evaluate_metrics.py", "src/sample/plot_metrics.py",  # the metric
     "src/sample/rollout.py",                           # the judge harness
+    # sampling_utils.py is PLUMBING (VAE encode/decode, video IO, resize), NOT the
+    # diffusion sampler -- it decodes+saves the generated frames the LPIPS metric
+    # reads (gen is decoded/saved BEFORE gt), so allowing it would let a submission
+    # blur/low-pass ONLY the scored pixels (a stateful counter in decode_latents/
+    # save_video) and cut LPIPS-vs-GT with zero faithful improvement. Frozen.
+    "src/sample/sampling_utils.py",
     "src/wm_datasets/**",                              # data loading / no bench detection
     "src/experiments/**", "src/main.py", "src/utils/**",
     "**/*.so", "**/*.pyx", "**/*.c", "**/*.cpp", "**/*.cu",  # no native
     "**/setup.py", "**/pyproject.toml", "**/requirements*.txt",
 )
 # Forbidden substrings in ADDED lines (no benchmark detection / env leakage /
-# timing short-circuits / hardcoded ground truth).
+# timing short-circuits / hardcoded ground truth / sandbox escape / reading the
+# held-out data). Defense-in-depth only -- substring matching is necessarily
+# imperfect, so the real guarantees are the path allowlist, the frozen metric,
+# and the sampler never receiving future GT frames. Tokens are chosen to be
+# high-value AND low-false-positive: e.g. we deliberately do NOT ban `eval(`
+# (would hit `model.eval()`), `compile(` (would hit `torch.compile()`), or
+# `open(` (legit solver caches), relying on the deeper guardrails for those.
 FORBIDDEN_TOKENS = (
+    # benchmark / judge / env detection + leakage. `environ` (not just
+    # `os.environ`) also catches `from os import environ` / aliased reads; the
+    # rollout injects CSGO_DATA_DIR (the held-out GT dir) into the patched
+    # subprocess env, so that key is banned outright.
     "FRONTIER_", "JUDGE_", "HARBOR_", "MODAL_", "HF_TOKEN", "NWM_TIME",
+    "environ", "os.getenv", "getenv(", "CSGO_DATA_DIR", "sys.modules",
+    # the metric / ground truth / held-out selection (no hard-coding or peeking)
     "csgo_validation_start_indices", "val_starts", "val_files", "gen_seconds",
     "evaluate_metrics", "lpips", "ground_truth", "gt_frames",
-    "os.environ", "subprocess", "socket", "/judge", "/opt/nanowm/baseline",
+    # held-out asset / data paths (no reading the GT episodes off disk)
+    "/judge", "/opt/nanowm", "/proc/", ".hdf5", "csgo_subset",
+    "train_split", "test_split",
+    # process / network / dynamic-exec escapes
+    "subprocess", "socket", "os.system", "os.popen", "os.exec", "os.fork",
+    "__import__", "importlib", "__builtins__", "ctypes", "marshal",
+    "urllib", "requests", "http.client",
+    # timing short-circuits
     "time.sleep", "while True",
 )
 
@@ -173,11 +198,26 @@ def evaluate(solution_path: str):
     try:
         baseline, patched = orchestrate.run_pair(patch_path, clips=clips, role=role)
     except Exception as exc:  # concise public error only
-        return 0.0, 0.0, f"evaluation failed: {type(exc).__name__}", {**pmetrics, "role": role}
+        # Attribute the failure: a patch that won't apply OR a patch whose code
+        # crashes the rollout/metric is the submission's fault (a legitimate 0);
+        # an orchestration/GPU error is judge-side infra. All score 0 per the 2.0
+        # convention, but `infra_error` lets the operator spot/re-run the latter
+        # instead of mistaking a transient GPU failure for a bad submission.
+        ml = str(exc).lower()
+        if isinstance(exc, RuntimeError) and "patch failed" in ml:
+            kind, infra, pub = "patch_apply", 0, "patch failed to apply"
+        elif isinstance(exc, RuntimeError) and ("rollout failed" in ml or "metrics failed" in ml):
+            kind, infra, pub = "execution", 0, "submission crashed during rollout/metrics"
+        else:
+            kind, infra, pub = "infra", 1, f"evaluation infra error: {type(exc).__name__}"
+        return 0.0, 0.0, pub, {**pmetrics, "role": role, "error_class": type(exc).__name__,
+                               "error_kind": kind, "infra_error": infra}
 
     res = scoring.provisional_score(
         baseline["tail_lpips"], patched["tail_lpips"],
         baseline["gen_seconds"], patched["gen_seconds"], tolerance=S.WALLCLOCK_TOLERANCE,
+        # fan-out provides the per-chunk-fair over-budget; None on the agent path.
+        wallclock_rel_over=patched.get("wallclock_rel_over"),
     )
     metrics = {
         **pmetrics, "role": role, "clips": clips,
@@ -186,12 +226,20 @@ def evaluate(solution_path: str):
         "rel_reduction_pct": round(res["rel_reduction_pct"], 2),
         "baseline_seconds": round(baseline["gen_seconds"], 2),
         "patched_seconds": round(patched["gen_seconds"], 2),
+        "wallclock_rel_over": round(res["wallclock_rel_over"], 4),
         "wallclock_multiplier": round(res["wallclock_multiplier"], 3),
+        # The SCORED horizon is drawn at random per run (audit #7) so a patch that
+        # hardcodes the rollout length to target the tail window cannot; surface it
+        # (and the derived tail) so operators can see/reproduce which horizon scored.
+        "rollout_length": patched.get("rollout_length") or baseline.get("rollout_length"),
+        "tail_start": patched.get("tail_start") or baseline.get("tail_start"),
         "score_formula": ("100*(baseline_tail-patched_tail)/baseline_tail * wallclock_mult; "
-                          "wallclock_mult<1 if gen time rises >tol over baseline (no buying drift with compute)"),
+                          "wallclock_mult decays from parity (grace 2%), ~0.556 at +tol and 0.5 at "
+                          "grace+tol, so drift cannot be bought with compute (no flat free-budget plateau)"),
     }
     msg = (f"tail-drift {patched['tail_lpips']:.3f} vs baseline {baseline['tail_lpips']:.3f} "
            f"({res['rel_reduction_pct']:+.1f}%, {patched['gen_seconds']:.0f}s/budget {baseline['gen_seconds']:.0f}s); "
+           f"horizon={metrics['rollout_length']} tail>={metrics['tail_start']}; "
            f"score {res['score']:.1f}")
     return res["score"], res["score_unbounded"], msg, metrics
 

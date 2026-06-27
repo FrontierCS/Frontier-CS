@@ -121,3 +121,39 @@ The fix lives in judge infrastructure (`rollout.py` + `*_eval/`, regenerated int
 `infra_patches/0001-rollout-judge-infra.patch`) — **outside the agent's editable
 sampling scope**, and the shared 2.0 adapter/template is untouched. Standing
 conclusions C1–C6 are unaffected (and C3/C5's residual P1 caveat is now closed).
+
+---
+
+## Update — P1 actually closed; H100; reviewer-honesty note (2026-06-21, branch `fix/nanowm-h100-crn`)
+
+A re-review found the 2026-06-14 "P1 fixed" claim above was only **half** true:
+deterministic per-clip seeding was added, but `orchestrate._baseline()` still
+**served a cached baseline** rather than recomputing it paired in-job, and the
+infra patch enforced **no GPU determinism** (`use_deterministic_algorithms`,
+TF32-off, `CUBLAS_WORKSPACE_CONFIG` were all absent — and upstream `rollout.py`
+turns TF32 *on* at import). Seeding fixes the initial noise but not the
+arithmetic, so "the cached baseline is a valid CRN partner" only held on the
+H100 single node where determinism happened to apply — not the (then L40S, never
+run e2e) production path. P1 was therefore not closed for the scored path.
+
+Now actually closed:
+- **Determinism enforced** in the infra patch (`use_deterministic_algorithms(True,
+  warn_only=True)`, `cudnn.deterministic`, `benchmark=False`, TF32 disabled) +
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` exported by the launcher before CUDA init.
+- **Scored (final) run measures baseline + patched as a true CRN pair** in one
+  job/GPU/process (`run_pair(role="final")` → `modal_app.run_pair_remote`), no
+  cache. Cached baseline kept only for cheap iterative feedback, now keyed by a
+  full **config fingerprint**.
+- **GPU pinned to H100** (was L40S) so the production scoring path and every
+  calibrated number in this report share one SKU.
+
+**Reviewer-honesty note (closes audit risk (e), over-claim):** the calibration
+artifacts this report cites as evidence — `CALIBRATION_FINDINGS.md`, `outputs/`,
+`calib/…sbatch`, job numbers, `PR_SUMMARY.md` — **are not shipped in this repo**
+(they live in the author's working tree), so the pre-fix numbers above are
+**not independently reproducible from the PR** and should be read as provisional.
+The code-level fixes here are CPU-verified (policy/scoring/smoke; no-op CRN pair →
+exactly 0.0; reference reproduces 1.17×/22.3 and ~6.8); **GPU/Modal end-to-end on
+H100 is still pending maintainer credentials** and must re-establish the no-op≈0
+and residual-noise numbers on the production path before the headline margins are
+final.

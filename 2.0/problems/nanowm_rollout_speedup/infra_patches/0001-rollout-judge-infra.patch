@@ -1,5 +1,32 @@
+diff --git a/src/sample/evaluate_metrics.py b/src/sample/evaluate_metrics.py
+index cc6846d..6132034 100644
+--- a/src/sample/evaluate_metrics.py
++++ b/src/sample/evaluate_metrics.py
+@@ -34,7 +34,21 @@ def main():
+     parser.add_argument("--history_length", type=int, default=1, help="Number of history frames (context)")
+     
+     args = parser.parse_args()
+-    
++
++    # Deterministic metric (judge infra): the scored LPIPS runs on GPU by default,
++    # so without this the AlexNet/VGG convs are cuDNN-nondeterministic and the
++    # baseline vs patched arms (separate metric processes) can differ even for a
++    # no-op patch -- reintroducing the run-to-run noise the rollout determinism
++    # is meant to remove. Mirror rollout.py: deterministic kernels + TF32 off.
++    # NWM_DETERMINISM_STRICT=1 makes a missing deterministic kernel raise (proof).
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if args.device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     video_dir = Path(args.video_dir)
+     if not video_dir.exists():
+         print(f"Directory {video_dir} does not exist.")
 diff --git a/src/sample/rollout.py b/src/sample/rollout.py
-index b83f0ee..d4bfd6a 100644
+index b83f0ee..d87ba9c 100644
 --- a/src/sample/rollout.py
 +++ b/src/sample/rollout.py
 @@ -9,6 +9,7 @@ Uses the sliced dataset for evaluation consistency.
@@ -10,7 +37,44 @@ index b83f0ee..d4bfd6a 100644
  sys.path.append(os.path.split(sys.path[0])[0])
  
  import torch
-@@ -131,9 +132,20 @@ def main(args):
+@@ -37,7 +38,35 @@ torch.backends.cudnn.allow_tf32 = True
+ def main(args):
+     torch.set_grad_enabled(False)
+     device = "cuda" if torch.cuda.is_available() else "cpu"
+-    
++
++    # Deterministic numerics (judge infra, outside the agent's editable sampling
++    # scope). Goal: the baseline (unpatched) and patched arms share an identical
++    # numerical pipeline -- not just identical initial noise from the per-clip
++    # seed below, but identical arithmetic -- so a cached/separate-run baseline is
++    # a valid common-random-numbers partner. Otherwise GPU reduction/atomic
++    # nondeterminism (and TF32, which upstream turns ON at import) reintroduce
++    # ~2-3% run-to-run LPIPS noise, the same magnitude as the speedup quality
++    # guardrail and the stability drift effect. CUBLAS_WORKSPACE_CONFIG is
++    # exported by the launcher before the process starts (cuBLAS needs it set
++    # before the first CUDA call).
++    #
++    # CAVEAT: warn_only=True (the default) means any op WITHOUT a deterministic
++    # CUDA kernel (an atomicAdd scatter/index_add, some interpolate variants)
++    # runs nondeterministically and is only WARNED about, so bit-stability is not
++    # guaranteed until proven for this exact model+VAE+decode on the production
++    # GPU. Run ONCE during H100 calibration with NWM_DETERMINISM_STRICT=1
++    # (warn_only=False) to PROVE no op falls back -- it raises instead of warning
++    # if one does -- and re-establish no-op-CRN-pair -> 0.0 there. Production may
++    # then stay strict (a fallback raises -> judged an infra error and re-run,
++    # never a silently corrupted score) or relax to warn_only once proven clean.
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     save_dir = Path(args.save_path)
+     save_dir.mkdir(parents=True, exist_ok=True)
+     
+@@ -131,9 +160,20 @@ def main(args):
      print(f"  History length: {history_length}")
      print(f"  Rollout length: {rollout_length}")
      
@@ -31,7 +95,7 @@ index b83f0ee..d4bfd6a 100644
          
          print(f"Processing batch {start_idx//batch_size + 1} (slices {start_idx} to {end_idx-1})...")
          
-@@ -181,7 +193,12 @@ def main(args):
+@@ -181,7 +221,12 @@ def main(args):
          gt_latents = encode_frames(vae, gt_visual, device, vae_precision=vae_precision)
          generated_latents = gt_latents[:, :history_length]
          
@@ -45,7 +109,7 @@ index b83f0ee..d4bfd6a 100644
          for t in tqdm(range(history_length, rollout_length), desc=f"Rollout progress"):
              context_latents = generated_latents[:, -history_length:]
              
-@@ -224,9 +241,25 @@ def main(args):
+@@ -224,9 +269,25 @@ def main(args):
              new_latent = pred_latents[:, history_length:history_length+1]
              generated_latents = torch.cat([generated_latents, new_latent], dim=1)
              
@@ -73,7 +137,7 @@ index b83f0ee..d4bfd6a 100644
          
          for i in range(current_batch_size):
              sample_id = start_idx + i
-@@ -234,6 +267,15 @@ def main(args):
+@@ -234,6 +295,15 @@ def main(args):
              save_video(gt_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_gt.mp4"), fps=args.fps)
              save_comparison_video(gt_frames_batch[i], gen_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_compare.mp4"), fps=args.fps)
              
@@ -89,7 +153,7 @@ index b83f0ee..d4bfd6a 100644
      print(f"Done! Processed {num_samples} samples.")
  
  if __name__ == "__main__":
-@@ -259,6 +301,9 @@ if __name__ == "__main__":
+@@ -259,6 +329,9 @@ if __name__ == "__main__":
                          help="DFoT stabilization noise level in [0, 1) for context frames. "
                               "0.0 disables; 0.02 is the DFoT default recommended starting point.")
      parser.add_argument("--use_fp16", action="store_true", help="Use fp16")
@@ -99,7 +163,7 @@ index b83f0ee..d4bfd6a 100644
      parser.add_argument("--vae_model_path", type=str, default=None,
                          help="Override the VAE path from the training config (e.g. local dir for offline nodes).")
  
-@@ -282,7 +327,7 @@ if __name__ == "__main__":
+@@ -282,7 +355,7 @@ if __name__ == "__main__":
  
      # Top-level / non-hierarchical CLI args
      for key in ('ckpt', 'save_path', 'num_samples', 'batch_size', 'rollout_length',

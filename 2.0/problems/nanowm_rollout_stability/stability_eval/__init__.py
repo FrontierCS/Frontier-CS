@@ -1,1 +1,1 @@
-"""nanowm_rollout_speedup evaluation package (shared by judge + public test)."""
+"""nanowm_rollout_stability evaluation package (shared by judge + public test)."""

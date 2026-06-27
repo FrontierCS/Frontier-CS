@@ -14,7 +14,10 @@ RUN git clone https://github.com/simchowitzlabpublic/nano-world-model /opt/nanow
     cd /opt/nanowm/nano-world-model && git checkout "$NANOWM_COMMIT"
 COPY task_ctx/infra_patches/ /tmp/infra_patches/
 RUN cd /opt/nanowm/nano-world-model && for p in /tmp/infra_patches/*.patch; do \
-        [ -e "$p" ] && git apply "$p" || true; done
+        [ -e "$p" ] && git apply "$p" || true; done && \
+    { grep -q 'use_deterministic_algorithms' src/sample/evaluate_metrics.py \
+        && grep -q 'NWM_TIME_FILE' src/sample/rollout.py; } \
+      || { echo 'FATAL: infra patch did not apply (determinism / timer markers missing)'; exit 1; }
 
 # Hidden assets baked by build_images.sh into the build context:
 #   task_ctx/assets/ckpts/nanowm-l2-csgo/model_state_dict.pt

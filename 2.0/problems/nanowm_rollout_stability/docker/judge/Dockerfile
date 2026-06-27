@@ -1,4 +1,4 @@
-# Judge image for nanowm_rollout_speedup (CPU-only; drives a Modal GPU).
+# Judge image for nanowm_rollout_stability (CPU-only; drives a Modal GPU).
 # Bakes the task package + clean NanoWM checkout + L/2 CSGO ckpt + held-out CSGO
 # episode subset + cached vanilla baseline; the GPU rollout runs on Modal.
 FROM python:3.11-slim
@@ -14,7 +14,10 @@ RUN git clone https://github.com/simchowitzlabpublic/nano-world-model /opt/nanow
     cd /opt/nanowm/nano-world-model && git checkout "$NANOWM_COMMIT"
 COPY task_ctx/infra_patches/ /tmp/infra_patches/
 RUN cd /opt/nanowm/nano-world-model && for p in /tmp/infra_patches/*.patch; do \
-        [ -e "$p" ] && git apply "$p" || true; done
+        [ -e "$p" ] && git apply "$p" || true; done && \
+    { grep -q 'clip_offset' src/sample/rollout.py \
+        && grep -q 'use_deterministic_algorithms' src/sample/evaluate_metrics.py; } \
+      || { echo 'FATAL: infra patch did not apply (clip_offset / determinism markers missing)'; exit 1; }
 
 # Hidden assets baked by build_images.sh into the build context:
 #   task_ctx/assets/ckpts/nanowm-l2-csgo/model_state_dict.pt
