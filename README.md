@@ -23,6 +23,7 @@
 </p>
 
 ## News
+- **Jun 25, 2026:** FrontierCS was selected as one of 13 projects for [Slingshots // THREE](https://www.laude.org/updates/slingshots-three).
 - **Jun 23, 2026:** Frontier-CS is featured in the [Seed 2.1 Model Card](https://lf3-static.bytednsdoc.com/obj/eden-cn/lapzild-tss/ljhwZthlaukjlkulzlp/seed2.1/Seed2_1_Model_Card.pdf) for frontier research evaluation.
 - **Jun 11, 2026:** [Roadmap to FrontierCS 2.0](https://frontier-cs.org/blog/frontiercs-2-roadmap/): agent-native algorithmic tasks, released private tests, controlled feedback infrastructure, and 10 repo-level preview tasks.
 - **May 27, 2026:** Frontier-CS 2.0 is underway: agent-horizon friendly, verifiable, and harborized from the start.
