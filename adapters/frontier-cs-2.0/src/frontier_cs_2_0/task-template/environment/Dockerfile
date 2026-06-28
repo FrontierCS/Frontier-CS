@@ -25,7 +25,14 @@ ENV CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
 
 WORKDIR /app
 
-COPY readme config.yaml task_config.json submission_config.json AGENT.md \
+# NOTE: config.yaml and task_config.json are JUDGE/operator internals (they carry
+# the full `evaluation` block — seed, val-file paths, scoring knobs, and any
+# undisclosed parameters like a randomized scored horizon). They are deliberately
+# NOT copied into the agent workspace: the agent's task description is `readme`, and
+# the submit scripts use `submission_config.json` + JUDGE_URL only. The judge reads
+# its own `/judge/task_config.json`. Shipping them to /app leaked judge internals to
+# the agent (e.g. the exact rollout length / tail index for nanowm_rollout_stability).
+COPY readme submission_config.json AGENT.md \
     submit.py submit.sh submissions.py submissions.sh \
     wait_submission.py wait_submission.sh cancel_submission.py cancel_submission.sh /app/
 COPY harbor_app/ /app/

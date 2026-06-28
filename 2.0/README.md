@@ -81,3 +81,25 @@ single ICCAD2015 design, `superblue1`. Its problem ID is
 `bboplace_direct_iccad2015`. It follows the same JSON interface and single
 design evaluation flow as `bboplace_direct_ispd2005`, with the ICCAD2015
 baseline for `superblue1`.
+
+## NanoWM Rollout Speedup
+
+This systems problem asks agents to speed up diffusion sampling for a frozen
+video world model. Its problem ID is `nanowm_rollout_speedup`. Agents submit a
+Python-only patch to the sampling layer of Nano World Models (arXiv:2605.23993);
+the judge runs a fixed NanoWM-L/2 CSGO 50-frame long-rollout on a Modal GPU and
+scores wall-clock speedup over the unpatched baseline, gated by an LPIPS rollout-
+quality guardrail (so naive step-cutting fails — real fast-sampling is required).
+Mirrors `vllm_llm_serving_optimization`: patch + latency + accuracy guardrail +
+Modal GPU, CPU judge.
+
+## NanoWM Rollout Stability
+
+The dual of `nanowm_rollout_speedup`: minimize long-horizon **drift** at fixed
+compute. Its problem ID is `nanowm_rollout_stability`. Agents submit a Python-only
+patch to the NanoWM sampling layer; the judge runs a fixed 80-frame NanoWM-L/2
+CSGO rollout (50 steps) on a Modal GPU and scores the relative reduction in
+tail-frame (≥60) LPIPS-vs-GT over the unpatched baseline, gated by a wall-clock
+guardrail (so drift can't be bought with more compute). A history-stabilization
+reference reliably beats baseline (validated t≈2.5/22 clips); beating it
+substantially is the open challenge.
