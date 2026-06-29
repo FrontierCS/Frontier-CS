@@ -1,0 +1,8 @@
+**/__pycache__
+**/*.pyc
+harbor/app/.public_test
+docs
+docker/README.md
+*.md
+reference.patch
+harbor/app/solution.patch

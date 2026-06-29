@@ -47,6 +47,21 @@ applies the submitted patch to a clean skeleton, runs a hidden arena against
 multiple baseline bot families, and scores by mean baseline win rate with a
 small faster-win tiebreak. The online generals.io service is not used.
 
+## vLLM LLM-Serving Optimization
+
+This systems problem asks agents to patch a clean upstream vLLM checkout to
+reduce the end-to-end latency of an LLM serving system on a multi-turn agentic
+workload, while keeping accuracy near a baseline. Its problem ID is
+`vllm_llm_serving_optimization`. The served model is
+`meta-llama/Llama-3.1-8B-Instruct` on a single Modal L40S, and the workload is a
+mini-swe-agent SWE-bench run. The agent submits a Python-only patch and can run
+an async public test (a subset of the final eval set) that returns real latency
+and accuracy feedback. Scoring is the geometric-mean latency speedup versus a
+vanilla-vLLM baseline, gated by an accuracy guardrail: accuracy within 5% of the
+baseline does not affect the score, and beyond that the score decays
+inverse-proportionally with the accuracy drop. Like duckdb-e2e, the agent and
+judge run in separate Docker environments.
+
 ## BBOPlace ISPD2005
 
 This VLSI placement problem asks agents to generate macro placement candidates
