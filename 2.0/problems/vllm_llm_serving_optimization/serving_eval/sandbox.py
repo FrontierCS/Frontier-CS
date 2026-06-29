@@ -94,6 +94,11 @@ class DockerSandbox(Sandbox):
             )
         except subprocess.TimeoutExpired:
             return 124, "command timed out"
+        except Exception as exc:  # noqa: BLE001
+            # A dead/evicted container or a docker hiccup must not kill the whole
+            # instance thread; surface it as a non-zero command result so the
+            # agent loop (and per-instance latency) keep going.
+            return 1, f"sandbox error: {type(exc).__name__}"
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
     def read_patch(self) -> str:
@@ -122,6 +127,8 @@ class LocalSandbox(Sandbox):
             )
         except subprocess.TimeoutExpired:
             return 124, "command timed out"
+        except Exception as exc:  # noqa: BLE001
+            return 1, f"sandbox error: {type(exc).__name__}"
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
     def read_patch(self) -> str:

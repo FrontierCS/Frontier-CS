@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Async public-test client. Deploys the current /app/vllm working tree to a Modal
-# L40S, runs the public instance subset, and reports latency + accuracy feedback
+# H100, runs the public instance subset, and reports latency + accuracy feedback
 # (not merely whether the build succeeded).
 #
 #   bash /app/public_test.sh launch        # start an async run, prints a run id

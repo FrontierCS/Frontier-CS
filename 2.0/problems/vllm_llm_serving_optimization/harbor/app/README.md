@@ -10,7 +10,7 @@ Modify vLLM source code to reduce end-to-end serving latency on the agentic
 SWE-bench workload while preserving the model's task-solving accuracy. Only
 Python-only changes in the allowlisted scheduler/execution/serving areas are
 valid (see the task statement for the exact patch policy). The model is served
-on a Modal L40S with `VLLM_USE_PRECOMPILED`, so CUDA/C++ kernel changes are out
+on a Modal H100 with `VLLM_USE_PRECOMPILED`, so CUDA/C++ kernel changes are out
 of scope.
 
 ## Submit
@@ -31,12 +31,12 @@ then keep iterating. Use `bash /app/submissions.sh` and
 Before (or instead of) submitting, evaluate your working tree yourself:
 
 ```bash
-bash /app/public_test.sh launch        # deploys /app/vllm to a Modal L40S, async
+bash /app/public_test.sh launch        # deploys /app/vllm to a Modal H100, async
 bash /app/public_test.sh status <id>   # latency + accuracy + provisional score
 bash /app/public_test.sh run           # synchronous variant
 ```
 
-The public test deploys your patched vLLM to a Modal L40S, serves
+The public test deploys your patched vLLM to a Modal H100, serves
 `meta-llama/Llama-3.1-8B-Instruct`, runs the **public instance subset** (a strict
 subset of the final eval set) under the same Poisson arrival workload the judge
 uses, and returns:

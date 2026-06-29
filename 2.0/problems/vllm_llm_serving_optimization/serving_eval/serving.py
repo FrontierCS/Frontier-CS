@@ -1,7 +1,7 @@
 """Deploy, health-check, and tear down a Modal-hosted vLLM server.
 
 The judge and the public test both build a Modal image from a vLLM source tree
-and serve it on an L40S. This module wraps that lifecycle:
+and serve it on an H100. This module wraps that lifecycle:
 
     deploy_server(...)  -> ServerHandle(base_url, app_name)
     wait_healthy(...)

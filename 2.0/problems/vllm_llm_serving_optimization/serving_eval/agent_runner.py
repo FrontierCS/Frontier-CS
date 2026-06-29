@@ -61,10 +61,18 @@ class InstanceResult:
 
 
 def load_instances(settings: EvalSettings, role: str) -> list[dict[str, Any]]:
+    import random
+
     from datasets import load_dataset
 
     dataset = load_dataset(settings.dataset, split=settings.dataset_split)
+    # Deterministic, fixed-seed RANDOM sample across all repos (sorted first for a
+    # machine-independent base order, then shuffled with sample_seed). This avoids
+    # the contiguous "sorted prefix" slice, which clusters by repo (e.g. all
+    # astropy+django) and is not representative. The public slice is the first
+    # rows of the same shuffled order, so it stays a strict subset of the final.
     ids = sorted(range(len(dataset)), key=lambda i: dataset[i]["instance_id"])
+    random.Random(settings.sample_seed).shuffle(ids)
     chosen = list(parse_slice(settings.slice_for_role(role), len(ids)))
     instances: list[dict[str, Any]] = []
     for index in chosen:
@@ -118,14 +126,30 @@ def run_instance(
                     messages=messages,
                     temperature=settings.temperature,
                     max_tokens=settings.max_completion_tokens,
+                    # Stable per-conversation job id (every turn of this instance
+                    # shares it). Forwarded via vllm_xargs -> sampling_params.
+                    # extra_args["job_id"], which vanilla vLLM ignores but a
+                    # job-aware scheduler can use for job-level FCFS. Does not
+                    # change generated tokens.
+                    extra_body={"vllm_xargs": {"job_id": str(instance_id)}},
                 )
             except Exception as exc:  # noqa: BLE001
+                # An API error (e.g. the growing conversation exceeding the model's
+                # context window) ends the loop, but any edits the agent already
+                # made to the sandbox are real work — capture the patch-so-far
+                # instead of discarding it.
                 exit_status = "api_error"
+                partial_patch = ""
+                try:
+                    partial_patch = sandbox.read_patch() if sandbox is not None else ""
+                except Exception:  # noqa: BLE001
+                    partial_patch = ""
                 return InstanceResult(
                     instance_id=instance_id,
                     latency_seconds=time.perf_counter() - started,
                     n_calls=len(per_call),
-                    exit_status=exit_status,
+                    exit_status="limit_with_patch" if partial_patch.strip() else exit_status,
+                    patch=partial_patch,
                     error=type(exc).__name__,
                     per_call_seconds=per_call,
                 )
@@ -183,7 +207,22 @@ def run_workload(
             results.append(result)
 
     def _run(instance: dict[str, Any]) -> None:
-        _record(run_instance(instance, base_url=base_url, settings=settings, prefer_docker=prefer_docker))
+        # Never let an instance vanish: if run_instance raises (e.g. sandbox
+        # creation failed), record an explicit failure result so the instance is
+        # counted (as a regression by the scorer) instead of silently dropped.
+        try:
+            result = run_instance(
+                instance, base_url=base_url, settings=settings, prefer_docker=prefer_docker
+            )
+        except Exception as exc:  # noqa: BLE001
+            result = InstanceResult(
+                instance_id=str(instance.get("instance_id", "unknown")),
+                latency_seconds=0.0,
+                n_calls=0,
+                exit_status="api_error",
+                error=type(exc).__name__,
+            )
+        _record(result)
 
     if settings.arrival_mode == "jps" and settings.jps > 0:
         # Deterministic Poisson schedule (seeded) so arrivals are reproducible.

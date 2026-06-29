@@ -2,9 +2,9 @@
 
 The agent submits a Python-only patch against a clean upstream vLLM v0.11.0
 checkout. The judge applies the patch, builds and serves the patched vLLM on a
-Modal L40S (``meta-llama/Llama-3.1-8B-Instruct``), runs a mini-swe-agent
-SWE-bench workload, and scores latency speedup vs a vanilla-vLLM baseline gated
-by an accuracy guardrail.
+Modal H100 (``Qwen/Qwen3-Coder-30B-A3B-Instruct``), runs a mini-swe-agent
+SWE-bench workload plus a BFCL memory workload, and scores latency speedup vs a
+vanilla-vLLM baseline gated by an accuracy guardrail.
 
 This file contains the self-contained static patch policy and the scoring math.
 The heavy orchestration (Modal deploy, workload run, baseline caching) lives in
@@ -72,7 +72,25 @@ def _config_str(name: str, default: str) -> str:
 
 
 ACCURACY_TOLERANCE = _config_float("accuracy_tolerance", 0.05)
+ACCURACY_ABS_TOLERANCE = _config_float("accuracy_abs_tolerance", 0.05)
 BASELINE_CACHE_PATH = Path(_config_str("baseline_cache_path", "/opt/vllm-baseline/baseline_metrics.json"))
+# Per-instance speedup clamp (anti-inflation) and the SWE-bench/BFCL score blend.
+MAX_PER_INSTANCE_SPEEDUP = _config_float("max_per_instance_speedup", 8.0)
+SWEBENCH_WEIGHT = _config_float("swebench_weight", 0.5)
+BFCL_WEIGHT = _config_float("bfcl_weight", 0.5)
+# Modal GPU the workloads are served on (e.g. "H100:2"); used only for the
+# reported serving_harness label so it reflects the real accelerator.
+SERVING_GPU = _config_str("gpu", "H100:2")
+SERVING_HARNESS = "modal_" + SERVING_GPU.replace(":", "x").lower()
+
+
+def _normalize_weights(weights: tuple[float, float]) -> tuple[float, float]:
+    sw = max(0.0, weights[0])
+    bf = max(0.0, weights[1])
+    total = sw + bf
+    if total <= 0:
+        return 0.5, 0.5
+    return sw / total, bf / total
 
 # --------------------------------------------------------------------------- #
 # Patch policy
@@ -266,6 +284,13 @@ def validate_patch(patch_path: Path) -> tuple[bool, str, dict[str, Any]]:
         "patch_sha256": patch_hash,
         "changed_files": len(files),
     }
+    # Binary hunks (`git diff --binary`) carry a base85 payload the +line token
+    # scanners below never see, so they could smuggle secret/benchmark access or
+    # non-Python content past the policy while `git apply` honours them. The build
+    # is Python-only (VLLM_USE_PRECOMPILED), so reject any binary patch outright
+    # (audit finding: binary-hunk policy bypass).
+    if "GIT binary patch" in text or re.search(r"^Binary files .* differ$", text, re.MULTILINE):
+        return False, "binary patch hunks are not allowed (Python-only build; use a text diff)", metrics
     if len(files) > MAX_CHANGED_FILES:
         return False, f"too many changed files ({len(files)} > {MAX_CHANGED_FILES})", metrics
 
@@ -317,10 +342,17 @@ def score_from_speedup(speedup: float) -> float:
     return max(0.0, min(100.0, raw))
 
 
-def accuracy_multiplier(baseline_accuracy: float, patched_accuracy: float, tolerance: float) -> float:
+def accuracy_multiplier(
+    baseline_accuracy: float,
+    patched_accuracy: float,
+    tolerance: float,
+    abs_tolerance: float = 0.05,
+) -> float:
+    # No penalty if within EITHER the relative or the absolute tolerance.
+    abs_drop = max(0.0, baseline_accuracy - patched_accuracy)
     base = max(baseline_accuracy, 1e-9)
-    rel_drop = max(0.0, (baseline_accuracy - patched_accuracy) / base)
-    if rel_drop <= tolerance:
+    rel_drop = max(0.0, abs_drop / base)
+    if abs_drop <= abs_tolerance or rel_drop <= tolerance:
         return 1.0
     return max(0.0, min(1.0, tolerance / rel_drop))
 
@@ -412,45 +444,96 @@ def full_evaluation(patch_path: Path, metrics: dict[str, Any]):
         metrics["gate"] = gate
         return _invalid(gate, metrics)
 
+    # Correctness gates (must hold before any timing is scored).
     if not measurement.get("correctness_ok", False):
-        metrics["gate"] = "correctness"
+        metrics["gate"] = "swebench_correctness"
         return _invalid("patched server generations differ from the baseline at temperature 0", metrics)
+    if not measurement.get("bfcl_correctness_ok", True):
+        metrics["gate"] = "bfcl_correctness"
+        return _invalid(
+            "patched server regressed BFCL function-calling correctness vs the baseline at temperature 0",
+            metrics,
+        )
 
-    patched = measurement.get("patched", {}) or {}
-    baseline = measurement.get("baseline", {}) or {}
-    patched_latency = {str(k): float(v) for k, v in (patched.get("per_instance_latency") or {}).items()}
-    baseline_latency = {str(k): float(v) for k, v in (baseline.get("per_instance_latency") or {}).items()}
-    speedups = paired_speedups(baseline_latency, patched_latency)
-    if not speedups:
+    from serving_eval import scoring  # type: ignore
+
+    def _lat(block: dict[str, Any], key: str) -> dict[str, float]:
+        return {str(k): float(v) for k, v in (block.get(key) or {}).items()}
+
+    # --- SWE-bench workload (latency-primary; accuracy is a proxy guardrail) ---
+    swe = measurement.get("swebench", {}) or {}
+    swe_base = swe.get("baseline", {}) or {}
+    swe_patched = swe.get("patched", {}) or {}
+    swe_score = scoring.workload_score(
+        _lat(swe_base, "per_instance_latency"),
+        _lat(swe_patched, "per_instance_latency"),
+        float(swe_base.get("accuracy", 0.0)),
+        float(swe_patched.get("accuracy", 0.0)),
+        ACCURACY_TOLERANCE,
+        cap=MAX_PER_INSTANCE_SPEEDUP,
+        failed_ids=swe_patched.get("failed_ids", ()),
+        abs_tolerance=ACCURACY_ABS_TOLERANCE,
+    )
+
+    # --- BFCL workload (real, non-zero accuracy -> LIVE guardrail) ---
+    bfcl = measurement.get("bfcl", {}) or {}
+    bfcl_available = bool(bfcl.get("available"))
+    bfcl_base = bfcl.get("baseline", {}) or {}
+    bfcl_patched = bfcl.get("patched", {}) or {}
+    bfcl_score = scoring.workload_score(
+        _lat(bfcl_base, "per_instance_latency"),
+        _lat(bfcl_patched, "per_instance_latency"),
+        float(bfcl_base.get("accuracy", 0.0)),
+        float(bfcl_patched.get("accuracy", 0.0)),
+        ACCURACY_TOLERANCE,
+        cap=MAX_PER_INSTANCE_SPEEDUP,
+        failed_ids=bfcl_patched.get("failed_ids", ()),
+        abs_tolerance=ACCURACY_ABS_TOLERANCE,
+    ) if bfcl_available else None
+
+    if not swe_score["instances_scored"] and not (bfcl_score and bfcl_score["instances_scored"]):
         return _invalid("no paired latency measurements were produced", metrics)
 
-    gm_speedup = geometric_mean(speedups)
-    latency_score = score_from_speedup(gm_speedup)
-
-    patched_accuracy = float(patched.get("accuracy", 0.0))
-    baseline_accuracy = float(baseline.get("accuracy", 0.0))
-    acc_mult = accuracy_multiplier(baseline_accuracy, patched_accuracy, ACCURACY_TOLERANCE)
-    bounded = max(0.0, min(100.0, latency_score * acc_mult))
+    # Blend 50/50 (configurable). If BFCL is unavailable, fall back to SWE only.
+    if bfcl_available and bfcl_score is not None:
+        weights = (SWEBENCH_WEIGHT, BFCL_WEIGHT)
+    else:
+        weights = (1.0, 0.0)
+        bfcl_score = {"latency_geomean_speedup": 0.0, "latency_score": 0.0,
+                      "accuracy_multiplier": 1.0, "score": 0.0, "instances_scored": 0.0}
+    bounded = scoring.blend(swe_score["score"], bfcl_score["score"], _normalize_weights(weights))
 
     metrics.update(
         {
             "full_benchmark": 1,
-            "serving_harness": "modal_l40s",
-            "instances_scored": len(speedups),
-            "latency_geomean_speedup": gm_speedup,
-            "latency_score": latency_score,
-            "baseline_accuracy": baseline_accuracy,
-            "patched_accuracy": patched_accuracy,
-            "accuracy_multiplier": acc_mult,
+            "serving_harness": SERVING_HARNESS,
+            "bfcl_available": bfcl_available,
+            "swebench_weight": _normalize_weights(weights)[0],
+            "bfcl_weight": _normalize_weights(weights)[1],
+            "swe_instances_scored": int(swe_score["instances_scored"]),
+            "swe_latency_geomean_speedup": swe_score["latency_geomean_speedup"],
+            "swe_latency_score": swe_score["latency_score"],
+            "swe_baseline_accuracy": float(swe_base.get("accuracy", 0.0)),
+            "swe_patched_accuracy": float(swe_patched.get("accuracy", 0.0)),
+            "swe_accuracy_multiplier": swe_score["accuracy_multiplier"],
+            "swe_score": swe_score["score"],
+            "bfcl_instances_scored": int(bfcl_score["instances_scored"]),
+            "bfcl_latency_geomean_speedup": bfcl_score["latency_geomean_speedup"],
+            "bfcl_latency_score": bfcl_score["latency_score"],
+            "bfcl_baseline_accuracy": float(bfcl_base.get("accuracy", 0.0)),
+            "bfcl_patched_accuracy": float(bfcl_patched.get("accuracy", 0.0)),
+            "bfcl_accuracy_multiplier": bfcl_score["accuracy_multiplier"],
+            "bfcl_score": bfcl_score["score"],
         }
     )
     return (
         bounded,
         bounded,
         (
-            f"latency geomean speedup {gm_speedup:.4f}x over baseline vLLM; "
-            f"accuracy {patched_accuracy:.4f} vs baseline {baseline_accuracy:.4f} "
-            f"(multiplier {acc_mult:.3f})"
+            f"blended score {bounded:.2f}/100 "
+            f"(SWE-bench {swe_score['score']:.1f} @ {swe_score['latency_geomean_speedup']:.3f}x, "
+            f"BFCL {bfcl_score['score']:.1f} @ {bfcl_score['latency_geomean_speedup']:.3f}x, "
+            f"acc {float(bfcl_patched.get('accuracy', 0.0)):.3f} vs {float(bfcl_base.get('accuracy', 0.0)):.3f})"
         ),
         metrics,
     )

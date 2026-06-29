@@ -1,4 +1,4 @@
-"""Modal app that serves a (patched or vanilla) vLLM build on one L40S GPU.
+"""Modal app that serves a (patched or vanilla) vLLM build on Modal H100 GPU(s).
 
 This module is deployed with ``modal deploy serving_eval/modal_app.py``. It is
 parametrized entirely through environment variables so the same module serves
@@ -6,7 +6,7 @@ both the baseline (clean) and patched source trees, under distinct app names:
 
     VLLM_SERVING_SRC   absolute path to the vLLM source tree to build from
     VLLM_SERVING_MODEL HuggingFace model id to serve
-    VLLM_SERVING_GPU   Modal GPU string (default "L40S")
+    VLLM_SERVING_GPU   Modal GPU string, "H100:N" for N-way TP (default "H100:2")
     VLLM_SERVING_APP   Modal app name (must be unique per concurrent server)
     VLLM_SERVING_LABEL deterministic web label for a predictable URL
     VLLM_SERVING_SCALEDOWN  idle seconds before the GPU container is released
@@ -29,13 +29,16 @@ import os
 import modal
 
 VLLM_SERVING_SRC = os.environ.get("VLLM_SERVING_SRC", "/opt/vllm-clean")
-VLLM_SERVING_MODEL = os.environ.get("VLLM_SERVING_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
-VLLM_SERVING_GPU = os.environ.get("VLLM_SERVING_GPU", "L40S")
+VLLM_SERVING_MODEL = os.environ.get("VLLM_SERVING_MODEL", "Qwen/Qwen3-Coder-30B-A3B-Instruct")
+VLLM_SERVING_GPU = os.environ.get("VLLM_SERVING_GPU", "H100:2")
 VLLM_SERVING_APP = os.environ.get("VLLM_SERVING_APP", "vllm-serving-opt")
 VLLM_SERVING_LABEL = os.environ.get("VLLM_SERVING_LABEL", VLLM_SERVING_APP)
 VLLM_SERVING_SCALEDOWN = int(os.environ.get("VLLM_SERVING_SCALEDOWN", "900"))
 VLLM_SERVING_STARTUP = int(os.environ.get("VLLM_SERVING_STARTUP", "1200"))
-VLLM_SERVING_MAXLEN = int(os.environ.get("VLLM_SERVING_MAXLEN", "16384"))
+# 32K context fits comfortably on H100s (80GB each) and avoids the growing
+# multi-turn conversation overflowing the window (which 404'd mid-run on a
+# smaller 16K setup). Lower this if serving on a smaller card.
+VLLM_SERVING_MAXLEN = int(os.environ.get("VLLM_SERVING_MAXLEN", "32768"))
 VLLM_SERVING_HF_SECRET = os.environ.get("VLLM_SERVING_HF_SECRET", "huggingface-secret")
 # Pinned vLLM version. The source tree is copied into the build image, where its
 # git metadata is not reliably readable by setuptools_scm (and a patched tree is
@@ -89,6 +92,14 @@ serving_image = (
         {
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "DO_NOT_TRACK": "1",
+            # These are read inside serve(), which runs in the REMOTE container
+            # where the deploy-time process env is NOT present. Bake the values
+            # into the image env (evaluated here at deploy time) so the remote
+            # serve() sees the requested model / context / GPU spec instead of
+            # silently falling back to the module-level defaults.
+            "VLLM_SERVING_MODEL": VLLM_SERVING_MODEL,
+            "VLLM_SERVING_MAXLEN": str(VLLM_SERVING_MAXLEN),
+            "VLLM_SERVING_GPU": VLLM_SERVING_GPU,
         }
     )
 )
@@ -106,6 +117,12 @@ def _hf_secrets() -> list[modal.Secret]:
 @app.function(
     image=serving_image,
     gpu=VLLM_SERVING_GPU,
+    # Pin to a SINGLE serving container. Without this, Modal autoscales out under
+    # load (spinning up more GPU replicas), which relieves exactly the
+    # queueing/preemption pressure the scheduler optimization is supposed to
+    # manage — making the latency signal vanish. One container = all load lands on
+    # one GPU set, so contention (and thus scheduling) is real and measurable.
+    max_containers=1,
     scaledown_window=VLLM_SERVING_SCALEDOWN,
     timeout=24 * 60 * 60,
     secrets=_hf_secrets(),
@@ -119,6 +136,15 @@ def _hf_secrets() -> list[modal.Secret]:
 def serve() -> None:
     import subprocess
 
+    # Derive tensor-parallel size from the Modal GPU spec ("H100" -> 1,
+    # "H100:2" -> 2). With more than one GPU, vLLM must shard across them.
+    gpu_count = 1
+    if ":" in VLLM_SERVING_GPU:
+        try:
+            gpu_count = max(1, int(VLLM_SERVING_GPU.split(":", 1)[1]))
+        except ValueError:
+            gpu_count = 1
+
     cmd = [
         "vllm",
         "serve",
@@ -131,4 +157,6 @@ def serve() -> None:
         str(VLLM_SERVING_MAXLEN),
         "--disable-log-requests",
     ]
+    if gpu_count > 1:
+        cmd += ["--tensor-parallel-size", str(gpu_count)]
     subprocess.Popen(" ".join(cmd), shell=True)

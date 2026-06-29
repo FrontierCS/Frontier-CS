@@ -1,0 +1,16 @@
+BFCL (Berkeley Function Calling Leaderboard) — memory agentic category
+Source: ShishirPatil/gorilla — bfcl-eval==2026.3.23 (Apache-2.0)
+
+Vendored:
+- BFCL_v4_memory.json (155 query instances) + possible_answer/BFCL_v4_memory.json
+- multi_turn_func_doc/memory_kv.json (15 key-value memory tool schemas)
+- memory_prereq_conversation/memory_<scenario>.json (5 prereq conversation sets)
+- memory_snapshots/<scenario>_final.json (5 pre-baked memory states; produced once
+  by serving_eval/build_memory_snapshots.py running the prereq conversations through
+  the target model, then frozen so eval-time memory is deterministic/offline)
+
+The kv MemoryAPI backend is vendored under serving_eval/bfcl_vendor/ (memory_kv.py +
+memory_api_metaclass.py, trimmed to be self-contained). The agentic loop + the
+word-boundary answer checker (standardize_string/agentic_checker) are reimplemented
+in serving_eval/bfcl.py and cross-validated against bfcl_eval (240/240 on the scorer).
+Only stdlib + openai (+ rank-bm25 for *_key_search) are needed at run time.

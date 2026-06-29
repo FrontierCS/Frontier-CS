@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Async public-test client for the vLLM serving optimization task.
 
-Deploys the current `/app/vllm` working tree to a Modal L40S, runs the public
+Deploys the current `/app/vllm` working tree to a Modal H100, runs the public
 instance subset (a strict subset of the final eval set), and reports per-instance
 and aggregate end-to-end latency plus an accuracy signal versus the baseline.
 The returned feedback is the same kind the judge uses — never just a compile/OK
