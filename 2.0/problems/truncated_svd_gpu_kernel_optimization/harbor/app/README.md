@@ -30,6 +30,6 @@ results.
 - Do not import external optimized libraries (write the kernels yourself), and
   do not access the environment, spawn processes, or use the network.
 - Keep the public `truncated_svd(...)` signature and return contract unchanged.
-- Factor quality is gated (orthonormal components and captured energy vs the
-  naive baseline); do not sacrifice correctness for speed beyond the allowed
-  tolerance.
+- Low-rank factorization quality is gated (orthonormal components + captured
+  energy vs the naive baseline); do not sacrifice correctness for speed beyond
+  the allowed tolerance.

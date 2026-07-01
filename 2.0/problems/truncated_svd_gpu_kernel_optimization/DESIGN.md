@@ -4,109 +4,90 @@ Operator-facing. Not copied into the agent workspace by the adapter.
 
 ## What this task measures
 
-Can an agent turn a correct-but-naive GPU truncated SVD into a fast one? The
-agent is given `tsvdlib` (a `torch.linalg.svd` full-SVD call that then slices the
-top-k factors) and must rewrite the internals — ideally a Gram-matrix `X^T X`
-followed by a top-k eigendecomposition (`torch.linalg.eigh`), plus fused kernels
-— to maximize the geometric-mean speedup over the frozen baseline across a family
-of hidden `(N, D, k)` workloads, subject to an approximation-quality gate.
+Can an agent turn a naive GPU truncated SVD into a fast one? The agent patches
+`tsvdlib`; the judge times the patched `truncated_svd` against a frozen naive
+baseline on hidden `(N, D, k)` workloads and scores the geometric-mean speedup,
+gated on low-rank-factorization quality (orthonormal components + captured
+energy). Third of a four-task **flashlib kernel-optimization family** (KMeans,
+KNN, TruncatedSVD, PCA) that all share one evaluator + one Modal GPU harness.
 
-This is the third of a four-task **flashlib kernel-optimization family**
-(KMeans, KNN, TruncatedSVD, PCA). All four share the KernelBench-style pattern:
-ship a naive package, freeze a byte-for-byte baseline in the judge image, apply
-the agent's patch to a clean copy, time patched-vs-baseline on identical seeded
-data in an isolated worker, and gate on a primitive-appropriate quality metric
-before scoring by geomean speedup. PCA is the sibling task: it is the same
-Gram/eig idea but on the **covariance** matrix (mean-centre `X` first, then the
-right singular vectors of the centred matrix are the principal directions), so
-the PCA gate additionally has to account for the centering step.
+## Execution: Modal GPU offload (mirrors the vllm task)
 
-## Correctness gate: orthonormality + captured energy, judge-computed
+The judge and the agent public test both **offload GPU work to Modal**; the
+containers are light (ubuntu + `modal` + git, no torch/triton). `flash_gpu.py`
+(baked at `/opt/flash_gpu.py` in both images) builds an ephemeral Modal app on a
+GPU (`evaluation.gpu`, default H100), ships the frozen baseline + the patched
+package **as data** (no per-submission image rebuild), runs the worker, and
+returns per-workload speedups + verdicts. Needs `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET`. torch/triton/the vendored kernels run on the Modal image
+(`evaluation.pip`).
+
+The evaluator is generic and identical across the four tasks; only three
+constants differ (`PRIMITIVE`/`PKG`/`REF_MODULE`), and all workload/threshold/
+Modal values come from `config.yaml` (delivered judge-only as
+`/judge/task_config.json`, never present in the agent image).
+
+## Reference solution = best in the repo
+
+`reference.patch` vendors flashlib's own optimized **Triton** truncated-SVD path
+(`primitives/truncated_svd/triton/svd.py` plus the `linalg/eigh` stack it calls)
+under `tsvdlib/_kernels/…`, with imports rewritten and the string "flashlib"
+scrubbed, plus a thin adapter mapping our `(N, D)` contract onto flashlib's
+entry. It is triton-only (runs on any sm≥80), imports cleanly on CPU, and applies
++ passes the patch policy. Calibrate `speedup_target` from its measured geomean
+on the first GPU trial.
+
+## Anti-reward-hack
+
+The **load-bearing** defenses are structural, inside the GPU worker (the only
+place the untrusted submission runs):
+
+* timing primitives (`perf_counter`, `torch.cuda.synchronize`) are captured to
+  locals **before** the submission is imported → monkey-patching torch cannot
+  affect measurement;
+* **fresh data every timed iteration** → memoizing on a repeated input is
+  useless;
+* quality is **re-verified from the returned tensors on every iteration** →
+  returning a stale cached result for a different input is caught;
+* the judge computes all metrics (no agent number is trusted);
+* an ephemeral Modal container per submission → no global state persists.
+
+The patch policy is surgical defense-in-depth (so it does not reject legitimate
+vendored/optimized kernel source): only `<pkg>/**` `.py` files may change; it
+bans external-optimized-library *imports* (flashlib/cuml/cupy/faiss/sklearn/
+cutlass — none installed on the GPU image anyway) and process/network/
+measurement-tamper patterns (`subprocess`, `socket`, `os.system`,
+`torch.cuda.synchronize =`, …).
+
+The agent-facing `readme` describes the contract, gate, scoring, and policy but
+**not** how the reference is implemented (no Gram/eigh/avoid-full-SVD hints).
+
+## Correctness gate
 
 The SVD has sign and rotation ambiguities (any singular vector may be negated,
 and vectors spanning equal singular values may be rotated within their
 eigenspace), so an elementwise comparison against the baseline's factors is
-meaningless. Instead the judge worker checks two rotation/sign-invariant
+meaningless. The judge worker instead checks two rotation/sign-invariant
 properties of the returned `components` `V` (shape `(k, D)`), computed from what
-the submission returns (not from any agent-provided number), on the same seeded
-`x` used for the baseline:
+the submission returns, on each iteration's data:
 
-- **Orthonormality**: `max |V V^T - I_k| <= ortho_tolerance` (default 2%). The
-  rows must be an orthonormal basis of a k-dimensional subspace.
-- **Captured energy**: `||X V^T||_F^2 >= (1 - captured_tolerance)` times the
-  baseline's captured energy (default 2%). This is the squared Frobenius norm of
-  the projection of the data onto the returned subspace — the quantity truncated
-  SVD is supposed to maximise (Eckart–Young). It depends only on the *subspace*
-  spanned by the rows of `V`, so it is invariant to sign flips and to any
-  in-subspace rotation.
+* **Orthonormality**: `max |V V^T - I_k| <= ortho_tolerance` (default 2%).
+* **Captured energy**: `||X V^T||_F^2 >= (1 - captured_tolerance)` times the
+  baseline's captured energy (default 2%) — the squared Frobenius norm of the
+  projection of the data onto the returned subspace, the quantity truncated SVD
+  maximises (Eckart–Young). It depends only on the *subspace* spanned by the rows
+  of `V`, so it is invariant to sign flips and in-subspace rotation.
 
-Properties:
+`singular_values` are required by the shape/finiteness check but are not part of
+the quality gate. Determinism: `x` is drawn from a fixed seeded generator per
+workload (seeds derived from `base_seed`), so the baseline result is a fixed
+function of `(N, D, k, seed)`.
 
-- rotation/sign-convention independent (only the spanned subspace matters);
-- robust to floating-point drift;
-- cheat-proof: you cannot return fast garbage — high captured energy requires
-  actually recovering the leading right-singular subspace, and the orthonormality
-  gate blocks degenerate `V` (e.g. repeated or unnormalised rows) that could
-  otherwise inflate the projected energy. Trading some numeric precision for
-  speed (tf32/bf16 accumulation in the Gram GEMM) is allowed within tolerance.
+## Calibration TODO (needs a Modal GPU trial)
 
-`singular_values` are still required by the shape/finiteness check but are not
-part of the quality gate; the captured-energy formulation makes the gate depend
-on the subspace, which is what a downstream user of a truncated SVD cares about.
-
-Determinism: `x` is drawn from a fixed seeded generator per workload (seeds
-derived from `base_seed`), so the baseline result is a fixed function of `(N, D,
-k, seed)`.
-
-## Anti-gaming
-
-flashlib (the library these primitives are distilled from) is public and
-Apache-2.0. Mitigations:
-
-- The shipped package is a small, neutrally named library (`tsvdlib`), not
-  flashlib; the patch allowlist confines edits to `tsvdlib/**`.
-- The patch policy forbids importing `flashlib`/cuML/cuPy/FAISS/scikit-learn and
-  bans env/subprocess/network access — the agent must write the kernels itself.
-- Scored shapes are hidden and differ from the two public shapes; seeds derive
-  from `base_seed`. General kernels win; shape lookups do not.
-- The gate is a subspace-quality metric, not an elementwise factor match, so an
-  agent cannot "pass" by copying baseline numbers — it must produce a genuinely
-  good rank-k approximation.
-- Honest framing: reproducing SOTA-class kernels *is* the bar. We block trivial
-  library reuse, not the underlying knowledge.
-
-## Execution model & the Modal question
-
-The evaluator runs an isolated worker subprocess (`_run_worker`) that imports the
-frozen baseline (`/opt/tsvd_ref/reftsvd.py`) and the patched `tsvdlib` (from the
-applied clean tree), times both, and reports JSON. This assumes the **judge
-container has a GPU**.
-
-The repo's other GPU task (vllm) instead offloads to **Modal** because Harbor
-judge containers may not be GPU-scheduled. `_run_worker` is the single swap
-point: to go Modal, replace it with a Modal function that builds the patched
-package, runs the same worker logic on a Modal GPU, and returns the JSON rows.
-The rest of the evaluator (policy, gating, scoring) is unchanged. Decide
-in-container-GPU vs Modal at first calibration trial.
-
-## Calibration TODO (needs a GPU trial)
-
-- Validate `reference.patch` (Gram + `eigh`) runs and passes the orthonormality
-  and captured-energy gates on all workloads; fix any torch API drift for the
-  pinned torch in the image.
-- Measure the reference solution's geomean speedup and set `speedup_target` so a
-  reference-level solution maps to ~full score.
-- Confirm hidden shapes fit device memory (the naive baseline's full
-  `torch.linalg.svd` on the `N x D` matrix is the memory driver; all shipped
-  shapes are H100-safe, and the Gram-matrix reference is far lighter since it
-  only decomposes the `D x D` matrix).
-- Sanity-check timing stability (median-of-7); bump `timed_iters` if noisy.
-
-## Files
-
-- `tsvdlib/` — pristine package baked into both images (agent edits it).
-- `judge/reftsvd.py` — frozen baseline, baked to `/opt/tsvd_ref/`.
-- `evaluator.py` — self-contained policy + orchestration + scoring (judge-only).
-- `reference.patch` — Gram-matrix + eigh reference solution (proves solvability).
-- `docker/` — builds the prebuilt agent/judge images referenced by config.yaml.
-- `harbor/app/` — agent-facing submission helpers + public self-test.
+- Run `reference.patch` on Modal; confirm it passes the orthonormality +
+  captured-energy gates on all workloads (bump the tolerances if flashlib's
+  low-precision path drifts slightly) and set `speedup_target` from its geomean.
+- Confirm the pinned `torch`/`triton` in `evaluation.pip` compile the vendored
+  kernels, and hidden shapes fit the GPU.
+- Confirm Modal token wiring in the Harbor judge/agent containers.

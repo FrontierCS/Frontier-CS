@@ -2,8 +2,8 @@
 
 ## Problem
 
-You are given a small GPU K-Means library, `kmeanslib`, in the Harbor
-workspace at `/app/kmeanslib`. Its public entry point is:
+You are given a small GPU K-Means library, `kmeanslib`, in the Harbor workspace
+at `/app/kmeanslib`. Its public entry point is:
 
 ```python
 kmeanslib.kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
@@ -12,27 +12,24 @@ kmeanslib.kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
 
 `x` is an `(N, D)` float32 CUDA tensor, `init_centroids` is a fixed `(K, D)`
 initial-centroid tensor supplied by the caller, and the function runs Euclidean
-(squared-L2) Lloyd iterations. The shipped implementation is correct but
-deliberately naive: every iteration it materializes the full `(N, K)` distance
-matrix with `torch.cdist`, then recomputes assignments and centroids with plain
-PyTorch scatter ops.
+(squared-L2) Lloyd iterations. The shipped implementation is a straightforward,
+correct PyTorch version.
 
 Your goal is to make `kmeanslib.kmeans` **as fast as possible** on the GPU while
-producing clusterings of the same quality. You may add modules and Triton
-kernels inside the `kmeanslib` package and rewrite the internals freely (fused
-assignment kernels, reduced memory traffic, better centroid updates, and so on).
-The public function signature and return contract above must not change.
+producing clusterings of the same quality. You may rewrite the internals of the
+package however you like and add new modules (including Triton kernels) under
+`kmeanslib/`. The public function signature and return contract above must not
+change, and every result must remain a deterministic function of its inputs.
 
 ## Workload
 
-The judge evaluates a family of held-out dense clustering workloads that vary
-`(N, D, K)` and the iteration count, spanning small/medium/large point counts,
-wide-feature (large `D`) and many-cluster (large `K`) regimes. All workloads use
-Euclidean distance, float32 data, a fixed number of Lloyd iterations
-(`tol = 0.0`, so every iteration runs), and caller-supplied `init_centroids`, so
-each result is a deterministic function of the inputs.
+The graded workloads are a family of held-out dense clustering problems that
+vary `(N, D, K)` and the iteration count, spanning small/medium/large point
+counts and both wide-feature (large `D`) and many-cluster (large `K`) regimes.
+All use Euclidean distance, float32 data, a fixed iteration count (`tol = 0.0`,
+so every iteration runs), and caller-supplied `init_centroids`.
 
-Two representative *public* shapes you can use for local development (the graded
+Two representative *public* shapes are available for local testing (the graded
 shapes are different and hidden):
 
 ```text
@@ -40,19 +37,30 @@ shapes are different and hidden):
 (N=200000, D=128, K=256, max_iters=10)
 ```
 
-Treat the workload as a general dense K-Means, not as shapes to special-case.
-Improvements should be general kernel/throughput improvements, not lookups keyed
-on specific `(N, D, K)` values.
+Treat this as a general dense K-Means, not as specific shapes to special-case.
+
+## Iterate on a GPU
+
+The agent workspace has no GPU. Use the public test to time your current code on
+a GPU through Modal (needs `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in your
+environment):
+
+```bash
+bash /app/public_test.sh
+```
+
+It reports, per public shape, whether your result passes the quality gate and
+your speedup over the baseline.
 
 ## Submission
 
-The submitted artifact is a patch file over the `kmeanslib` package:
+The submitted artifact is a patch over the `kmeanslib` package:
 
 ```text
 /app/solution.patch
 ```
 
-After editing `/app/kmeanslib`, generate and submit a patch:
+After editing `/app/kmeanslib`, generate and submit:
 
 ```bash
 bash /app/make_submission.sh
@@ -60,64 +68,54 @@ bash /app/submit.sh
 ```
 
 Submissions are asynchronous; submit early and keep iterating. The judge applies
-your patch to a clean copy of `kmeanslib`, imports the patched package, and
-times it against the original naive implementation on the same hardware, same
-seeded data, and same initial centroids.
+your patch to a clean copy of `kmeanslib` and times it against the original
+baseline on a GPU, on the same seeded data and initial centroids.
 
 ## Correctness
 
-Correctness is a gate. For each workload the judge measures the **inertia**
-(within-cluster sum of squared distances to the nearest final centroid) of your
-result and of the naive baseline on identical data and initial centroids. Your
-inertia must not exceed the baseline's by more than a small relative tolerance.
-Crashes, non-finite outputs, wrong shapes/dtypes, timeouts, and clustering that
-regresses beyond the tolerance are all penalized before speed is considered. You
-may trade a little numerical precision (e.g. lower-precision accumulation) for
-speed as long as you stay within the quality tolerance.
+Correctness is a gate. On every timed iteration the judge recomputes the
+**inertia** (within-cluster sum of squared distances to the nearest final
+centroid) of your result and of the baseline on identical data, and requires
+your inertia to stay within a small relative tolerance of the baseline's.
+Crashes, non-finite output, wrong shapes/dtypes, timeouts, and clustering that
+regresses beyond the tolerance are penalized before speed is considered. You may
+trade a little numerical precision for speed as long as you stay within the
+quality tolerance.
 
 ## Scoring
 
-Valid submissions are scored by speedup relative to the naive baseline on the
-same hardware and workloads. For each workload:
+Valid submissions are scored by speedup relative to the baseline on the same
+hardware and workloads. For each workload:
 
 ```text
 speedup = baseline_time / your_time
 ```
 
 The objective is the geometric mean of per-workload speedups, so broad speedups
-across the workload family are preferred over one large outlier. A result no
-faster than the baseline earns 0; regressions earn 0. The raw geometric-mean
-speedup is reported in the evaluator metrics.
+are preferred over a single large outlier. A result no faster than the baseline
+earns 0; regressions earn 0. The raw geometric-mean speedup is reported in the
+evaluator metrics.
 
 ## Patch Policy
 
-The evaluator validates the patch before running it. Only files under the
+The evaluator validates the patch before running it. Only Python files under the
 package may change:
 
 ```text
 kmeanslib/**
 ```
 
-New Python modules inside `kmeanslib/` (for example Triton kernel files) are
-allowed. Patches may not:
-
-- modify anything outside `kmeanslib/`;
-- import or call an external optimized ML/kernel library (the point is to write
-  the kernels yourself);
-- read or write environment variables, spawn processes, or access the network;
-- special-case the hidden workload shapes.
-
-The patch must be reasonably sized and apply cleanly to the clean `kmeanslib`
-tree.
+New Python modules inside `kmeanslib/` are allowed. Patches may not: modify
+anything outside `kmeanslib/`; import or call an external optimized ML/kernel
+library (write the kernels yourself); read or write environment variables, spawn
+processes, or access the network; or otherwise tamper with the measurement
+framework. The timing harness measures your code on freshly generated data every
+iteration and re-verifies quality each time, so caching results across calls does
+not help.
 
 ## Resource Budget
 
 ```text
-GPU: single device (H100 reference; Triton paths also run on L40S / A100)
-vCPUs: 8
-memory: 32 GiB
-storage: 32 GiB
+GPU: single Modal GPU (H100 reference; the Triton paths also run on L40S / A100)
+Agent container: CPU-only (GPU work is offloaded to Modal)
 ```
-
-The judge runs the timing worker in a subprocess under a clean, minimal
-environment with a fixed warmup/measurement schedule and a per-run timeout.

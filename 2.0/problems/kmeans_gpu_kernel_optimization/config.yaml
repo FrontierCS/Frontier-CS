@@ -2,51 +2,63 @@ tag: systems
 runtime:
   language: python
   timeout_seconds: 10800
-  environment: "GPU K-Means kernel optimization; agent patches the kmeanslib Python/Triton package; judge times the patched kmeans against a frozen naive baseline on hidden (N, D, K) workloads with an inertia (clustering-quality) gate."
+  environment: "GPU K-Means kernel optimization. The agent patches the kmeanslib package; the judge offloads timing to a Modal GPU, comparing the patched kmeans against a frozen naive baseline on hidden (N, D, K) workloads with an inertia (clustering-quality) gate."
   apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
   judge_apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
+  judge_pip_packages:
+    - modal
   docker:
-    # Experimental local images. Build them with
-    # 2.0/problems/kmeans_gpu_kernel_optimization/docker/build_images.sh before a
-    # local Harbor trial. Both images bundle a clean copy of the kmeanslib
-    # package; the judge image additionally bakes the frozen naive baseline
-    # (/opt/kmeans_ref) and the pristine tree (/opt/kmeanslib-clean).
-    image: frontiercs/kmeans-gpu-kernel-optimization-agent:experimental-v0.1.0
-    judge_image: frontiercs/kmeans-gpu-kernel-optimization-judge:experimental-v0.1.0
+    # Experimental local images. Build with docker/build_images.sh before a local
+    # Harbor trial. Both are light (ubuntu + modal + git); torch/triton/flashlib
+    # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
+    # /app/kmeanslib (git) + /opt/kmeans_ref + /opt/flash_gpu.py; the judge image
+    # additionally bakes /opt/kmeanslib-clean.
+    image: frontiercs/kmeans-gpu-kernel-optimization-agent:experimental-v0.2.0
+    judge_image: frontiercs/kmeans-gpu-kernel-optimization-judge:experimental-v0.2.0
 environment:
-  cpus: 8
-  memory_mb: 32768
-  storage_mb: 32768
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 16384
   build_timeout_seconds: 3600
 evaluation:
-  # The judge worker runs on a GPU visible to the judge container (single
-  # device). H100 is the reference accelerator; the Triton paths also run on
-  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
-  # step is the swap point for a Modal offload (see DESIGN.md).
-  gpu: "H100"
-  # Timing: warmup then median-of-N cuda-synced full-kmeans calls.
-  warmup_iters: 3
+  # --- primitive wiring (consumed by the generic evaluator + flash_gpu) ---
+  primitive: kmeans
+  pkg: kmeanslib
+  ref_module: refkmeans
+  clean_source: /opt/kmeanslib-clean
+  baseline_source: /opt/kmeans_ref
+  # --- Modal GPU ---
+  gpu: "H100"                                        # Modal GPU spec (H100 / A100 / L40S)
+  cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  pip: ["torch", "numpy"]
+  app_name: "kmeans-kernel-opt-eval"
+  modal_timeout_seconds: 1800
+  # --- timing + quality gate ---
+  warmup_iters: 2
   timed_iters: 7
-  # Clustering-quality gate: the submitted kmeans' final inertia (within-cluster
-  # sum of squared distances) must not exceed (1 + inertia_tolerance) x the
-  # frozen baseline's inertia on the SAME seeded data and init centroids.
-  inertia_tolerance: 0.02
-  # Geomean speedup (over the naive baseline) mapped to the full bounded score.
-  # Calibrate against the reference solution's measured geomean after a trial.
-  speedup_target: 8.0
-  worker_timeout_seconds: 3600
+  inertia_tolerance: 0.02        # agent inertia must be <= (1+tol) x baseline on every iteration
+  speedup_target: 8.0            # geomean speedup mapped to full bounded score (calibrate vs reference)
   base_seed: 20260701
-  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
-  agent_workload_count: 3
+  agent_workload_count: 3        # agent role runs a fast subset; final verifier runs them all
   expose_per_workload_metrics: false
+  # --- hidden workloads (judge-only; config.yaml/task_config.json never enter the agent image) ---
+  workloads:
+    - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 12}
+    - {id: w1, N: 200000,  D: 64,  K: 256,  max_iters: 10}
+    - {id: w2, N: 500000,  D: 128, K: 256,  max_iters: 10}
+    - {id: w3, N: 200000,  D: 512, K: 256,  max_iters: 8}
+    - {id: w4, N: 1000000, D: 64,  K: 512,  max_iters: 8}
+    - {id: w5, N: 300000,  D: 128, K: 1024, max_iters: 8}
 submission:
   kind: file
   path: /app/solution.patch

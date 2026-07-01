@@ -30,5 +30,5 @@ results.
 - Do not import external optimized libraries (write the kernels yourself), and
   do not access the environment, spawn processes, or use the network.
 - Keep the public `knn(...)` signature and return contract unchanged.
-- Nearest-neighbour quality is gated (recall@k vs an exact baseline); do not
+- Nearest-neighbor quality is gated (recall@k vs an exact baseline); do not
   sacrifice correctness for speed beyond the allowed tolerance.

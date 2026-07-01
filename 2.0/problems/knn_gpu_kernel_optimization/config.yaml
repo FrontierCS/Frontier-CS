@@ -2,52 +2,61 @@ tag: systems
 runtime:
   language: python
   timeout_seconds: 10800
-  environment: "GPU brute-force k-NN kernel optimization; agent patches the knnlib Python/Triton package; judge times the patched knn against a frozen naive baseline on hidden (Q, M, D, k) workloads with a recall@k (nearest-neighbour quality) gate."
+  environment: "GPU brute-force k-NN kernel optimization. The agent patches the knnlib package; the judge offloads timing to a Modal GPU, comparing the patched nearest-neighbor search against a frozen naive baseline on hidden (Q, M, D, k) workloads with a recall@k (retrieval-quality) gate."
   apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
   judge_apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
+  judge_pip_packages:
+    - modal
   docker:
-    # Experimental local images. Build them with
-    # 2.0/problems/knn_gpu_kernel_optimization/docker/build_images.sh before a
-    # local Harbor trial. Both images bundle a clean copy of the knnlib
-    # package; the judge image additionally bakes the frozen naive baseline
-    # (/opt/knn_ref) and the pristine tree (/opt/knnlib-clean).
-    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.1.0
-    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.1.0
+    # Experimental local images. Build with docker/build_images.sh before a local
+    # Harbor trial. Both are light (ubuntu + modal + git); torch/triton/flashlib
+    # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
+    # /app/knnlib (git) + /opt/knn_ref + /opt/flash_gpu.py; the judge image
+    # additionally bakes /opt/knnlib-clean.
+    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.2.0
+    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.2.0
 environment:
-  cpus: 8
-  memory_mb: 32768
-  storage_mb: 32768
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 16384
   build_timeout_seconds: 3600
 evaluation:
-  # The judge worker runs on a GPU visible to the judge container (single
-  # device). H100 is the reference accelerator; the Triton paths also run on
-  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
-  # step is the swap point for a Modal offload (see DESIGN.md).
+  # --- primitive wiring (consumed by the generic evaluator + flash_gpu) ---
+  primitive: knn
+  pkg: knnlib
+  ref_module: refknn
+  clean_source: /opt/knnlib-clean
+  baseline_source: /opt/knn_ref
+  # --- Modal GPU ---
   gpu: "H100"
-  # Timing: warmup then median-of-N cuda-synced full-knn calls.
-  warmup_iters: 3
+  cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  pip: ["torch", "numpy"]
+  app_name: "knn-kernel-opt-eval"
+  modal_timeout_seconds: 1800
+  warmup_iters: 2
   timed_iters: 7
-  # Nearest-neighbour quality gate: the submitted knn's recall@k (fraction of
-  # the true k nearest database indices it recovers) must be at least
-  # recall_threshold on every hidden workload. The judge recomputes the exact
-  # top-k from the frozen baseline on the SAME seeded queries/database.
   recall_threshold: 0.99
-  # Geomean speedup (over the naive baseline) mapped to the full bounded score.
-  # Calibrate against the reference solution's measured geomean after a trial.
   speedup_target: 6.0
-  worker_timeout_seconds: 3600
   base_seed: 20260701
-  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
   agent_workload_count: 3
   expose_per_workload_metrics: false
+  workloads:
+    - {id: w0, Q: 2048, M: 100000,  D: 64,  k: 10}
+    - {id: w1, Q: 4096, M: 250000,  D: 128, k: 10}
+    - {id: w2, Q: 1024, M: 1000000, D: 96,  k: 32}
+    - {id: w3, Q: 8192, M: 200000,  D: 256, k: 50}
+    - {id: w4, Q: 2048, M: 500000,  D: 64,  k: 100}
+    - {id: w5, Q: 4096, M: 300000,  D: 128, k: 64}
 submission:
   kind: file
   path: /app/solution.patch

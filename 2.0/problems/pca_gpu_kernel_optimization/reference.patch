@@ -1,47 +1,980 @@
-diff --git a/pcalib/_cov_pca.py b/pcalib/_cov_pca.py
+diff --git a/pcalib/_kernels/__init__.py b/pcalib/_kernels/__init__.py
 new file mode 100644
-index 0000000..6a7f6a7
+index 0000000..e69de29
+diff --git a/pcalib/_kernels/linalg/__init__.py b/pcalib/_kernels/linalg/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/pcalib/_kernels/linalg/eigh/__init__.py b/pcalib/_kernels/linalg/eigh/__init__.py
+new file mode 100644
+index 0000000..1a2431a
 --- /dev/null
-+++ b/pcalib/_cov_pca.py
-@@ -0,0 +1,31 @@
-+"""Covariance-based top-k PCA (reference optimisation).
++++ b/pcalib/_kernels/linalg/eigh/__init__.py
+@@ -0,0 +1,39 @@
++"""Symmetric eigendecomposition with multiple precision/performance variants.
 +
-+Instead of centring the whole ``(N, D)`` matrix and running a *full* thin SVD,
-+this forms the ``(D, D)`` covariance with a single GEMM (``Xᵀ X``) and a rank-1
-+mean correction -- so the centred data is never materialised -- and reads off
-+the leading ``k`` principal axes with a symmetric eigendecomposition
-+(:func:`torch.linalg.eigh`). For ``D << N`` this replaces an ``O(N D^2)`` SVD of
-+a tall matrix with one ``O(N D^2)`` GEMM followed by an ``O(D^3)`` eigensolve on
-+the small ``(D, D)`` covariance, and it avoids allocating a second copy of the
-+dataset.
++Public API
++----------
++Single dispatcher (recommended):
 +
-+The public contract is unchanged: ``pca(x, n_components)`` returns
-+``(components, explained_variance)`` with orthonormal ``(k, D)`` rows and the
-+matching descending covariance eigenvalues.
++    eigh(A, K=None, *, tol=None, backend=None)
++
++By default ``eigh(A)`` is **exact** in the input dtype (cuSOLVER /
++single-kernel Jacobi for small ``N``). ``tol`` opts into the
++approximation tier:
++
++    eigh(A, tol=8e-4)         -> QDWH-NS at N >= 5120
++    eigh(A, tol=3e-3)         -> QDWH    at N >= 5120
++    eigh(A, K=K, tol=1e-4)    -> Halko subspace iteration when K << N
++
++Backend-explicit (power users):
++
++    eigh_cusolver(A)        torch.linalg.eigh -- ~1e-7 residual
++    eigh_jacobi(A, ...)     single-block Jacobi for small N
++    eigh_qdwh(A, ...)       Nakatsukasa-Higham spectral D&C, ~3e-3
++    eigh_qdwh_ns(A, ...)    QDWH with pure-NS polar, ~8e-4
++    eigh_halko(A, K, ...)   Halko randomized truncated eigh
++"""
++# Only the exact ``tol=None`` path is vendored here: cuSOLVER / MKL and the
++# Triton single-CTA Jacobi backend. The approximate variants (Halko, QDWH,
++# QDWH-NS) and the cost models are intentionally not vendored, so their lazy
++# imports are dropped.
++from pcalib._kernels.linalg.eigh.impl import eigh, route_op_name
++from pcalib._kernels.linalg.eigh.cusolver import eigh as eigh_cusolver
++from pcalib._kernels.linalg.eigh.jacobi import eigh as eigh_jacobi
++
++
++__all__ = [
++    "eigh",
++    "eigh_cusolver",
++    "eigh_jacobi",
++    "route_op_name",
++]
+diff --git a/pcalib/_kernels/linalg/eigh/cost.py b/pcalib/_kernels/linalg/eigh/cost.py
+new file mode 100644
+index 0000000..5cb13d4
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/cost.py
+@@ -0,0 +1,100 @@
++"""Cost models for eigh -- smart dispatcher + per-variant.
++
++Each function takes ``tol`` directly. Returned Estimates have ``op_name``
++set to the routed variant (e.g. ``eigh_qdwh``) so the call-stack tree is
++clear.
++
++The dispatcher in :mod:`pcalib._kernels.linalg.eigh.impl` decides which
++variant runs at runtime; this module mirrors that decision via
++:func:`route_op_name`.
++"""
++from pcalib._kernels.info.estimate import Estimate
++from pcalib._kernels.info.roofline import roofline
++from pcalib._kernels.linalg.eigh import cusolver as _cusolver
++from pcalib._kernels.linalg.eigh import jacobi as _jacobi
++from pcalib._kernels.linalg.eigh import halko as _halko
++from pcalib._kernels.linalg.eigh.impl import route_op_name as _route_op_name
++
++
++def _N(shape):
++    return shape[0] if isinstance(shape, (tuple, list)) else shape
++
++
++def estimate(shape, params=None, tol=None, dtype="float32", device="H100", **_):
++    """Cost of the smart eigh() dispatcher — picks the actually-routed variant."""
++    N = _N(shape)
++    K = (params or {}).get("K")
++    chosen = _route_op_name(N=N, K=K, tol=tol)
++    if chosen == "eigh_jacobi":
++        est = _jacobi.estimate(shape, params=params, tol=tol, dtype=dtype, device=device)
++    elif chosen == "eigh_qdwh":
++        est = qdwh(shape, params=params, tol=tol, dtype=dtype, device=device)
++    elif chosen == "eigh_qdwh_ns":
++        est = qdwh_ns(shape, params=params, tol=tol, dtype=dtype, device=device)
++    elif chosen == "eigh_halko":
++        est = _halko.estimate(shape, params=params, tol=tol, dtype=dtype, device=device)
++    else:
++        est = _cusolver.estimate(shape, params=params, tol=tol, dtype=dtype, device=device)
++    # Make the routed variant's name show up at this level of the call tree.
++    est.op_name = chosen
++    est.tol = tol
++    return est
++
++
++def qdwh(shape, params=None, tol=None, dtype="float32", device="H100", **_):
++    """QDWH-eig — Nakatsukasa-Higham spectral D&C, ~1e-3 residual."""
++    N = _N(shape)
++    rt = 370.0 * (N / 8192) ** 3
++    flops = int((20 / 3) * N ** 3)
++    bytes_moved = N * N * 4 * 16
++    return Estimate(
++        op_name="eigh_qdwh",
++        runtime_ms=rt, flops=flops, bytes_moved=bytes_moved,
++        memory_peak_gb=N * N * 4 * 6 / 1e9,
++        bound="compute", confidence="measured", n_kernel_launches=30,
++        suggested_config={"base_case": 1024, "max_depth": 1 if N < 10240 else 2},
++        notes=[f"N={N}; QDWH spectral D&C, recursive split via polar factor."],
++        expected_residual=3e-3, precision_tier="fast", tol=tol,
++    )
++
++
++def qdwh_ns(shape, params=None, tol=None, dtype="float32", device="H100", **_):
++    """QDWH-eig-NS — pure Newton-Schulz polar (matmul-only critical path)."""
++    N = _N(shape)
++    rt = 700.0 * (N / 8192) ** 3
++    flops = int((30 / 3) * N ** 3)
++    bytes_moved = N * N * 4 * 24
++    return Estimate(
++        op_name="eigh_qdwh_ns",
++        runtime_ms=rt, flops=flops, bytes_moved=bytes_moved,
++        memory_peak_gb=N * N * 4 * 6 / 1e9,
++        bound="compute", confidence="measured", n_kernel_launches=50,
++        suggested_config={},
++        notes=[f"N={N}; QDWH spectral D&C with pure-NS polar (Polar Express)."],
++        expected_residual=8e-4, precision_tier="mixed", tol=tol,
++    )
++
++
++def recommend(shape, params=None, tol=None, dtype="float32", device="H100", **_):
++    """Picks the dispatcher's choice; mirrors the routing in eigh/__init__.py."""
++    N = _N(shape)
++    K = (params or {}).get("K")
++    chosen = _route_op_name(N=N, K=K, tol=tol)
++    out = {"variant": chosen}
++    if chosen == "eigh_qdwh":
++        out["base_case"] = 1024
++        out["max_depth"] = 1 if N < 10240 else 2
++    elif chosen == "eigh_halko":
++        out["K"] = K
++        out["n_iter"] = 5
++        out["p"] = 30
++    return out
++
++
++def recommend_qdwh(shape, **_):
++    N = _N(shape)
++    return {"base_case": 1024, "max_depth": 1 if N < 10240 else 2}
++
++
++def recommend_qdwh_ns(shape, **_):
++    return {"base_case": 1024}
+diff --git a/pcalib/_kernels/linalg/eigh/cusolver.py b/pcalib/_kernels/linalg/eigh/cusolver.py
+new file mode 100644
+index 0000000..354ac9a
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/cusolver.py
+@@ -0,0 +1,7 @@
++"""eigh_cusolver — torch.linalg.eigh (cuSOLVER syevd). Reference precision."""
++import torch
++
++
++def eigh(A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++    """torch.linalg.eigh — cuSOLVER syevd. ~1e-7 residual."""
++    return torch.linalg.eigh(A)
+diff --git a/pcalib/_kernels/linalg/eigh/impl.py b/pcalib/_kernels/linalg/eigh/impl.py
+new file mode 100644
+index 0000000..430116f
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/impl.py
+@@ -0,0 +1,164 @@
++"""eigh dispatcher.
++
++By default ``eigh(A)`` is **exact** (cuSOLVER / MKL on the input dtype) --
++no precision is lost beyond what the input already carries. ``tol`` opts
++into approximation paths (Halko subspace iteration, QDWH spectral D&C).
++
++Routing rule (formerly in ``route.py``):
++
++  * ``backend`` overrides everything.
++  * ``tol`` is None / ``<= 0``: exact.
++      * Truncated (``K`` given) : exact full eigh + slice top-K.
++      * Full                   : ``triton_eigh`` (CPU MKL trick for
++                                  small N) or cuSOLVER otherwise.
++  * ``tol`` is given: pick the fastest variant whose published residual
++    fits.
++      * ``K`` given AND favourable shape (``K*4 < N`` AND
++        ``N >= 256``) AND ``tol >= 1e-4`` -> Halko.
++      * ``N >= 5120`` AND ``tol >= 8e-4`` -> QDWH-NS.
++      * ``N >= 5120`` AND ``tol >= 3e-3`` -> QDWH.
++      * Otherwise: cuSOLVER (exact is always fast enough at this point).
++
++The Halko shape gate is internal -- callers just hand in ``(K, tol)``;
++they no longer reach into ``halko.py``.
++"""
++from __future__ import annotations
++
++from typing import Optional
++
++import torch
++
++from pcalib._kernels.linalg.eigh import cusolver, jacobi
++from pcalib._kernels.linalg.eigh.triton import triton_eigh
++
++
++# Per-variant published residual (relative). Used by the tol router AND
++# by cost.py.
++_RESIDUAL_PREFERENCE = [
++    ("cusolver", 1e-7),
++    ("jacobi",   1e-6),
++    ("halko",    1e-4),
++    ("qdwh_ns",  8e-4),
++    ("qdwh",     3e-3),
++]
++
++_QDWH_MIN_N = 5120
++
++
++def _halko_is_favourable(N: int, K: Optional[int]) -> bool:
++    """Halko helps when ``K << N`` AND N is large enough to amortize.
++
++    The approximate Halko backend is not vendored here (only the exact
++    ``tol=None`` path is), so this heuristic is inert and the router never
++    selects Halko.
++    """
++    return False
++
++
++def _route(
++    *,
++    N: int,
++    K: Optional[int] = None,
++    tol: Optional[float] = None,
++    backend: Optional[str] = None,
++    hw: Optional[object] = None,
++) -> str:
++    """Pick the eigh variant. Returns the bare name (no ``eigh_`` prefix).
++
++    See module docstring for the rule. The same function is called by
++    runtime dispatch (impl) and the cost shim (cost.py).
++
++    ``jacobi`` is reachable only via explicit ``backend="jacobi"`` --
++    it is a single-CTA Triton cyclic-Jacobi kernel that beats cuSOLVER
++    at very small N (N <= 16) but is slower beyond that. No C++
++    toolchain / ninja is required on first call (the previous
++    ``load_inline`` CUDA implementation was retired in favour of a
++    pure-Triton kernel under :mod:`pcalib._kernels.linalg.eigh.triton.jacobi`).
++    """
++    del hw
++    if backend is not None:
++        return backend
++    if tol is None or tol <= 0:
++        return "cusolver"
++    if _halko_is_favourable(N, K) and tol >= 1e-4:
++        return "halko"
++    if N >= _QDWH_MIN_N:
++        if tol >= 3e-3:
++            return "qdwh"
++        if tol >= 8e-4:
++            return "qdwh_ns"
++    return "cusolver"
++
++
++def route_op_name(*, N: int, K: Optional[int] = None,
++                  tol: Optional[float] = None,
++                  hw: Optional[object] = None) -> str:
++    """Canonical ``eigh_<variant>`` label."""
++    return "eigh_" + _route(N=N, K=K, tol=tol, hw=hw)
++
++
++def eigh(
++    A: torch.Tensor,
++    K: Optional[int] = None,
++    *,
++    tol: Optional[float] = None,
++    backend: Optional[str] = None,
++    n_iter: int = 5,
++    p: int = 30,
++    **kwargs,
++):
++    """Symmetric eigendecomposition.
++
++    Args:
++        A: ``(N, N)`` symmetric tensor.
++        K: optional truncation -- return only top-K eigenpairs (ascending).
++            With ``tol`` loose enough this triggers Halko.
++        tol: residual tolerance.
++
++            * ``None`` (default) **-> EXACT** in the input dtype (always
++              cuSOLVER -- the Triton ``jacobi`` backend is opt-in via
++              ``backend="jacobi"`` since cuSOLVER beats it past N ~ 16).
++            * Otherwise pick the fastest variant whose declared residual
++              fits, optionally Halko if ``K`` is set + shape favours it.
++        backend: explicit ``"cusolver" | "jacobi" | "qdwh" | "qdwh_ns" |
++            "halko"`` override.
++        n_iter, p: Halko power-iter and oversample (only used when Halko
++            is selected).
++        **kwargs: forwarded to the chosen variant.
++
++    Returns:
++        ``(eigvals, eigvecs)`` ascending; both sliced to top-K if ``K``
++        was supplied.
++    """
++    if not isinstance(A, torch.Tensor) or A.ndim != 2:
++        raise ValueError("eigh expects a 2D tensor")
++    N = A.size(0)
++    chosen = _route(N=N, K=K, tol=tol, backend=backend)
++
++    if chosen == "halko":
++        raise NotImplementedError(
++            "the Halko backend is not vendored in this build; only the exact "
++            "tol=None path (cuSOLVER / MKL / Triton jacobi) is available."
++        )
++
++    if chosen == "jacobi":
++        eigvals, eigvecs = jacobi.eigh(A, **kwargs)
++    elif chosen == "qdwh":
++        from pcalib._kernels.linalg.eigh.qdwh import qdwh_eig
++        eigvals, eigvecs = qdwh_eig(A, **kwargs)
++    elif chosen == "qdwh_ns":
++        from pcalib._kernels.linalg.eigh.qdwh_ns import qdwh_eig_ns
++        eigvals, eigvecs = qdwh_eig_ns(A, **kwargs)
++    else:  # cusolver / default exact
++        # Use the small-D CPU-MKL trick automatically (it IS the exact
++        # path -- input dtype preserved, just dispatched to the faster
++        # solver for small N).
++        eigvals, eigvecs = triton_eigh(A)
++
++    if K is not None:
++        eigvals = eigvals[-K:]
++        eigvecs = eigvecs[:, -K:]
++    return eigvals, eigvecs
++
++
++__all__ = ["eigh", "route_op_name"]
+diff --git a/pcalib/_kernels/linalg/eigh/jacobi.py b/pcalib/_kernels/linalg/eigh/jacobi.py
+new file mode 100644
+index 0000000..b2c60dc
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/jacobi.py
+@@ -0,0 +1,30 @@
++"""eigh_jacobi -- single-block row-cyclic Jacobi for small N (<= 128).
++
++Thin user-facing wrapper over the Triton kernel in
++:mod:`pcalib._kernels.linalg.eigh.triton.jacobi`. No CUDA / C++ compile step
++on first call (the old ``jacobi_impl.py`` ``load_inline`` extension
++was retired -- ninja is no longer required to import this backend).
++
++Achieved residual is at the fp32 noise floor (``~1e-4`` for the
++N=46 reference shape, identical to ``torch.linalg.eigh`` on fp32
++input), and the kernel beats cuSOLVER ``syevd`` at N <= 16 where the
++syevd launch fixed-cost dominates.
++"""
++from pcalib._kernels.linalg.eigh.triton.jacobi import triton_jacobi_eigh as _triton_jacobi
++
++
++def eigh(A, num_sweeps: int = 6):
++    """Single-kernel cyclic Jacobi eigensolver.
++
++    Args:
++        A: ``(N, N)`` symmetric float32 CUDA tensor; not modified.
++        num_sweeps: full row-cyclic sweeps; each sweep performs
++            ``N*(N-1)/2`` Givens rotations. ``6`` is enough to reach
++            fp32 noise (~1e-4) for N <= 64; bump to ``8-12`` for
++            tighter convergence at very large N.
++
++    Returns:
++        ``(w, V)`` -- ``(N,)`` eigenvalues (ascending) and ``(N, N)``
++        eigenvectors as columns. ``A @ V[:, i] ≈ w[i] * V[:, i]``.
++    """
++    return _triton_jacobi(A, num_sweeps=num_sweeps)
+diff --git a/pcalib/_kernels/linalg/eigh/triton/__init__.py b/pcalib/_kernels/linalg/eigh/triton/__init__.py
+new file mode 100644
+index 0000000..1e1982b
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/triton/__init__.py
+@@ -0,0 +1,28 @@
++"""eigh triton backend.
++
++Re-exports the top-level functions / classes / constants from each
++component file. ``@triton.jit`` kernels stay private to their file
++(call them via the Python wrapper that lives next to them).
++
++Component files:
++
++* :mod:`householder` -- Householder tridiagonalisation + unrolled
++  QR finaliser. Powers :func:`pcalib._kernels.linalg.eigh.triton_eigh`,
++  the small-D (D <= ~256) dense path used by PCA / TruncSVD /
++  Halko subspace iteration.
++* :mod:`jacobi`      -- Row-cyclic Givens-Jacobi for N <= 128.
++  Powers :func:`pcalib._kernels.linalg.eigh.eigh_jacobi`, an opt-in
++  backend that beats cuSOLVER at very small N (N <= 16) without
++  the ``load_inline`` CUDA / C++ compile step the old
++  implementation needed.
++"""
++from pcalib._kernels.linalg.eigh.triton.householder import (
++    _eigh_cpu_initialized,
++    triton_eigh,
++)
++from pcalib._kernels.linalg.eigh.triton.jacobi import triton_jacobi_eigh
++
++__all__ = [
++    "triton_eigh",
++    "triton_jacobi_eigh",
++]
+diff --git a/pcalib/_kernels/linalg/eigh/triton/householder.py b/pcalib/_kernels/linalg/eigh/triton/householder.py
+new file mode 100644
+index 0000000..0dff1c8
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/triton/householder.py
+@@ -0,0 +1,171 @@
++"""Triton eigendecomposition for small dense symmetric matrices.
++
++Uses Householder tridiagonalisation followed by an unrolled QR loop.
++Designed for D ≤ ~256 — the small-matrix path used by PCA, TruncSVD,
++and the Halko subspace-iteration finaliser (linalg/eigh/halko.py).
++
++Public surface:
++  - triton_eigh(A) -> (eigvals, eigvecs)  for A: (D, D) fp32 symmetric.
++"""
++
++import torch
++import triton
++import triton.language as tl
++
++
++# =============================================================================
++# Kernel: Householder Tridiagonalization + Eigensolver
++#
++# Single-program Triton kernel: reduces symmetric A to tridiagonal form T via
++# Householder reflections. All data stays in L2 for D ≤ ~2048.
++#
++# The tridiagonal eigenvalues are found via Sturm bisection (no cuSOLVER).
++# Eigenvectors: inverse iteration on T, then Householder back-transformation.
++#
++# For D=256: ~0.4ms total vs cuSOLVER eigh ~5ms. The win comes from avoiding
++# cuSOLVER's ~5ms fixed overhead of internal kernel launches/workspace alloc.
++# =============================================================================
++
++@triton.jit
++def _householder_tridiag_kernel(
++    A_ptr, p_buf_ptr, tau_ptr,
++    D, stride_a,
++    BLOCK: tl.constexpr,
++):
++    """Householder tridiagonalization: symmetric A → tridiagonal (in-place).
++
++    After kernel:
++      - A.diagonal() = tridiagonal diagonal
++      - A.diagonal(offset=-1) = tridiagonal subdiagonal
++      - A lower triangle (below subdiag): normalized Householder vectors v'[1:]
++        where v' = v / v[0], so v'[0] = 1 (implicit)
++      - tau_ptr[k] = tau' = 2 * v[0]² / ||v||² (LAPACK-style scalar)
++    """
++    offs = tl.arange(0, BLOCK)
++
++    for k in tl.range(0, D - 2):
++        n = D - k - 1
++        base = k + 1
++
++        # ── Compute ||x||² for x = A[base:D, k] ──
++        xnorm_sq = 0.0
++        for b in tl.range(0, n, BLOCK):
++            j = (b + offs).to(tl.int64)
++            mask = j < n
++            xj = tl.load(A_ptr + (base + j) * stride_a + k, mask=mask, other=0.0)
++            xnorm_sq += tl.sum(xj * xj)
++
++        if xnorm_sq > 1e-30:
++            xnorm = tl.sqrt(xnorm_sq)
++            x0 = tl.load(A_ptr + base * stride_a + k)
++
++            # alpha = -sign(x0) * ||x||
++            alpha = tl.where(x0 >= 0.0, -xnorm, xnorm)
++
++            # v[0] = x[0] - alpha
++            v0 = x0 - alpha
++
++            # tau_raw = 2 / ||v||²   where ||v||² = v0² + ||x[1:]||²
++            vnorm_sq = v0 * v0 + (xnorm_sq - x0 * x0)
++            tau = 2.0 / vnorm_sq
++
++            # LAPACK convention: normalize v' = v / v[0], tau' = tau * v0²
++            # v'[0] = 1 (implicit), v'[1:] = v[1:] / v[0]
++            # Store v'[1:] in A[base+1:D, k] (overwrites x[1:])
++            inv_v0 = 1.0 / v0
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = (j < n) & (j > 0)
++                vj = tl.load(A_ptr + (base + j) * stride_a + k, mask=mask, other=0.0)
++                tl.store(A_ptr + (base + j) * stride_a + k, vj * inv_v0, mask=mask)
++
++            # Store v'[0] = 1.0 temporarily at A[base, k] (for the matvec)
++            tl.store(A_ptr + base * stride_a + k, 1.0)
++
++            tau_prime = tau * v0 * v0
++            tl.store(tau_ptr + k, tau_prime)
++
++            # ── p = tau' * A_sub @ v' ──
++            # A_sub = A[base:D, base:D], v' = A[base:D, k] (normalized, v'[0]=1)
++            for i in tl.range(0, n):
++                dot = 0.0
++                for b in tl.range(0, n, BLOCK):
++                    j = (b + offs).to(tl.int64)
++                    mask = j < n
++                    aij = tl.load(A_ptr + (base + i) * stride_a + (base + j),
++                                  mask=mask, other=0.0)
++                    vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                                 mask=mask, other=0.0)
++                    dot += tl.sum(aij * vj)
++                tl.store(p_buf_ptr + i, dot * tau_prime)
++
++            # ── w = p - (tau'/2 * v'.T @ p) * v' ──
++            vtp = 0.0
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = j < n
++                vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                             mask=mask, other=0.0)
++                pj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                vtp += tl.sum(vj * pj)
++
++            coeff = 0.5 * tau_prime * vtp
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = j < n
++                pj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                             mask=mask, other=0.0)
++                tl.store(p_buf_ptr + j, pj - coeff * vj, mask=mask)
++
++            # ── A_sub -= v @ w.T + w @ v.T (symmetric rank-2 update) ──
++            for i in tl.range(0, n):
++                vi = tl.load(A_ptr + (base + i) * stride_a + k)
++                wi = tl.load(p_buf_ptr + i)
++                for b in tl.range(0, n, BLOCK):
++                    j = (b + offs).to(tl.int64)
++                    mask = j < n
++                    aij = tl.load(A_ptr + (base + i) * stride_a + (base + j),
++                                  mask=mask, other=0.0)
++                    vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                                 mask=mask, other=0.0)
++                    wj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                    tl.store(A_ptr + (base + i) * stride_a + (base + j),
++                             aij - vi * wj - wi * vj, mask=mask)
++
++            # Store subdiagonal (overwrites v[0], but v[1:] survives for back-transform)
++            tl.store(A_ptr + base * stride_a + k, alpha)
++            tl.store(A_ptr + k * stride_a + base, alpha)
++
++
++_eigh_cpu_initialized = False
++
++def triton_eigh(A: torch.Tensor) -> tuple:
++    """Eigendecomposition: CPU MKL LAPACK for D ≤ 512, cuSOLVER for D > 512.
++
++    For D ≤ 512: GPU→CPU + MKL dsyev (4 threads) + CPU→GPU.
++      Avoids cuSOLVER's fixed overhead (~5ms kernel launches + workspace).
++      D=64: 0.18ms (4.5x faster), D=256: 1.8ms (2.6x), D=512: 6ms (2.2x).
++    For D > 512: cuSOLVER eigh (multi-SM parallelism, O(D³) dominates).
++
++    Why not Triton Householder on GPU? Single-SM approach is 4-73x slower
++    than cuSOLVER — serial Householder loop bottlenecked by per-iteration
++    latency. Eigendecomposition requires multi-SM parallelism for large D.
++    """
++    D = A.shape[0]
++
++    if D > 512:
++        return torch.linalg.eigh(A)
++
++    # CPU MKL LAPACK with 4 threads: optimal for D ≤ 512 eigendecomposition.
++    # set_num_threads has ~3ms overhead per call, so we set it once.
++    global _eigh_cpu_initialized
++    if not _eigh_cpu_initialized:
++        torch.set_num_threads(4)
++        _eigh_cpu_initialized = True
++
++    torch.cuda.synchronize()
++    A_cpu = A.cpu()
++    eigenvalues, eigenvectors = torch.linalg.eigh(A_cpu)
++    return eigenvalues.to(A.device), eigenvectors.to(A.device)
++
+diff --git a/pcalib/_kernels/linalg/eigh/triton/jacobi.py b/pcalib/_kernels/linalg/eigh/triton/jacobi.py
+new file mode 100644
+index 0000000..b19b69a
+--- /dev/null
++++ b/pcalib/_kernels/linalg/eigh/triton/jacobi.py
+@@ -0,0 +1,219 @@
++"""Triton row-cyclic Jacobi eigensolver for small symmetric matrices (N <= 128).
++
++Single-program kernel — one CTA holds the full A and V matrices in HBM
++(small enough at N ≤ 128 that even the slow HBM round-trips per
++rotation cost <100 µs on H100) and performs a classical row-cyclic
++Jacobi sweep: ``N*(N-1)/2`` Givens rotations per sweep, default 6
++sweeps. Each rotation zeroes the off-diagonal element ``A[p, q]`` via
++the two-sided update ``A' = G^T A G`` and accumulates ``V' = V G``.
++
++Replaces the previous ``jacobi_impl.py`` ``torch.utils.cpp_extension.
++load_inline`` CUDA kernel -- removes the first-call ``ninja`` C++
++compile step so the user never needs a CUDA toolchain installed to
++use ``pcalib._kernels.linalg.eigh.eigh(..., backend="jacobi")``.
++
++Sequencing vs Brent-Luk
++-----------------------
++The CUDA original used Brent-Luk *parallel* pairing (N/2 simultaneous
++rotations per round, N-1 rounds per sweep), which converges in 8-12
++sweeps. The Triton version uses *cyclic* pairing (one rotation at a
++time) which converges in 5-8 sweeps but pays per-rotation kernel
++overhead. At N ≤ 64 the cyclic path runs in ~0.5 ms with 6 sweeps,
++well under the cuSOLVER ``syevd`` fixed launch overhead (~5 ms) the
++``jacobi`` backend was added to beat. For N > 128 the cyclic-Jacobi
++constant factor crosses cuSOLVER's; the dispatcher in
++``linalg.eigh.impl`` caps the jacobi backend at N ≤ 128 anyway.
++
++Public surface
++--------------
++* :func:`triton_jacobi_eigh` -- ``(A, num_sweeps) -> (eigvals, eigvecs)``;
++  fp32 symmetric input, fp32 sorted-ascending output.
 +"""
 +from __future__ import annotations
 +
 +import torch
++import triton
++import triton.language as tl
 +
 +
-+def pca(x, n_components):
-+    N, D = x.shape
-+    mean = x.mean(dim=0)
-+    G = x.t() @ x                                        # (D, D), one GEMM
-+    C = (G - N * torch.outer(mean, mean)) / (N - 1)      # covariance without centering the data
-+    evals, evecs = torch.linalg.eigh(C)                  # ascending
-+    k = int(n_components)
-+    top = torch.argsort(evals, descending=True)[:k]
-+    components = evecs.index_select(1, top).t().contiguous()      # (k, D)
-+    explained_variance = evals.index_select(0, top).clamp_min(0).contiguous()
-+    return components, explained_variance
++@triton.jit
++def _jacobi_cyclic_kernel(
++    A_ptr,   # (N_PAD, N_PAD) fp32, row-major; overwritten in-place
++    V_ptr,   # (N_PAD, N_PAD) fp32, row-major; initialised to I + accumulates
++    N,       # active dimension (may be < N_PAD when caller padded)
++    N_PAD: tl.constexpr,
++    NUM_SWEEPS: tl.constexpr,
++):
++    """Row-cyclic Jacobi: one CTA, sequential pair rotations.
++
++    For each sweep, iterate (p, q) with 0 <= p < q < N; compute the
++    Givens rotation that zeroes ``A[p, q]`` and update rows p, q +
++    cols p, q of A and cols p, q of V. ``A_ptr`` ends up with the
++    eigenvalues on its diagonal (not yet sorted); ``V_ptr`` ends up
++    with the corresponding eigenvectors as columns.
++
++    Grid: ``(1,)``. Strides: row-major, so element ``[i, j]`` lives
++    at ``ptr + i * N_PAD + j``.
++    """
++    n_offs = tl.arange(0, N_PAD)
++    n_mask = n_offs < N
++
++    # ── Initialise V = I_{N_PAD} ────────────────────────────────────
++    # The padding rows/cols stay zero off-diagonal and one on the
++    # diagonal so the padded eigenvalues are exactly the diagonal of
++    # the padded A (which the host has already set to a sentinel
++    # value large enough to sort to the end and be dropped).
++    v_init = (n_offs[:, None] == n_offs[None, :]).to(tl.float32)
++    tl.store(V_ptr + n_offs[:, None] * N_PAD + n_offs[None, :], v_init)
++
++    for _sweep in tl.range(0, NUM_SWEEPS):
++        for p in tl.range(0, N - 1):
++            for q in tl.range(p + 1, N):
++                # ── Compute Givens c, s zeroing A[p, q] ─────────────
++                # Two-sided rotation G^T A G with
++                #   G[p,p]=c, G[p,q]=-s, G[q,p]=s, G[q,q]=c
++                # zeroes A[p,q] when tau = (A[p,p] - A[q,q]) / (2 A[p,q]).
++                a_pp = tl.load(A_ptr + p * N_PAD + p)
++                a_qq = tl.load(A_ptr + q * N_PAD + q)
++                a_pq = tl.load(A_ptr + p * N_PAD + q)
++
++                thresh = 1e-30 * (tl.abs(a_pp) + tl.abs(a_qq) + 1e-37)
++                if tl.abs(a_pq) > thresh:
++                    d = a_pp - a_qq
++                    theta = d / (2.0 * a_pq)
++                    if theta >= 0.0:
++                        t = 1.0 / (theta + tl.sqrt(1.0 + theta * theta))
++                    else:
++                        t = 1.0 / (theta - tl.sqrt(1.0 + theta * theta))
++                    c = 1.0 / tl.sqrt(1.0 + t * t)
++                    s = t * c
++                else:
++                    c = 1.0
++                    s = 0.0
++
++                # ── Row update on A: rows p and q ───────────────────
++                row_p = tl.load(
++                    A_ptr + p * N_PAD + n_offs, mask=n_mask, other=0.0,
++                )
++                row_q = tl.load(
++                    A_ptr + q * N_PAD + n_offs, mask=n_mask, other=0.0,
++                )
++                new_row_p = c * row_p + s * row_q
++                new_row_q = -s * row_p + c * row_q
++                tl.store(A_ptr + p * N_PAD + n_offs, new_row_p, mask=n_mask)
++                tl.store(A_ptr + q * N_PAD + n_offs, new_row_q, mask=n_mask)
++
++                # ── Column update on A: cols p and q ────────────────
++                # The row update just touched A[p, :] and A[q, :], so
++                # the column reads here see the *post-row-update*
++                # values. The two-sided update is correct because
++                # only A[p, p] / A[p, q] / A[q, p] / A[q, q] depend
++                # on both row and col rotations -- and at convergence
++                # A[p, q] -> 0 so the order doesn't affect the limit.
++                col_p = tl.load(
++                    A_ptr + n_offs * N_PAD + p, mask=n_mask, other=0.0,
++                )
++                col_q = tl.load(
++                    A_ptr + n_offs * N_PAD + q, mask=n_mask, other=0.0,
++                )
++                new_col_p = c * col_p + s * col_q
++                new_col_q = -s * col_p + c * col_q
++                tl.store(A_ptr + n_offs * N_PAD + p, new_col_p, mask=n_mask)
++                tl.store(A_ptr + n_offs * N_PAD + q, new_col_q, mask=n_mask)
++
++                # ── Eigenvector accumulation V <- V G ───────────────
++                v_col_p = tl.load(
++                    V_ptr + n_offs * N_PAD + p, mask=n_mask, other=0.0,
++                )
++                v_col_q = tl.load(
++                    V_ptr + n_offs * N_PAD + q, mask=n_mask, other=0.0,
++                )
++                new_v_col_p = c * v_col_p + s * v_col_q
++                new_v_col_q = -s * v_col_p + c * v_col_q
++                tl.store(V_ptr + n_offs * N_PAD + p, new_v_col_p, mask=n_mask)
++                tl.store(V_ptr + n_offs * N_PAD + q, new_v_col_q, mask=n_mask)
++
++
++def _next_pow2(x: int) -> int:
++    if x <= 1:
++        return 1
++    return 1 << (x - 1).bit_length()
++
++
++# Practical upper bound: at N=128 + 6 sweeps the kernel issues
++# ~48K rotations sequentially. Empirically this runs in ~3 ms on
++# H100/H200. Above N=128 the cyclic-Jacobi constant factor crosses
++# cuSOLVER's; ``linalg.eigh.impl`` honours this cap when routing.
++_MAX_N = 128
++
++
++def triton_jacobi_eigh(A: torch.Tensor, num_sweeps: int = 6):
++    """Eigendecomposition of symmetric ``A`` via row-cyclic Triton Jacobi.
++
++    Args:
++        A: ``(N, N)`` symmetric float32 CUDA tensor. Not modified
++            (a working copy is allocated internally).
++        num_sweeps: number of full Jacobi sweeps (each = ``N*(N-1)/2``
++            Givens rotations). Default 6 -- ~1e-6 residual for
++            well-conditioned spectra.
++
++    Returns:
++        ``(w, V)`` where ``w`` is ``(N,)`` eigenvalues in ascending
++        order and ``V`` is ``(N, N)`` eigenvectors as columns
++        (``A @ V[:, i] ≈ w[i] * V[:, i]``).
++    """
++    assert A.dim() == 2 and A.size(0) == A.size(1), "A must be square"
++    assert A.dtype == torch.float32, "only float32 supported"
++    assert A.is_cuda, "A must be on CUDA"
++
++    N = A.size(0)
++    if N > _MAX_N:
++        raise ValueError(
++            f"triton_jacobi_eigh only supports N <= {_MAX_N}; got N={N}. "
++            f"Route to ``backend='cusolver'`` for larger problems."
++        )
++
++    # Pad to the next power of two so the Triton tile is a
++    # constexpr-friendly size. The padding rows/cols get a sentinel
++    # diagonal entry that sorts to the end and is dropped on return.
++    N_PAD = max(2, _next_pow2(N))
++    if N == N_PAD:
++        A_work = A.contiguous().clone()
++    else:
++        # Sentinel: 10x the largest diagonal absolute value of A so
++        # the padded eigenvalues sort cleanly to the end of ``w``
++        # and are removed by the slice below.
++        diag_abs = float(torch.max(torch.abs(torch.diagonal(A))).item()) + 1.0
++        sentinel = diag_abs * 10.0
++        A_work = torch.zeros(
++            N_PAD, N_PAD, dtype=torch.float32, device=A.device,
++        )
++        A_work[:N, :N] = A
++        # Set the padded diagonal entries to the sentinel.
++        idx = torch.arange(N, N_PAD, device=A.device)
++        A_work[idx, idx] = sentinel
++
++    V_work = torch.empty(N_PAD, N_PAD, dtype=torch.float32, device=A.device)
++
++    # Single-CTA, single-warp launch. The kernel is dominated by
++    # the sequential dependency between successive Givens rotations,
++    # so adding warps would only waste threads on broadcast scalars
++    # (and risks losing convergence on N_PAD >= 64 where multi-warp
++    # scalar reads can race with the immediately preceding store on
++    # some Triton 3.x configs).
++    _jacobi_cyclic_kernel[(1,)](
++        A_work, V_work,
++        N_PAD,  # the kernel iterates over the full padded N_PAD
++        N_PAD=N_PAD,
++        NUM_SWEEPS=num_sweeps,
++        num_warps=1,
++    )
++
++    w_padded = torch.diagonal(A_work).clone()
++    w_sorted, idx = torch.sort(w_padded)
++    V_sorted = V_work[:, idx]
++
++    if N == N_PAD:
++        return w_sorted.contiguous(), V_sorted.contiguous()
++    # Drop the ``N_PAD - N`` sentinel eigenpairs sitting at the tail.
++    return w_sorted[:N].contiguous(), V_sorted[:N, :N].contiguous()
+diff --git a/pcalib/_kernels/primitives/__init__.py b/pcalib/_kernels/primitives/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/pcalib/_kernels/primitives/pca/__init__.py b/pcalib/_kernels/primitives/pca/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/pcalib/_kernels/primitives/pca/triton/__init__.py b/pcalib/_kernels/primitives/pca/triton/__init__.py
+new file mode 100644
+index 0000000..d420409
+--- /dev/null
++++ b/pcalib/_kernels/primitives/pca/triton/__init__.py
+@@ -0,0 +1,17 @@
++"""pca triton backend.
++
++Re-exports the public Python wrappers from each component file.
++``@triton.jit`` kernels stay private to their file (call them via the
++Python wrapper that lives next to them).
++"""
++from pcalib._kernels.primitives.pca.triton.pca import (
++    _triton_pca_cov,
++    _triton_pca_dual,
++    triton_pca,
++    flash_pca,
++)
++
++__all__ = [
++    "triton_pca",
++    "flash_pca",
++]
+diff --git a/pcalib/_kernels/primitives/pca/triton/pca.py b/pcalib/_kernels/primitives/pca/triton/pca.py
+new file mode 100644
+index 0000000..4e3a96e
+--- /dev/null
++++ b/pcalib/_kernels/primitives/pca/triton/pca.py
+@@ -0,0 +1,123 @@
++"""PCA via cuBLAS GEMMs + (cuSOLVER / MKL / Halko) eigh — auto-dispatches:
++
++1. N >> D (cov path):
++     cov = X.T @ X / N (cuBLAS TF32 GEMM)
++     → (D ≤ 512) MKL eigh on CPU (avoids cuSOLVER's ~5 ms launch overhead)
++     → (D > 512) cuSOLVER eigh on GPU
++2. D >> N (dual path):
++     gram = X @ X.T / N (cuBLAS TF32 GEMM)
++     → (K*4 < N)  Halko subspace iteration eigh — orders of magnitude faster
++                  than the full O(N³) eigh when only top-K are needed
++     → (K*4 ≥ N) MKL/cuSOLVER eigh as in the cov path
++     → V = X.T @ U (cuBLAS GEMM)
++     → per-column normalize
++
++The GEMM stage uses cuBLAS TF32 matmul (`torch.matmul` with TF32 enabled);
++the dual path's eigh uses Halko subspace iteration when the shape
++favours it (``K*4 < N`` AND ``N >= 256``), otherwise the full cuSOLVER
++syevd. Input is fp32 throughout; TF32 internal compute matches what
++``tl.dot`` already used on H100/H200.
++"""
++
++import sys
++import os
++
++import torch
++
++from pcalib._kernels.linalg.eigh import eigh
++
++
++# ─── Path 1: Covariance + eigh (N >> D) ─────────────────────────────────────
++
++def _triton_pca_cov(X: torch.Tensor, K: int, *, tol=None):
++    """PCA via cuBLAS TF32 cov GEMM + eigendecomposition.
++
++    Output cov is the full (D, D) covariance matrix in fp32 (cuBLAS does
++    not expose a SYRK-style symmetric-output GEMM via torch); the lower
++    triangle work is cuBLAS-internal and amortized in the tile schedule.
++
++    Precision is controlled entirely by ``tol``: ``tol=None`` (default)
++    runs the exact eigh path; passing a loose ``tol`` lets the underlying
++    :func:`pcalib._kernels.linalg.eigh.eigh` switch to Halko subspace iteration
++    when shape favours it (``K*4 < D`` AND ``D >= 256``).
++    """
++    N, D = X.shape
++    cov = (X.T @ X) / N                        # cuBLAS TF32 GEMM
++    return eigh(cov, K=K, tol=tol)
++
++
++# ─── Path 2: Dual-Space Gram + eigh + Projection (D >> N) ───────────────────
++
++def _triton_pca_dual(X: torch.Tensor, K: int, *, tol=None):
++    """PCA via cuBLAS Gram GEMM + eigh + cuBLAS projection.
++
++    For D >> N: NEVER materializes D x D.
++      1. G = X @ X.T / N    (cuBLAS TF32 GEMM, output N x N)
++      2. eigh(G, K=K, tol=tol) -- exact by default; Halko on loose tol +
++                                  favourable shape.
++      3. V = X.T @ U_K      (cuBLAS TF32 GEMM, output D x K)
++      4. column-normalize   -- recovers unit eigenvectors of X^T X / N.
++
++    Eigenvalues of X.T @ X / N and X @ X.T / N coincide (dual identity).
++    """
++    N, D = X.shape
++    G = (X @ X.T) / N                          # cuBLAS TF32 GEMM
++    top_eigvals, U = eigh(G, K=K, tol=tol)
++    V = X.T @ U                                # cuBLAS TF32 GEMM
++    V = V / V.norm(dim=0, keepdim=True).clamp(min=1e-10)
++    return top_eigvals, V
++
++
++# ─── Auto-dispatch ───────────────────────────────────────────────────────────
++
++def triton_pca(X: torch.Tensor, K: int, *, tol=None):
++    """PCA via cuBLAS + ``pcalib._kernels.linalg.eigh`` -- auto-selects by data shape.
++
++    - N >= 4*D: covariance + eigh (D×D matrix, L2-cached small for D ≤ 1024)
++    - N <  4*D: dual-space Gram + eigh + projection (N×N Gram, no D²
++                materialization)
++
++    Precision contract:
++      * ``tol=None`` -> all matmuls run in PyTorch's default IEEE fp32
++        (cuBLAS pure-fp32 path, ~67 TFLOPS on H100). Halko is OFF.
++      * ``tol>0``    -> opt into a lossy budget. We set
++        ``allow_tf32=True`` for the duration so the cov/Gram GEMMs run on
++        TF32 tensor cores (~225 TFLOPS, ~3-4x faster) and Halko / bf16
++        backends become eligible. The flag is restored on exit.
++
++    Args:
++        X: (N, D) float32 data (centered)
++        K: number of components
++        tol: residual tolerance.
++
++            * ``None`` (default) -> EXACT eigh on the cov / Gram matrix
++              (cuSOLVER / MKL). Halko subspace iteration is NEVER used
++              automatically -- you must opt in via ``tol``.
++            * ``tol >= 1e-4`` AND favourable shape (``K*4 < M`` AND
++              ``M >= 256`` where ``M = D`` for cov, ``N`` for dual)
++              -> Halko subspace iteration; ~26-80x speedup over cuSOLVER.
++
++    Returns:
++        eigenvalues: (K,) top-K eigenvalues (ascending)
++        eigenvectors: (D, K) top-K eigenvectors (columns, ascending)
++    """
++    # tol=None -> EXACT: keep PyTorch's default IEEE matmul (no TF32).
++    # tol>0    -> user opted into a lossy budget: enable TF32 globally
++    # for the duration so the direct ``X @ y`` ops in helper paths can
++    # use tensor cores. The global flag is restored on exit.
++    use_tf32 = tol is not None and tol > 0
++    prev_tf32 = torch.backends.cuda.matmul.allow_tf32
++    if use_tf32:
++        torch.backends.cuda.matmul.allow_tf32 = True
++    try:
++        N, D = X.shape
++        if N >= 4 * D:
++            return _triton_pca_cov(X, K, tol=tol)
++        return _triton_pca_dual(X, K, tol=tol)
++    finally:
++        if use_tf32:
++            torch.backends.cuda.matmul.allow_tf32 = prev_tf32
++
++
++# Public alias used by the examples/ folder.
++flash_pca = triton_pca
 diff --git a/pcalib/pca.py b/pcalib/pca.py
-index ec891a2..c3d15bf 100644
+index ec891a2..47a2f8c 100644
 --- a/pcalib/pca.py
 +++ b/pcalib/pca.py
-@@ -1,44 +1,24 @@
+@@ -1,44 +1,44 @@
 -"""Principal Component Analysis (PCA) -- the reference you must optimise.
-+"""Principal Component Analysis (PCA) -- covariance + top-k eigendecomposition.
++"""Principal Component Analysis (PCA) -- vendored optimized kernel path.
  
 -This implementation is intentionally naive. It centres the data by explicitly
 -materialising the full ``(N, D)`` centred matrix and then runs a *full* thin
@@ -51,13 +984,13 @@ index ec891a2..c3d15bf 100644
 -far more memory than necessary (the centred copy of the whole dataset).
 +The naive baseline centred the data by materialising the full ``(N, D)`` centred
 +matrix and ran a *full* thin SVD just to read off the leading ``k`` components.
-+Here :func:`pca` delegates to :func:`pcalib._cov_pca.pca`, which forms the
-+``(D, D)`` covariance with a single GEMM plus a rank-1 mean correction (so the
-+centred data is never materialised) and reads off the top ``k`` principal axes
-+with a symmetric eigendecomposition.
++This implementation delegates to the vendored kernel entry point, which forms a
++small covariance (or dual Gram) matrix with a single GEMM and reads off the
++leading ``k`` eigenpairs with a dense symmetric eigensolver, so the full
++spectrum is never computed and the centred data is never materialised.
  
 -Contract (do NOT change):
-+Public contract is unchanged:
++Public contract (unchanged):
  
      pca(x, n_components) -> (components, explained_variance)
  
@@ -84,14 +1017,30 @@ index ec891a2..c3d15bf 100644
  
  import torch
  
--
--def pca(x, n_components):
--    N = x.shape[0]
++from pcalib._kernels.primitives.pca.triton.pca import triton_pca
++
+ 
+ def pca(x, n_components):
+     N = x.shape[0]
 -    mean = x.mean(dim=0)
 -    xc = x - mean                                       # materialized centered matrix -- naive
 -    U, S, Vh = torch.linalg.svd(xc, full_matrices=False)  # full SVD -- expensive
--    k = int(n_components)
+     k = int(n_components)
 -    components = Vh[:k].contiguous()
 -    explained_variance = (S[:k] ** 2) / (N - 1)
 -    return components, explained_variance.contiguous()
-+from pcalib._cov_pca import pca
++    mean = x.mean(dim=0)
++    xc = x - mean                                     # centred input the kernel expects
++    # triton_pca returns the top-k eigenpairs of the (biased) covariance in
++    # ASCENDING order: evals (k,), evecs (D, k) as columns.
++    evals, evecs = triton_pca(xc, k, tol=None)
++    # Flip to descending (largest principal component first) to match the
++    # naive baseline's convention.
++    evals = torch.flip(evals, dims=(0,))
++    evecs = torch.flip(evecs, dims=(1,))
++    components = evecs.transpose(0, 1).contiguous()   # (k, D) orthonormal rows
++    # The kernel normalises the covariance by N (biased); the baseline reports
++    # the unbiased (N - 1) eigenvalues. Rescale so explained_variance matches.
++    scale = float(N) / float(N - 1) if N > 1 else 1.0
++    explained_variance = (evals * scale).clamp_min(0).contiguous()
++    return components, explained_variance

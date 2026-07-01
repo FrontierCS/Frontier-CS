@@ -4,81 +4,77 @@ Operator-facing. Not copied into the agent workspace by the adapter.
 
 ## What this task measures
 
-Can an agent turn a correct-but-naive GPU K-Means into a fast one? The agent is
-given `kmeanslib` (a `torch.cdist`-per-iteration Lloyd loop) and must rewrite the
-internals — ideally a fused Triton assignment kernel plus a better centroid
-update — to maximize the geometric-mean speedup over the frozen baseline across a
-family of hidden `(N, D, K)` workloads, subject to a clustering-quality gate.
+Can an agent turn a naive GPU K-Means into a fast one? The agent patches
+`kmeanslib`; the judge times the patched `kmeans` against a frozen naive baseline
+on hidden `(N, D, K)` workloads and scores the geometric-mean speedup, gated on
+clustering quality (inertia). First of a four-task **flashlib kernel-optimization
+family** (KMeans, KNN, TruncatedSVD, PCA) that all share one evaluator + one
+Modal GPU harness.
 
-This is the first of a four-task **flashlib kernel-optimization family**
-(KMeans, KNN, TruncatedSVD, PCA). All four share the KernelBench-style pattern:
-ship a naive package, freeze a byte-for-byte baseline in the judge image, apply
-the agent's patch to a clean copy, time patched-vs-baseline on identical seeded
-data in an isolated worker, and gate on a primitive-appropriate quality metric
-before scoring by geomean speedup.
+## Execution: Modal GPU offload (mirrors the vllm task)
 
-## Correctness gate: inertia, judge-computed
+The judge and the agent public test both **offload GPU work to Modal**; the
+containers are light (ubuntu + `modal` + git, no torch/triton). `flash_gpu.py`
+(baked at `/opt/flash_gpu.py` in both images) builds an ephemeral Modal app on a
+GPU (`evaluation.gpu`, default H100), ships the frozen baseline + the patched
+package **as data** (no per-submission image rebuild), runs the worker, and
+returns per-workload speedups + verdicts. Needs `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET`. torch/triton/the vendored kernels run on the Modal image
+(`evaluation.pip`).
 
-The quality gate is the k-means objective — inertia = sum over points of the
-squared L2 distance to the nearest **final** centroid. It is computed by the
-judge worker from the *centroids the submission returns* (not from any
-agent-provided number), on the same seeded `x` and `init_centroids` used for the
-baseline. Properties:
+The evaluator is generic and identical across the four tasks; only three
+constants differ (`PRIMITIVE`/`PKG`/`REF_MODULE`), and all workload/threshold/
+Modal values come from `config.yaml` (delivered judge-only as
+`/judge/task_config.json`, never present in the agent image).
 
-- permutation/label-convention independent (only the centroids matter);
-- robust to floating-point drift across iterations;
-- cheat-proof: you cannot return fast garbage — low inertia requires actually
-  clustering well. Trading some numeric precision for speed (bf16/tf32
-  accumulation) is allowed within `inertia_tolerance` (default 2%).
+## Reference solution = best in the repo
 
-Determinism: `init_centroids` are always supplied and `tol = 0` (every iteration
-runs), so the baseline result is a fixed function of `(x, init_centroids,
-max_iters)`.
+`reference.patch` vendors flashlib's own optimized **Triton** K-Means path
+(`primitives/kmeans/triton/{kmeans,assign,update}.py`) under
+`kmeanslib/_kernels/…`, with imports rewritten and the string "flashlib"
+scrubbed, plus a thin adapter mapping our `(N, D)` contract onto flashlib's
+batched entry. It is triton-only (runs on any sm≥80), imports cleanly on CPU,
+and applies + passes the patch policy. Calibrate `speedup_target` from its
+measured geomean on the first GPU trial.
 
-## Anti-gaming
+## Anti-reward-hack
 
-flashlib (the library these primitives are distilled from) is public and
-Apache-2.0. Mitigations:
+The **load-bearing** defenses are structural, inside the GPU worker (the only
+place the untrusted submission runs):
 
-- The shipped package is a small, neutrally named library (`kmeanslib`), not
-  flashlib; the patch allowlist confines edits to `kmeanslib/**`.
-- The patch policy forbids importing `flashlib`/cuML/cuPy/FAISS/scikit-learn and
-  bans env/subprocess/network access — the agent must write the kernels itself.
-- Scored shapes are hidden and differ from the two public shapes; seeds derive
-  from `base_seed`. General kernels win; shape lookups do not.
-- Honest framing: reproducing SOTA-class kernels *is* the bar. We block trivial
-  library reuse, not the underlying knowledge.
+* timing primitives (`perf_counter`, `torch.cuda.synchronize`) are captured to
+  locals **before** the submission is imported → monkey-patching torch cannot
+  affect measurement;
+* **fresh data every timed iteration** → memoizing on a repeated input is
+  useless;
+* quality is **re-verified from the returned tensors on every iteration** →
+  returning a stale cached result for a different input is caught;
+* the judge computes all metrics (no agent number is trusted);
+* an ephemeral Modal container per submission → no global state persists.
 
-## Execution model & the Modal question
+The patch policy is surgical defense-in-depth (so it does not reject legitimate
+vendored/optimized kernel source): only `<pkg>/**` `.py` files may change; it
+bans external-optimized-library *imports* (flashlib/cuml/cupy/faiss/sklearn/
+cutlass — none installed on the GPU image anyway) and process/network/
+measurement-tamper patterns (`subprocess`, `socket`, `os.system`,
+`torch.cuda.synchronize =`, …).
 
-The evaluator runs an isolated worker subprocess (`_run_worker`) that imports the
-frozen baseline (`/opt/kmeans_ref/refkmeans.py`) and the patched `kmeanslib`
-(from the applied clean tree), times both, and reports JSON. This assumes the
-**judge container has a GPU**.
+The agent-facing `readme` describes the contract, gate, scoring, and policy but
+**not** how the reference is implemented.
 
-The repo's other GPU task (vllm) instead offloads to **Modal** because Harbor
-judge containers may not be GPU-scheduled. `_run_worker` is the single swap
-point: to go Modal, replace it with a Modal function that builds the patched
-package, runs the same worker logic on a Modal GPU, and returns the JSON rows.
-The rest of the evaluator (policy, gating, scoring) is unchanged. Decide
-in-container-GPU vs Modal at first calibration trial.
+## Correctness gate
 
-## Calibration TODO (needs a GPU trial)
+Inertia = sum of squared L2 distances to the nearest **final** centroid, judge-
+computed from the returned centroids on each iteration's data. Permutation- and
+convention-independent, robust to fp drift, cheat-proof. `init_centroids` are
+always supplied and `tol = 0`, so the baseline is a deterministic function of
+`(x, init_centroids, max_iters)`.
 
-- Validate `reference.patch` runs and passes the inertia gate on all workloads;
-  fix any Triton API drift (`tl.dot(input_precision=...)`, `tl.argmin`) for the
-  pinned torch/triton in the image.
-- Measure the reference solution's geomean speedup and set `speedup_target` so a
-  reference-level solution maps to ~full score.
-- Confirm hidden shapes fit device memory (the naive baseline's `cdist`
-  materializes `N x K`; all shipped shapes are H100-safe).
-- Sanity-check timing stability (median-of-7); bump `timed_iters` if noisy.
+## Calibration TODO (needs a Modal GPU trial)
 
-## Files
-
-- `kmeanslib/` — pristine package baked into both images (agent edits it).
-- `judge/refkmeans.py` — frozen baseline, baked to `/opt/kmeans_ref/`.
-- `evaluator.py` — self-contained policy + orchestration + scoring (judge-only).
-- `reference.patch` — fused-Triton reference solution (proves solvability).
-- `docker/` — builds the prebuilt agent/judge images referenced by config.yaml.
-- `harbor/app/` — agent-facing submission helpers + public self-test.
+- Run `reference.patch` on Modal; confirm it passes the inertia gate on all
+  workloads (bump `inertia_tolerance` if flashlib's low-precision assign drifts
+  slightly) and set `speedup_target` from its geomean.
+- Confirm the pinned `torch`/`triton` in `evaluation.pip` compile the vendored
+  kernels, and hidden shapes fit the GPU.
+- Confirm Modal token wiring in the Harbor judge/agent containers.

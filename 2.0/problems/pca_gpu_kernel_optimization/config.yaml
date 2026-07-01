@@ -2,54 +2,55 @@ tag: systems
 runtime:
   language: python
   timeout_seconds: 10800
-  environment: "GPU PCA kernel optimization; agent patches the pcalib Python/Triton package; judge times the patched pca against a frozen naive full-SVD baseline on hidden (N, D, k) workloads with orthonormality and captured-variance (subspace-quality) gates."
+  environment: "GPU PCA kernel optimization. The agent patches the pcalib package; the judge offloads timing to a Modal GPU, comparing the patched pca against a frozen naive baseline on hidden (N, D, k) workloads with an orthonormal-components + captured-variance quality gate."
   apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
   judge_apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
+  judge_pip_packages:
+    - modal
   docker:
-    # Experimental local images. Build them with
-    # 2.0/problems/pca_gpu_kernel_optimization/docker/build_images.sh before a
-    # local Harbor trial. Both images bundle a clean copy of the pcalib
-    # package; the judge image additionally bakes the frozen naive baseline
-    # (/opt/pca_ref) and the pristine tree (/opt/pcalib-clean).
-    image: frontiercs/pca-gpu-kernel-optimization-agent:experimental-v0.1.0
-    judge_image: frontiercs/pca-gpu-kernel-optimization-judge:experimental-v0.1.0
+    # Experimental local images. Build with docker/build_images.sh before a local
+    # Harbor trial. Both are light (ubuntu + modal + git); torch/triton/flashlib
+    # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
+    # /app/pcalib (git) + /opt/pca_ref + /opt/flash_gpu.py; the judge image
+    # additionally bakes /opt/pcalib-clean.
+    image: frontiercs/pca-gpu-kernel-optimization-agent:experimental-v0.2.0
+    judge_image: frontiercs/pca-gpu-kernel-optimization-judge:experimental-v0.2.0
 environment:
-  cpus: 8
-  memory_mb: 32768
-  storage_mb: 32768
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 16384
   build_timeout_seconds: 3600
 evaluation:
-  # The judge worker runs on a GPU visible to the judge container (single
-  # device). H100 is the reference accelerator; the Triton paths also run on
-  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
-  # step is the swap point for a Modal offload (see DESIGN.md).
   gpu: "H100"
-  # Timing: warmup then median-of-N cuda-synced full-pca calls.
-  warmup_iters: 3
+  cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  pip: ["torch", "numpy"]
+  app_name: "pca-kernel-opt-eval"
+  modal_timeout_seconds: 1800
+  warmup_iters: 2
   timed_iters: 7
-  # Subspace-quality gates. (1) The submitted components must be orthonormal:
-  # the max entry of |V V^T - I| must not exceed ortho_tolerance. (2) The
-  # variance captured by the submitted subspace, (1/(N-1))||Xc V||_F^2 on the
-  # SAME seeded data, must be at least (1 - captured_tolerance) x the frozen
-  # baseline's captured variance.
   captured_tolerance: 0.02
   ortho_tolerance: 0.02
-  # Geomean speedup (over the naive baseline) mapped to the full bounded score.
-  # Calibrate against the reference solution's measured geomean after a trial.
   speedup_target: 4.0
-  worker_timeout_seconds: 3600
   base_seed: 20260701
-  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
   agent_workload_count: 3
   expose_per_workload_metrics: false
+  workloads:
+    - {id: w0, N: 500000,  D: 128, k: 16}
+    - {id: w1, N: 1000000, D: 64,  k: 8}
+    - {id: w2, N: 200000,  D: 512, k: 32}
+    - {id: w3, N: 2000000, D: 32,  k: 8}
+    - {id: w4, N: 300000,  D: 256, k: 16}
+    - {id: w5, N: 800000,  D: 128, k: 32}
 submission:
   kind: file
   path: /app/solution.patch

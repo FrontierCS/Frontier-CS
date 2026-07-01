@@ -1,89 +1,77 @@
-"""Public self-test for the truncated-SVD kernel-optimization task.
+"""Public GPU self-test for the Truncated SVD kernel-optimization task.
 
-Runs the (patched) tsvdlib on the two public shapes, checks the factor quality
-against a local naive full-SVD recomputation (orthonormality of the returned
-components and the captured-energy ratio), and prints a rough speedup. This is a
-convenience for local iteration only -- the graded workloads and thresholds are
-hidden and differ from these shapes.
+Times your current /app/tsvdlib against the naive baseline on a Modal GPU and
+reports the quality verdict + speedup on two public shapes. Requires
+MODAL_TOKEN_ID / MODAL_TOKEN_SECRET in the environment. The graded workloads and
+their thresholds are hidden and differ from these public shapes.
 """
 from __future__ import annotations
 
+import os
 import sys
-import time
+from pathlib import Path
+
+sys.path.insert(0, "/opt")
+
+APP_DIR = os.environ.get("APP_DIR", "/app")
+PKG = "tsvdlib"
+BASELINE_DIR = "/opt/tsvd_ref"
 
 PUBLIC_WORKLOADS = [
-    {"N": 200_000, "D": 128, "k": 16, "seed": 1},
-    {"N": 500_000, "D": 64, "k": 8, "seed": 2},
+    {"id": "p0", "N": 200_000, "D": 128, "k": 16, "seed": 1},
+    {"id": "p1", "N": 500_000, "D": 64, "k": 8, "seed": 2},
 ]
 
-
-def naive_truncated_svd(x, k):
-    import torch
-    U, S, Vh = torch.linalg.svd(x, full_matrices=False)
-    return S[:k].contiguous(), Vh[:k].contiguous()
-
-
-def ortho_err(comps):
-    import torch
-    c = comps.to(torch.float32)
-    k = c.shape[0]
-    return float((c @ c.t() - torch.eye(k, device=c.device)).abs().max().item())
-
-
-def captured(x, comps):
-    import torch
-    c = comps.to(torch.float32)
-    total = 0.0
-    for i in range(0, x.shape[0], 16384):
-        p = x[i:i + 16384] @ c.t()
-        total += float((p * p).sum().item())
-    return total
+CFG = {
+    "primitive": "tsvd",
+    "pkg": PKG,
+    "ref_module": "reftsvd",
+    "gpu": os.environ.get("FLASH_PUBLIC_GPU", "H100"),
+    "cuda_image": "nvidia/cuda:12.4.1-devel-ubuntu22.04",
+    "pip": ["torch==2.5.1", "triton==3.1.0", "numpy"],
+    "app_name": "tsvd-kernel-opt-public",
+    "modal_timeout_seconds": 1800,
+    "warmup": 2,
+    "iters": 5,
+    "inertia_tolerance": 0.02,
+    "recall_threshold": 0.99,
+    "captured_tolerance": 0.02,
+    "ortho_tolerance": 0.02,
+}
 
 
-def bench(fn, warmup=2, iters=5):
-    import torch
-    for _ in range(warmup):
-        fn(); torch.cuda.synchronize()
-    ts = []
-    for _ in range(iters):
-        torch.cuda.synchronize(); t0 = time.perf_counter()
-        fn(); torch.cuda.synchronize()
-        ts.append(time.perf_counter() - t0)
-    ts.sort()
-    return ts[len(ts) // 2] * 1000.0
+def _read(root: str, sub: str = "") -> dict:
+    base = Path(root)
+    scan = base / sub if sub else base
+    return {str(p.relative_to(base)): p.read_text(encoding="utf-8", errors="replace")
+            for p in scan.rglob("*.py")}
 
 
 def main() -> int:
+    import flash_gpu  # baked at /opt/flash_gpu.py
+    if not flash_gpu.modal_available():
+        print("Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to run the GPU public test.")
+        return 1
+    payload = {
+        "baseline_files": _read(BASELINE_DIR),
+        "patched_files": _read(APP_DIR, PKG),
+        "workloads": PUBLIC_WORKLOADS,
+        "cfg": CFG,
+    }
     try:
-        import torch
-    except Exception as e:  # pragma: no cover
-        print(f"torch import failed: {e}")
+        result = flash_gpu.run_remote(payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"GPU run failed: {exc}")
         return 1
-    if not torch.cuda.is_available():
-        print("no CUDA device available; run this in a GPU-enabled container.")
+    if not result.get("ok"):
+        print(f"worker error: {result.get('error')}")
         return 1
-    import tsvdlib
-
-    for w in PUBLIC_WORKLOADS:
-        N, D, k, seed = w["N"], w["D"], w["k"], w["seed"]
-        g = torch.Generator(device="cuda").manual_seed(seed)
-        x = torch.randn(N, D, generator=g, device="cuda", dtype=torch.float32)
-
-        _, ref_c = naive_truncated_svd(x, k)
-        out = tsvdlib.truncated_svd(x, k)
-        agent_c = out[1]
-        rc, ac = captured(x, ref_c), captured(x, agent_c)
-        ratio = ac / rc if rc > 0 else float("inf")
-        oerr = ortho_err(agent_c)
-
-        ref_ms = bench(lambda: naive_truncated_svd(x, k))
-        agent_ms = bench(lambda: tsvdlib.truncated_svd(x, k))
-        ok = "OK" if (ratio >= 0.98 and oerr <= 0.02) else "QUALITY REGRESSION"
-        print(f"(N={N}, D={D}, k={k}) captured_ratio={ratio:.4f} ortho_err={oerr:.2e} [{ok}]  "
-              f"baseline={ref_ms:.2f}ms  yours={agent_ms:.2f}ms  "
-              f"speedup={ref_ms / agent_ms:.2f}x")
-        del x
-        torch.cuda.empty_cache()
+    print(f"{'workload':10s} {'status':16s} {'speedup':>10s}")
+    for row in result["rows"]:
+        if row.get("ok"):
+            print(f"{row['id']:10s} {'OK':16s} {row['speedup']:>9.2f}x")
+        else:
+            print(f"{row['id']:10s} {'FAIL:' + str(row.get('reason','')):16s} {'-':>10s}")
     return 0
 
 

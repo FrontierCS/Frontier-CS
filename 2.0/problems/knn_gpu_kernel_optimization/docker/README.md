@@ -1,7 +1,8 @@
 # Experimental Brute-Force k-NN Kernel-Optimization Images
 
-Two images, mirroring the duckdb-e2e split: a public **agent** image and a
-private **judge** image. Build them before a local Harbor trial:
+Two **light** images (ubuntu + `modal` + git). torch, triton, and the vendored
+flashlib kernels all run on the **Modal GPU image** defined in `flash_gpu.py`;
+the containers themselves are CPU-only and offload GPU work to Modal.
 
 ```bash
 bash 2.0/problems/knn_gpu_kernel_optimization/docker/build_images.sh
@@ -10,31 +11,41 @@ bash 2.0/problems/knn_gpu_kernel_optimization/docker/build_images.sh
 Defaults:
 
 ```text
-AGENT_TAG=frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.1.0
-JUDGE_TAG=frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.1.0
+AGENT_TAG=frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.2.0
+JUDGE_TAG=frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.2.0
 ```
 
-The agent image contains:
+Agent image:
 
 ```text
-/app/knnlib            # clean, git-tracked package (the agent edits this)
+/app/knnlib              # clean, git-tracked package (the agent edits this)
+/opt/flash_gpu.py        # shared Modal GPU harness (public test uses it)
+/opt/knn_ref/refknn.py   # frozen naive baseline (public-test speed denominator)
 ```
 
-The judge image contains:
+Judge image:
 
 ```text
 /opt/knnlib-clean/knnlib     # pristine tree; the patch is applied to a copy
-/opt/knn_ref/refknn.py       # frozen naive baseline (speed denominator + exact oracle)
+/opt/knn_ref/refknn.py       # frozen naive baseline (speed denominator + quality oracle)
+/opt/flash_gpu.py            # shared Modal GPU harness (the evaluator uses it)
 ```
-
-Both are based on `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel` (torch + triton).
 
 ## Runtime requirements
 
-The judge times the patched knn on a **GPU visible to the judge container**
-(single device; H100 reference, Triton paths also run on L40S/A100). If the
-Harbor runtime cannot attach a GPU to the judge container, port the worker step
-(`_run_worker` in `evaluator.py`) to a Modal GPU offload — see `DESIGN.md`.
+Both the judge and the agent public test **offload timing to a Modal GPU** and
+therefore need Modal credentials in the environment:
+
+```text
+MODAL_TOKEN_ID / MODAL_TOKEN_SECRET
+```
+
+`flash_gpu.py` builds an ephemeral Modal app on a GPU (`evaluation.gpu`, default
+`H100`), ships the frozen baseline + the patched package as data, times both on
+fresh per-iteration data, verifies quality each iteration, and returns the
+speedups. No persistent deployment is used, so a fresh GPU container is spun up
+per evaluation. Without Modal credentials the evaluator returns a patch-policy
+smoke pass (which repo CI exercises).
 
 ## Smoke test
 
@@ -42,5 +53,4 @@ Harbor runtime cannot attach a GPU to the judge container, port the worker step
 bash 2.0/problems/knn_gpu_kernel_optimization/docker/smoke_images.sh
 ```
 
-Import-only; verifies torch/triton and the baked packages are importable. It
-does not exercise a GPU.
+Import-only (modal + flash_gpu + the baked packages); does not touch a GPU or Modal.

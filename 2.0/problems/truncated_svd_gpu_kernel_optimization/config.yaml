@@ -2,54 +2,64 @@ tag: systems
 runtime:
   language: python
   timeout_seconds: 10800
-  environment: "GPU truncated-SVD kernel optimization; agent patches the tsvdlib Python/Triton package; judge times the patched truncated_svd against a frozen naive full-SVD baseline on hidden (N, D, k) workloads with orthonormality and captured-energy (approximation-quality) gates."
+  environment: "GPU Truncated SVD kernel optimization. The agent patches the tsvdlib package; the judge offloads timing to a Modal GPU, comparing the patched truncated_svd against a frozen naive baseline on hidden (N, D, k) workloads with a low-rank-factorization-quality gate (orthonormal components + captured energy)."
   apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
   judge_apt_packages:
     - bash
     - ca-certificates
     - git
     - python3
+    - python3-pip
+  judge_pip_packages:
+    - modal
   docker:
-    # Experimental local images. Build them with
-    # 2.0/problems/truncated_svd_gpu_kernel_optimization/docker/build_images.sh
-    # before a local Harbor trial. Both images bundle a clean copy of the
-    # tsvdlib package; the judge image additionally bakes the frozen naive
-    # baseline (/opt/tsvd_ref) and the pristine tree (/opt/tsvdlib-clean).
-    image: frontiercs/truncated-svd-gpu-kernel-optimization-agent:experimental-v0.1.0
-    judge_image: frontiercs/truncated-svd-gpu-kernel-optimization-judge:experimental-v0.1.0
+    # Experimental local images. Build with docker/build_images.sh before a local
+    # Harbor trial. Both are light (ubuntu + modal + git); torch/triton/flashlib
+    # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
+    # /app/tsvdlib (git) + /opt/tsvd_ref + /opt/flash_gpu.py; the judge image
+    # additionally bakes /opt/tsvdlib-clean.
+    image: frontiercs/truncated-svd-gpu-kernel-optimization-agent:experimental-v0.2.0
+    judge_image: frontiercs/truncated-svd-gpu-kernel-optimization-judge:experimental-v0.2.0
 environment:
-  cpus: 8
-  memory_mb: 32768
-  storage_mb: 32768
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 16384
   build_timeout_seconds: 3600
 evaluation:
-  # The judge worker runs on a GPU visible to the judge container (single
-  # device). H100 is the reference accelerator; the Triton paths also run on
-  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
-  # step is the swap point for a Modal offload (see DESIGN.md).
-  gpu: "H100"
-  # Timing: warmup then median-of-N cuda-synced full truncated_svd calls.
-  warmup_iters: 3
+  # --- primitive wiring (consumed by the generic evaluator + flash_gpu) ---
+  primitive: tsvd
+  pkg: tsvdlib
+  ref_module: reftsvd
+  clean_source: /opt/tsvdlib-clean
+  baseline_source: /opt/tsvd_ref
+  # --- Modal GPU ---
+  gpu: "H100"                                        # Modal GPU spec (H100 / A100 / L40S)
+  cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  pip: ["torch", "numpy"]
+  app_name: "tsvd-kernel-opt-eval"
+  modal_timeout_seconds: 1800
+  # --- timing + quality gate ---
+  warmup_iters: 2
   timed_iters: 7
-  # Approximation-quality gate: the submitted truncated_svd's components must
-  # stay orthonormal (max |C C^T - I| <= ortho_tolerance) and must not lose
-  # captured energy (||X V^T||_F^2 >= (1 - captured_tolerance) x the frozen
-  # baseline's on the SAME seeded data).
-  captured_tolerance: 0.02
-  ortho_tolerance: 0.02
-  # Geomean speedup (over the naive full-SVD baseline) mapped to the full
-  # bounded score. Calibrate against the reference solution's measured geomean
-  # after a trial.
-  speedup_target: 6.0
-  worker_timeout_seconds: 3600
+  captured_tolerance: 0.02       # agent captured energy must be >= (1-tol) x baseline on every iteration
+  ortho_tolerance: 0.02          # max |V V^T - I_k| must stay within this tolerance
+  speedup_target: 6.0            # geomean speedup mapped to full bounded score (calibrate vs reference)
   base_seed: 20260701
-  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
-  agent_workload_count: 3
+  agent_workload_count: 3        # agent role runs a fast subset; final verifier runs them all
   expose_per_workload_metrics: false
+  # --- hidden workloads (judge-only; config.yaml/task_config.json never enter the agent image) ---
+  workloads:
+    - {id: w0, N: 500000,  D: 128, k: 16}
+    - {id: w1, N: 1000000, D: 256, k: 32}
+    - {id: w2, N: 200000,  D: 512, k: 16}
+    - {id: w3, N: 2000000, D: 64,  k: 8}
+    - {id: w4, N: 300000,  D: 256, k: 16}
+    - {id: w5, N: 800000,  D: 128, k: 32}
 submission:
   kind: file
   path: /app/solution.patch

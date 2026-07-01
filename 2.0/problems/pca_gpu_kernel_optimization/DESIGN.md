@@ -4,101 +4,92 @@ Operator-facing. Not copied into the agent workspace by the adapter.
 
 ## What this task measures
 
-Can an agent turn a correct-but-naive GPU PCA into a fast one? The agent is
-given `pcalib` (a full-SVD-on-the-centred-matrix implementation) and must
-rewrite the internals — ideally a covariance/Gram matrix (`Xᵀ X`, one GEMM)
-followed by a top-`k` symmetric eigendecomposition, with fused centring and no
-materialization of the centred data — to maximize the geometric-mean speedup
-over the frozen baseline across a family of hidden `(N, D, k)` workloads,
-subject to a subspace-quality gate.
+Can an agent turn a naive GPU PCA into a fast one? The agent patches `pcalib`;
+the judge times the patched `pca` against a frozen naive baseline on hidden
+`(N, D, k)` workloads and scores the geometric-mean speedup, gated on subspace
+quality (orthonormal components + captured variance). One of a four-task
+**flashlib kernel-optimization family** (KMeans, KNN, TruncatedSVD, PCA) that all
+share one evaluator + one Modal GPU harness.
 
-This is the fourth of a four-task **flashlib kernel-optimization family**
-(KMeans, KNN, TruncatedSVD, PCA). All four share the KernelBench-style pattern:
-ship a naive package, freeze a byte-for-byte baseline in the judge image, apply
-the agent's patch to a clean copy, time patched-vs-baseline on identical seeded
-data in an isolated worker, and gate on a primitive-appropriate quality metric
-before scoring by geomean speedup. TruncatedSVD is the sibling primitive: it
-factors the raw data matrix directly (no mean-centring), whereas PCA here is
-covariance-based and centres by the feature mean.
+## Execution: Modal GPU offload (mirrors the vllm task)
 
-## Correctness gate: orthonormality + captured variance, judge-computed
+The judge and the agent public test both **offload GPU work to Modal**; the
+containers are light (ubuntu + `modal` + git, no torch/triton). `flash_gpu.py`
+(baked at `/opt/flash_gpu.py` in both images) builds an ephemeral Modal app on a
+GPU (`evaluation.gpu`, default H100), ships the frozen baseline + the patched
+package **as data** (no per-submission image rebuild), runs the worker, and
+returns per-workload speedups + verdicts. Needs `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET`. torch/triton/the vendored kernels run on the Modal image
+(`evaluation.pip`).
 
-The quality gate has two judge-computed parts, evaluated from the *components
-the submission returns* (not from any agent-provided number), on the same seeded
-`x` used for the baseline:
+The evaluator is generic and identical across the four tasks; only three
+constants differ (`PRIMITIVE`/`PKG`/`REF_MODULE`), and all workload/threshold/
+Modal values come from `config.yaml` (delivered judge-only as
+`/judge/task_config.json`, never present in the agent image).
 
-- **Orthonormality** — `max |V Vᵀ − I|` over the returned `(k, D)` components
-  must not exceed `ortho_tolerance` (default 2%). This forbids returning a
-  rank-deficient or non-orthonormal "subspace" to cheat the variance term.
-- **Captured variance** — `(1/(N−1)) ||X_c V||_F²`, where `X_c` is the
-  mean-centred data, must be at least `(1 − captured_tolerance)` (default 2%) of
-  the baseline's captured variance. The centring uses the feature mean of `x`.
+## Reference solution = best in the repo
 
-Properties:
+`reference.patch` vendors flashlib's own optimized **Triton** PCA path
+(`primitives/pca/triton/pca.py` + the `linalg/eigh` cuSOLVER/MKL/Triton-Jacobi
+stack it depends on) under `pcalib/_kernels/…`, with imports rewritten and the
+string "flashlib" scrubbed, plus a thin adapter mapping our
+`pca(x, n_components) -> (components, explained_variance)` contract onto
+flashlib's entry (which returns eigenpairs of the small cov/Gram matrix). It is
+triton-only (runs on any sm≥80), imports cleanly on CPU (kernels compile lazily),
+and applies + passes the patch policy. Calibrate `speedup_target` from its
+measured geomean on the first GPU trial.
 
-- rotation/sign/basis-convention independent — only the *subspace* spanned by
-  the components matters, so the gate does not care whether the agent returns
-  eigenvectors in a different sign or rotated within the top-`k` subspace;
-- robust to floating-point drift across the eigendecomposition;
-- cheat-proof: you cannot return fast garbage — high captured variance requires
-  actually recovering the leading principal subspace, and the orthonormality
-  check blocks degenerate answers. Trading some numeric precision for speed
-  (tf32/bf16 accumulation in the GEMM) is allowed within tolerance.
+## Anti-reward-hack
 
-Determinism: data is a fixed function of `(N, D, seed)`; seeds derive from
-`base_seed`. The naive baseline result is therefore reproducible.
+The **load-bearing** defenses are structural, inside the GPU worker (the only
+place the untrusted submission runs):
 
-Note on the worker: `pca` returns `(components, explained_variance)`, so
-`components` is the **first** element of the tuple (unlike the SVD sibling where
-the singular values come first). The worker reads `agent_out[0]` for the
-subspace-quality checks.
+* timing primitives (`perf_counter`, `torch.cuda.synchronize`) are captured to
+  locals **before** the submission is imported → monkey-patching torch cannot
+  affect measurement;
+* **fresh data every timed iteration** → memoizing on a repeated input is
+  useless;
+* quality is **re-verified from the returned tensors on every iteration** →
+  returning a stale cached result for a different input is caught;
+* the judge computes all metrics (no agent number is trusted);
+* an ephemeral Modal container per submission → no global state persists.
 
-## Anti-gaming
+The patch policy is surgical defense-in-depth (so it does not reject legitimate
+vendored/optimized kernel source): only `<pkg>/**` `.py` files may change; it
+bans external-optimized-library *imports* (flashlib/cuml/cupy/faiss/sklearn/
+cutlass — none installed on the GPU image anyway) and process/network/
+measurement-tamper patterns (`subprocess`, `socket`, `os.system`,
+`torch.cuda.synchronize =`, …).
 
-flashlib (the library these primitives are distilled from) is public and
-Apache-2.0. Mitigations:
+The agent-facing `readme` describes the contract, gate, scoring, and policy but
+**not** how the reference is implemented.
 
-- The shipped package is a small, neutrally named library (`pcalib`), not
-  flashlib; the patch allowlist confines edits to `pcalib/**`.
-- The patch policy forbids importing `flashlib`/cuML/cuPy/FAISS/scikit-learn and
-  bans env/subprocess/network access — the agent must write the kernels itself.
-- Scored shapes are hidden and differ from the two public shapes; seeds derive
-  from `base_seed`. General kernels win; shape lookups do not.
-- Honest framing: reproducing SOTA-class kernels *is* the bar. We block trivial
-  library reuse, not the underlying knowledge.
+## Correctness gate
 
-## Execution model & the Modal question
+Two judge-computed parts, evaluated from the *components the submission returns*
+(not from any agent-provided number), on each iteration's seeded `x`:
 
-The evaluator runs an isolated worker subprocess (`_run_worker`) that imports the
-frozen baseline (`/opt/pca_ref/refpca.py`) and the patched `pcalib` (from the
-applied clean tree), times both, and reports JSON. This assumes the **judge
-container has a GPU**.
+* **Orthonormality** — `max |V Vᵀ − I|` over the returned `(k, D)` components must
+  not exceed `ortho_tolerance`. Blocks returning a rank-deficient or
+  non-orthonormal "subspace" to cheat the variance term.
+* **Captured variance** — `(1/(N−1)) ||X_c V||_F²`, where `X_c` is the
+  mean-centred data, must be at least `(1 − captured_tolerance)` of the
+  baseline's captured variance.
 
-The repo's other GPU task (vllm) instead offloads to **Modal** because Harbor
-judge containers may not be GPU-scheduled. `_run_worker` is the single swap
-point: to go Modal, replace it with a Modal function that builds the patched
-package, runs the same worker logic on a Modal GPU, and returns the JSON rows.
-The rest of the evaluator (policy, gating, scoring) is unchanged. Decide
-in-container-GPU vs Modal at first calibration trial.
+Rotation/sign/basis-convention independent (only the spanned subspace matters),
+robust to fp drift, cheat-proof: high captured variance requires actually
+recovering the leading principal subspace. Data is a fixed function of
+`(N, D, seed)` with seeds derived from `base_seed`, so the naive baseline is
+reproducible. Note: `pca` returns `(components, explained_variance)`, so
+`components` is the **first** tuple element (the worker reads `agent_out[0]` for
+the subspace-quality checks).
 
-## Calibration TODO (needs a GPU trial)
+## Calibration TODO (needs a Modal GPU trial)
 
-- Validate `reference.patch` runs and passes the orthonormality + captured
-  variance gates on all workloads; fix any `torch.linalg.eigh` API drift for the
-  pinned torch in the image.
-- Measure the reference solution's geomean speedup and set `speedup_target` so a
-  reference-level solution maps to ~full score (default seeded at 4.0 for the
-  covariance-vs-full-SVD swap; recalibrate).
-- Confirm hidden shapes fit device memory (the naive baseline materializes the
-  `(N, D)` centred matrix and runs a full thin SVD; all shipped shapes are
-  H100-safe).
-- Sanity-check timing stability (median-of-7); bump `timed_iters` if noisy.
-
-## Files
-
-- `pcalib/` — pristine package baked into both images (agent edits it).
-- `judge/refpca.py` — frozen baseline, baked to `/opt/pca_ref/`.
-- `evaluator.py` — self-contained policy + orchestration + scoring (judge-only).
-- `reference.patch` — covariance + eigh reference solution (proves solvability).
-- `docker/` — builds the prebuilt agent/judge images referenced by config.yaml.
-- `harbor/app/` — agent-facing submission helpers + public self-test.
+- Run `reference.patch` on Modal; confirm it passes the orthonormality + captured
+  variance gates on all workloads (bump `captured_tolerance` / `ortho_tolerance`
+  if the low-precision matmul path drifts slightly) and set `speedup_target` from
+  its geomean.
+- Confirm the pinned `torch`/`triton` in `evaluation.pip` compile the vendored
+  kernels, and hidden shapes fit the GPU.
+- Confirm Modal token wiring in the Harbor judge/agent containers.

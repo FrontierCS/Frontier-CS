@@ -1,95 +1,77 @@
-"""Public self-test for the K-Means kernel-optimization task.
+"""Public GPU self-test for the K-Means kernel-optimization task.
 
-Runs the (patched) kmeanslib on the two public shapes, checks the clustering
-quality against a local naive recomputation, and prints a rough speedup. This is
-a convenience for local iteration only -- the graded workloads and thresholds
-are hidden and differ from these shapes.
+Times your current /app/kmeanslib against the naive baseline on a Modal GPU and
+reports the quality verdict + speedup on two public shapes. Requires
+MODAL_TOKEN_ID / MODAL_TOKEN_SECRET in the environment. The graded workloads and
+their thresholds are hidden and differ from these public shapes.
 """
 from __future__ import annotations
 
+import os
 import sys
-import time
+from pathlib import Path
+
+sys.path.insert(0, "/opt")
+
+APP_DIR = os.environ.get("APP_DIR", "/app")
+PKG = "kmeanslib"
+BASELINE_DIR = "/opt/kmeans_ref"
 
 PUBLIC_WORKLOADS = [
-    {"N": 50_000, "D": 32, "K": 64, "max_iters": 10, "seed": 1},
-    {"N": 200_000, "D": 128, "K": 256, "max_iters": 10, "seed": 2},
+    {"id": "p0", "N": 50_000, "D": 32, "K": 64, "max_iters": 10, "seed": 1},
+    {"id": "p1", "N": 200_000, "D": 128, "K": 256, "max_iters": 10, "seed": 2},
 ]
 
-
-def naive_kmeans(x, k, max_iters, init):
-    import torch
-    c = init.clone()
-    labels = None
-    for _ in range(max_iters):
-        labels = torch.argmin(torch.cdist(x, c), dim=1)
-        sums = torch.zeros((k, x.shape[1]), device=x.device, dtype=torch.float32)
-        cnt = torch.zeros((k,), device=x.device, dtype=torch.float32)
-        sums.index_add_(0, labels, x.float())
-        cnt.index_add_(0, labels, torch.ones(x.shape[0], device=x.device))
-        empty = cnt == 0
-        cnt = cnt.clamp_min(1.0)
-        newc = sums / cnt[:, None]
-        if empty.any():
-            newc[empty] = c[empty].float()
-        c = newc.to(x.dtype)
-    return labels, c
+CFG = {
+    "primitive": "kmeans",
+    "pkg": PKG,
+    "ref_module": "refkmeans",
+    "gpu": os.environ.get("FLASH_PUBLIC_GPU", "H100"),
+    "cuda_image": "nvidia/cuda:12.4.1-devel-ubuntu22.04",
+    "pip": ["torch==2.5.1", "triton==3.1.0", "numpy"],
+    "app_name": "kmeans-kernel-opt-public",
+    "modal_timeout_seconds": 1800,
+    "warmup": 2,
+    "iters": 5,
+    "inertia_tolerance": 0.02,
+    "recall_threshold": 0.99,
+    "captured_tolerance": 0.02,
+    "ortho_tolerance": 0.02,
+}
 
 
-def inertia(x, c):
-    import torch
-    cn = (c * c).sum(1)
-    total = 0.0
-    for i in range(0, x.shape[0], 16384):
-        xb = x[i:i + 16384]
-        d = (xb * xb).sum(1, keepdim=True) - 2.0 * xb @ c.t() + cn[None, :]
-        total += float(d.min(1).values.clamp_min(0).sum())
-    return total
-
-
-def bench(fn, warmup=2, iters=5):
-    import torch
-    for _ in range(warmup):
-        fn(); torch.cuda.synchronize()
-    ts = []
-    for _ in range(iters):
-        torch.cuda.synchronize(); t0 = time.perf_counter()
-        fn(); torch.cuda.synchronize()
-        ts.append(time.perf_counter() - t0)
-    ts.sort()
-    return ts[len(ts) // 2] * 1000.0
+def _read(root: str, sub: str = "") -> dict:
+    base = Path(root)
+    scan = base / sub if sub else base
+    return {str(p.relative_to(base)): p.read_text(encoding="utf-8", errors="replace")
+            for p in scan.rglob("*.py")}
 
 
 def main() -> int:
+    import flash_gpu  # baked at /opt/flash_gpu.py
+    if not flash_gpu.modal_available():
+        print("Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to run the GPU public test.")
+        return 1
+    payload = {
+        "baseline_files": _read(BASELINE_DIR),
+        "patched_files": _read(APP_DIR, PKG),
+        "workloads": PUBLIC_WORKLOADS,
+        "cfg": CFG,
+    }
     try:
-        import torch
-    except Exception as e:  # pragma: no cover
-        print(f"torch import failed: {e}")
+        result = flash_gpu.run_remote(payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"GPU run failed: {exc}")
         return 1
-    if not torch.cuda.is_available():
-        print("no CUDA device available; run this in a GPU-enabled container.")
+    if not result.get("ok"):
+        print(f"worker error: {result.get('error')}")
         return 1
-    import kmeanslib
-
-    for w in PUBLIC_WORKLOADS:
-        N, D, K, it, seed = w["N"], w["D"], w["K"], w["max_iters"], w["seed"]
-        g = torch.Generator(device="cuda").manual_seed(seed)
-        x = torch.randn(N, D, generator=g, device="cuda", dtype=torch.float32)
-        init = x.index_select(0, torch.randperm(N, generator=g, device="cuda")[:K]).clone()
-
-        _, ref_c = naive_kmeans(x, K, it, init)
-        out = kmeanslib.kmeans(x, K, max_iters=it, init_centroids=init, tol=0.0)
-        agent_c = out[1]
-        ri, ai = inertia(x, ref_c), inertia(x, agent_c)
-        ratio = ai / ri if ri > 0 else float("inf")
-
-        ref_ms = bench(lambda: naive_kmeans(x, K, it, init))
-        agent_ms = bench(lambda: kmeanslib.kmeans(x, K, max_iters=it, init_centroids=init, tol=0.0))
-        ok = "OK" if ratio <= 1.05 else "QUALITY REGRESSION"
-        print(f"(N={N}, D={D}, K={K}) inertia_ratio={ratio:.4f} [{ok}]  "
-              f"baseline={ref_ms:.2f}ms  yours={agent_ms:.2f}ms  "
-              f"speedup={ref_ms / agent_ms:.2f}x")
-        del x, init
-        torch.cuda.empty_cache()
+    print(f"{'workload':10s} {'status':16s} {'speedup':>10s}")
+    for row in result["rows"]:
+        if row.get("ok"):
+            print(f"{row['id']:10s} {'OK':16s} {row['speedup']:>9.2f}x")
+        else:
+            print(f"{row['id']:10s} {'FAIL:' + str(row.get('reason','')):16s} {'-':>10s}")
     return 0
 
 

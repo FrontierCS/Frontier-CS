@@ -1,40 +1,786 @@
-diff --git a/tsvdlib/_gram_tsvd.py b/tsvdlib/_gram_tsvd.py
+diff --git a/tsvdlib/_kernels/__init__.py b/tsvdlib/_kernels/__init__.py
 new file mode 100644
-index 0000000..fe425e4
+index 0000000..e69de29
+diff --git a/tsvdlib/_kernels/linalg/__init__.py b/tsvdlib/_kernels/linalg/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tsvdlib/_kernels/linalg/eigh/__init__.py b/tsvdlib/_kernels/linalg/eigh/__init__.py
+new file mode 100644
+index 0000000..f610f92
 --- /dev/null
-+++ b/tsvdlib/_gram_tsvd.py
-@@ -0,0 +1,24 @@
-+"""Gram-matrix truncated SVD: X^T X + top-k eigendecomposition.
++++ b/tsvdlib/_kernels/linalg/eigh/__init__.py
+@@ -0,0 +1,29 @@
++"""Symmetric eigendecomposition.
 +
-+Avoids the full SVD of the ``(N, D)`` matrix. The right singular vectors of
-+``X`` are the eigenvectors of the Gram matrix ``G = X^T X`` (a single ``(D, D)``
-+GEMM), and the singular values are the square roots of the corresponding
-+eigenvalues. We form ``G`` once, eigendecompose the small ``(D, D)`` matrix with
-+:func:`torch.linalg.eigh`, and keep only the top ``k`` triples. This is
-+``O(N D^2)`` for the GEMM plus ``O(D^3)`` for the eigensolve, but with a far
-+smaller constant than a full SVD and no ``(N, min(N, D))`` factor materialised.
++Public API
++----------
++Single dispatcher (recommended):
++
++    eigh(A, K=None, *, tol=None, backend=None)
++
++By default ``eigh(A)`` is **exact** in the input dtype (cuSOLVER /
++single-kernel Jacobi for small ``N``). The exact ``tol=None`` path uses
++cuSOLVER (with a small-N CPU-MKL / Triton Jacobi fast path); it does not
++reach into the approximate (Halko / QDWH) variants.
++
++Backend-explicit (power users):
++
++    eigh_cusolver(A)        torch.linalg.eigh -- ~1e-7 residual
++    eigh_jacobi(A, ...)     single-block Jacobi for small N
++"""
++from tsvdlib._kernels.linalg.eigh.impl import eigh, route_op_name
++from tsvdlib._kernels.linalg.eigh.cusolver import eigh as eigh_cusolver
++from tsvdlib._kernels.linalg.eigh.jacobi import eigh as eigh_jacobi
++
++
++__all__ = [
++    "eigh",
++    "eigh_cusolver",
++    "eigh_jacobi",
++    "route_op_name",
++]
+diff --git a/tsvdlib/_kernels/linalg/eigh/cost.py b/tsvdlib/_kernels/linalg/eigh/cost.py
+new file mode 100644
+index 0000000..7a28d91
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/cost.py
+@@ -0,0 +1,21 @@
++"""Cost model shim for eigh.
++
++The full cost/roofline subsystem (``info.estimate`` / ``info.roofline``)
++and the approximate eigh variants (Halko / QDWH) are not part of this
++build. This module keeps the dispatcher's routed-variant label available
++via :func:`route_op_name` (re-exported from
++:mod:`tsvdlib._kernels.linalg.eigh.impl`); the exact cuSOLVER path is the
++only variant this build ships.
++"""
++from tsvdlib._kernels.linalg.eigh.impl import route_op_name as _route_op_name
++
++
++def _N(shape):
++    return shape[0] if isinstance(shape, (tuple, list)) else shape
++
++
++def recommend(shape, params=None, tol=None, dtype="float32", device="H100", **_):
++    """Mirror the dispatcher's choice (exact cuSOLVER in this build)."""
++    N = _N(shape)
++    K = (params or {}).get("K")
++    return {"variant": _route_op_name(N=N, K=K, tol=tol)}
+diff --git a/tsvdlib/_kernels/linalg/eigh/cusolver.py b/tsvdlib/_kernels/linalg/eigh/cusolver.py
+new file mode 100644
+index 0000000..354ac9a
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/cusolver.py
+@@ -0,0 +1,7 @@
++"""eigh_cusolver — torch.linalg.eigh (cuSOLVER syevd). Reference precision."""
++import torch
++
++
++def eigh(A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++    """torch.linalg.eigh — cuSOLVER syevd. ~1e-7 residual."""
++    return torch.linalg.eigh(A)
+diff --git a/tsvdlib/_kernels/linalg/eigh/impl.py b/tsvdlib/_kernels/linalg/eigh/impl.py
+new file mode 100644
+index 0000000..1ccec5c
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/impl.py
+@@ -0,0 +1,96 @@
++"""eigh dispatcher.
++
++By default ``eigh(A)`` is **exact** (cuSOLVER / MKL on the input dtype) --
++no precision is lost beyond what the input already carries.
++
++Routing rule (formerly in ``route.py``):
++
++  * ``backend`` overrides everything.
++  * exact (``tol`` None / ``<= 0``, the only path this build ships):
++      * Truncated (``K`` given) : exact full eigh + slice top-K.
++      * Full                   : ``triton_eigh`` (CPU MKL trick for
++                                  small N) or cuSOLVER otherwise.
++
++The approximate variants (Halko subspace iteration, QDWH spectral D&C)
++are not part of this build; the exact cuSOLVER path is used throughout.
++"""
++from __future__ import annotations
++
++from typing import Optional
++
++import torch
++
++from tsvdlib._kernels.linalg.eigh import cusolver, jacobi
++from tsvdlib._kernels.linalg.eigh.triton import triton_eigh
++
++
++def _route(
++    *,
++    N: int,
++    K: Optional[int] = None,
++    tol: Optional[float] = None,
++    backend: Optional[str] = None,
++) -> str:
++    """Pick the eigh variant. Returns the bare name (no ``eigh_`` prefix).
++
++    The exact path routes to cuSOLVER (with a small-N CPU-MKL / Triton
++    fast path handled inside the cusolver / triton backend).
++    ``jacobi`` is reachable only via explicit ``backend="jacobi"`` -- a
++    single-CTA Triton cyclic-Jacobi kernel that beats cuSOLVER at very
++    small N (N <= 16) but is slower beyond that. No C++ toolchain /
++    ninja is required on first call.
++    """
++    if backend is not None:
++        return backend
++    return "cusolver"
++
++
++def route_op_name(*, N: int, K: Optional[int] = None,
++                  tol: Optional[float] = None) -> str:
++    """Canonical ``eigh_<variant>`` label."""
++    return "eigh_" + _route(N=N, K=K, tol=tol)
++
++
++def eigh(
++    A: torch.Tensor,
++    K: Optional[int] = None,
++    *,
++    tol: Optional[float] = None,
++    backend: Optional[str] = None,
++    **kwargs,
++):
++    """Symmetric eigendecomposition.
++
++    Args:
++        A: ``(N, N)`` symmetric tensor.
++        K: optional truncation -- return only top-K eigenpairs (ascending).
++        tol: residual tolerance. ``None`` (default) -> EXACT in the input
++            dtype (cuSOLVER; the Triton ``jacobi`` backend is opt-in via
++            ``backend="jacobi"`` since cuSOLVER beats it past N ~ 16).
++        backend: explicit ``"cusolver" | "jacobi"`` override.
++        **kwargs: forwarded to the chosen variant.
++
++    Returns:
++        ``(eigvals, eigvecs)`` ascending; both sliced to top-K if ``K``
++        was supplied.
++    """
++    if not isinstance(A, torch.Tensor) or A.ndim != 2:
++        raise ValueError("eigh expects a 2D tensor")
++    N = A.size(0)
++    chosen = _route(N=N, K=K, tol=tol, backend=backend)
++
++    if chosen == "jacobi":
++        eigvals, eigvecs = jacobi.eigh(A, **kwargs)
++    else:  # cusolver / default exact
++        # Use the small-D CPU-MKL trick automatically (it IS the exact
++        # path -- input dtype preserved, just dispatched to the faster
++        # solver for small N).
++        eigvals, eigvecs = triton_eigh(A)
++
++    if K is not None:
++        eigvals = eigvals[-K:]
++        eigvecs = eigvecs[:, -K:]
++    return eigvals, eigvecs
++
++
++__all__ = ["eigh", "route_op_name"]
+diff --git a/tsvdlib/_kernels/linalg/eigh/jacobi.py b/tsvdlib/_kernels/linalg/eigh/jacobi.py
+new file mode 100644
+index 0000000..be549a4
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/jacobi.py
+@@ -0,0 +1,30 @@
++"""eigh_jacobi -- single-block row-cyclic Jacobi for small N (<= 128).
++
++Thin user-facing wrapper over the Triton kernel in
++:mod:`tsvdlib._kernels.linalg.eigh.triton.jacobi`. No CUDA / C++ compile step
++on first call (the old ``jacobi_impl.py`` ``load_inline`` extension
++was retired -- ninja is no longer required to import this backend).
++
++Achieved residual is at the fp32 noise floor (``~1e-4`` for the
++N=46 reference shape, identical to ``torch.linalg.eigh`` on fp32
++input), and the kernel beats cuSOLVER ``syevd`` at N <= 16 where the
++syevd launch fixed-cost dominates.
++"""
++from tsvdlib._kernels.linalg.eigh.triton.jacobi import triton_jacobi_eigh as _triton_jacobi
++
++
++def eigh(A, num_sweeps: int = 6):
++    """Single-kernel cyclic Jacobi eigensolver.
++
++    Args:
++        A: ``(N, N)`` symmetric float32 CUDA tensor; not modified.
++        num_sweeps: full row-cyclic sweeps; each sweep performs
++            ``N*(N-1)/2`` Givens rotations. ``6`` is enough to reach
++            fp32 noise (~1e-4) for N <= 64; bump to ``8-12`` for
++            tighter convergence at very large N.
++
++    Returns:
++        ``(w, V)`` -- ``(N,)`` eigenvalues (ascending) and ``(N, N)``
++        eigenvectors as columns. ``A @ V[:, i] ≈ w[i] * V[:, i]``.
++    """
++    return _triton_jacobi(A, num_sweeps=num_sweeps)
+diff --git a/tsvdlib/_kernels/linalg/eigh/triton/__init__.py b/tsvdlib/_kernels/linalg/eigh/triton/__init__.py
+new file mode 100644
+index 0000000..b6cdf0a
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/triton/__init__.py
+@@ -0,0 +1,28 @@
++"""eigh triton backend.
++
++Re-exports the top-level functions / classes / constants from each
++component file. ``@triton.jit`` kernels stay private to their file
++(call them via the Python wrapper that lives next to them).
++
++Component files:
++
++* :mod:`householder` -- Householder tridiagonalisation + unrolled
++  QR finaliser. Powers :func:`tsvdlib._kernels.linalg.eigh.triton_eigh`,
++  the small-D (D <= ~256) dense path used by PCA / TruncSVD /
++  Halko subspace iteration.
++* :mod:`jacobi`      -- Row-cyclic Givens-Jacobi for N <= 128.
++  Powers :func:`tsvdlib._kernels.linalg.eigh.eigh_jacobi`, an opt-in
++  backend that beats cuSOLVER at very small N (N <= 16) without
++  the ``load_inline`` CUDA / C++ compile step the old
++  implementation needed.
++"""
++from tsvdlib._kernels.linalg.eigh.triton.householder import (
++    _eigh_cpu_initialized,
++    triton_eigh,
++)
++from tsvdlib._kernels.linalg.eigh.triton.jacobi import triton_jacobi_eigh
++
++__all__ = [
++    "triton_eigh",
++    "triton_jacobi_eigh",
++]
+diff --git a/tsvdlib/_kernels/linalg/eigh/triton/householder.py b/tsvdlib/_kernels/linalg/eigh/triton/householder.py
+new file mode 100644
+index 0000000..0dff1c8
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/triton/householder.py
+@@ -0,0 +1,171 @@
++"""Triton eigendecomposition for small dense symmetric matrices.
++
++Uses Householder tridiagonalisation followed by an unrolled QR loop.
++Designed for D ≤ ~256 — the small-matrix path used by PCA, TruncSVD,
++and the Halko subspace-iteration finaliser (linalg/eigh/halko.py).
++
++Public surface:
++  - triton_eigh(A) -> (eigvals, eigvecs)  for A: (D, D) fp32 symmetric.
++"""
++
++import torch
++import triton
++import triton.language as tl
++
++
++# =============================================================================
++# Kernel: Householder Tridiagonalization + Eigensolver
++#
++# Single-program Triton kernel: reduces symmetric A to tridiagonal form T via
++# Householder reflections. All data stays in L2 for D ≤ ~2048.
++#
++# The tridiagonal eigenvalues are found via Sturm bisection (no cuSOLVER).
++# Eigenvectors: inverse iteration on T, then Householder back-transformation.
++#
++# For D=256: ~0.4ms total vs cuSOLVER eigh ~5ms. The win comes from avoiding
++# cuSOLVER's ~5ms fixed overhead of internal kernel launches/workspace alloc.
++# =============================================================================
++
++@triton.jit
++def _householder_tridiag_kernel(
++    A_ptr, p_buf_ptr, tau_ptr,
++    D, stride_a,
++    BLOCK: tl.constexpr,
++):
++    """Householder tridiagonalization: symmetric A → tridiagonal (in-place).
++
++    After kernel:
++      - A.diagonal() = tridiagonal diagonal
++      - A.diagonal(offset=-1) = tridiagonal subdiagonal
++      - A lower triangle (below subdiag): normalized Householder vectors v'[1:]
++        where v' = v / v[0], so v'[0] = 1 (implicit)
++      - tau_ptr[k] = tau' = 2 * v[0]² / ||v||² (LAPACK-style scalar)
++    """
++    offs = tl.arange(0, BLOCK)
++
++    for k in tl.range(0, D - 2):
++        n = D - k - 1
++        base = k + 1
++
++        # ── Compute ||x||² for x = A[base:D, k] ──
++        xnorm_sq = 0.0
++        for b in tl.range(0, n, BLOCK):
++            j = (b + offs).to(tl.int64)
++            mask = j < n
++            xj = tl.load(A_ptr + (base + j) * stride_a + k, mask=mask, other=0.0)
++            xnorm_sq += tl.sum(xj * xj)
++
++        if xnorm_sq > 1e-30:
++            xnorm = tl.sqrt(xnorm_sq)
++            x0 = tl.load(A_ptr + base * stride_a + k)
++
++            # alpha = -sign(x0) * ||x||
++            alpha = tl.where(x0 >= 0.0, -xnorm, xnorm)
++
++            # v[0] = x[0] - alpha
++            v0 = x0 - alpha
++
++            # tau_raw = 2 / ||v||²   where ||v||² = v0² + ||x[1:]||²
++            vnorm_sq = v0 * v0 + (xnorm_sq - x0 * x0)
++            tau = 2.0 / vnorm_sq
++
++            # LAPACK convention: normalize v' = v / v[0], tau' = tau * v0²
++            # v'[0] = 1 (implicit), v'[1:] = v[1:] / v[0]
++            # Store v'[1:] in A[base+1:D, k] (overwrites x[1:])
++            inv_v0 = 1.0 / v0
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = (j < n) & (j > 0)
++                vj = tl.load(A_ptr + (base + j) * stride_a + k, mask=mask, other=0.0)
++                tl.store(A_ptr + (base + j) * stride_a + k, vj * inv_v0, mask=mask)
++
++            # Store v'[0] = 1.0 temporarily at A[base, k] (for the matvec)
++            tl.store(A_ptr + base * stride_a + k, 1.0)
++
++            tau_prime = tau * v0 * v0
++            tl.store(tau_ptr + k, tau_prime)
++
++            # ── p = tau' * A_sub @ v' ──
++            # A_sub = A[base:D, base:D], v' = A[base:D, k] (normalized, v'[0]=1)
++            for i in tl.range(0, n):
++                dot = 0.0
++                for b in tl.range(0, n, BLOCK):
++                    j = (b + offs).to(tl.int64)
++                    mask = j < n
++                    aij = tl.load(A_ptr + (base + i) * stride_a + (base + j),
++                                  mask=mask, other=0.0)
++                    vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                                 mask=mask, other=0.0)
++                    dot += tl.sum(aij * vj)
++                tl.store(p_buf_ptr + i, dot * tau_prime)
++
++            # ── w = p - (tau'/2 * v'.T @ p) * v' ──
++            vtp = 0.0
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = j < n
++                vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                             mask=mask, other=0.0)
++                pj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                vtp += tl.sum(vj * pj)
++
++            coeff = 0.5 * tau_prime * vtp
++            for b in tl.range(0, n, BLOCK):
++                j = (b + offs).to(tl.int64)
++                mask = j < n
++                pj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                             mask=mask, other=0.0)
++                tl.store(p_buf_ptr + j, pj - coeff * vj, mask=mask)
++
++            # ── A_sub -= v @ w.T + w @ v.T (symmetric rank-2 update) ──
++            for i in tl.range(0, n):
++                vi = tl.load(A_ptr + (base + i) * stride_a + k)
++                wi = tl.load(p_buf_ptr + i)
++                for b in tl.range(0, n, BLOCK):
++                    j = (b + offs).to(tl.int64)
++                    mask = j < n
++                    aij = tl.load(A_ptr + (base + i) * stride_a + (base + j),
++                                  mask=mask, other=0.0)
++                    vj = tl.load(A_ptr + (base + j) * stride_a + k,
++                                 mask=mask, other=0.0)
++                    wj = tl.load(p_buf_ptr + j, mask=mask, other=0.0)
++                    tl.store(A_ptr + (base + i) * stride_a + (base + j),
++                             aij - vi * wj - wi * vj, mask=mask)
++
++            # Store subdiagonal (overwrites v[0], but v[1:] survives for back-transform)
++            tl.store(A_ptr + base * stride_a + k, alpha)
++            tl.store(A_ptr + k * stride_a + base, alpha)
++
++
++_eigh_cpu_initialized = False
++
++def triton_eigh(A: torch.Tensor) -> tuple:
++    """Eigendecomposition: CPU MKL LAPACK for D ≤ 512, cuSOLVER for D > 512.
++
++    For D ≤ 512: GPU→CPU + MKL dsyev (4 threads) + CPU→GPU.
++      Avoids cuSOLVER's fixed overhead (~5ms kernel launches + workspace).
++      D=64: 0.18ms (4.5x faster), D=256: 1.8ms (2.6x), D=512: 6ms (2.2x).
++    For D > 512: cuSOLVER eigh (multi-SM parallelism, O(D³) dominates).
++
++    Why not Triton Householder on GPU? Single-SM approach is 4-73x slower
++    than cuSOLVER — serial Householder loop bottlenecked by per-iteration
++    latency. Eigendecomposition requires multi-SM parallelism for large D.
++    """
++    D = A.shape[0]
++
++    if D > 512:
++        return torch.linalg.eigh(A)
++
++    # CPU MKL LAPACK with 4 threads: optimal for D ≤ 512 eigendecomposition.
++    # set_num_threads has ~3ms overhead per call, so we set it once.
++    global _eigh_cpu_initialized
++    if not _eigh_cpu_initialized:
++        torch.set_num_threads(4)
++        _eigh_cpu_initialized = True
++
++    torch.cuda.synchronize()
++    A_cpu = A.cpu()
++    eigenvalues, eigenvectors = torch.linalg.eigh(A_cpu)
++    return eigenvalues.to(A.device), eigenvectors.to(A.device)
++
+diff --git a/tsvdlib/_kernels/linalg/eigh/triton/jacobi.py b/tsvdlib/_kernels/linalg/eigh/triton/jacobi.py
+new file mode 100644
+index 0000000..351d508
+--- /dev/null
++++ b/tsvdlib/_kernels/linalg/eigh/triton/jacobi.py
+@@ -0,0 +1,219 @@
++"""Triton row-cyclic Jacobi eigensolver for small symmetric matrices (N <= 128).
++
++Single-program kernel — one CTA holds the full A and V matrices in HBM
++(small enough at N ≤ 128 that even the slow HBM round-trips per
++rotation cost <100 µs on H100) and performs a classical row-cyclic
++Jacobi sweep: ``N*(N-1)/2`` Givens rotations per sweep, default 6
++sweeps. Each rotation zeroes the off-diagonal element ``A[p, q]`` via
++the two-sided update ``A' = G^T A G`` and accumulates ``V' = V G``.
++
++Replaces the previous ``jacobi_impl.py`` ``torch.utils.cpp_extension.
++load_inline`` CUDA kernel -- removes the first-call ``ninja`` C++
++compile step so the user never needs a CUDA toolchain installed to
++use ``tsvdlib._kernels.linalg.eigh.eigh(..., backend="jacobi")``.
++
++Sequencing vs Brent-Luk
++-----------------------
++The CUDA original used Brent-Luk *parallel* pairing (N/2 simultaneous
++rotations per round, N-1 rounds per sweep), which converges in 8-12
++sweeps. The Triton version uses *cyclic* pairing (one rotation at a
++time) which converges in 5-8 sweeps but pays per-rotation kernel
++overhead. At N ≤ 64 the cyclic path runs in ~0.5 ms with 6 sweeps,
++well under the cuSOLVER ``syevd`` fixed launch overhead (~5 ms) the
++``jacobi`` backend was added to beat. For N > 128 the cyclic-Jacobi
++constant factor crosses cuSOLVER's; the dispatcher in
++``linalg.eigh.impl`` caps the jacobi backend at N ≤ 128 anyway.
++
++Public surface
++--------------
++* :func:`triton_jacobi_eigh` -- ``(A, num_sweeps) -> (eigvals, eigvecs)``;
++  fp32 symmetric input, fp32 sorted-ascending output.
 +"""
 +from __future__ import annotations
 +
 +import torch
++import triton
++import triton.language as tl
 +
 +
-+def truncated_svd(x, n_components):
-+    N, D = x.shape
-+    G = x.t() @ x                                  # (D, D) Gram matrix -- one GEMM
-+    evals, evecs = torch.linalg.eigh(G)            # ascending
-+    k = int(n_components)
-+    top = torch.argsort(evals, descending=True)[:k]
-+    s = evals.index_select(0, top).clamp_min(0).sqrt()      # (k,) singular values
-+    comps = evecs.index_select(1, top).t().contiguous()     # (k, D) right singular vectors
-+    return s, comps
++@triton.jit
++def _jacobi_cyclic_kernel(
++    A_ptr,   # (N_PAD, N_PAD) fp32, row-major; overwritten in-place
++    V_ptr,   # (N_PAD, N_PAD) fp32, row-major; initialised to I + accumulates
++    N,       # active dimension (may be < N_PAD when caller padded)
++    N_PAD: tl.constexpr,
++    NUM_SWEEPS: tl.constexpr,
++):
++    """Row-cyclic Jacobi: one CTA, sequential pair rotations.
++
++    For each sweep, iterate (p, q) with 0 <= p < q < N; compute the
++    Givens rotation that zeroes ``A[p, q]`` and update rows p, q +
++    cols p, q of A and cols p, q of V. ``A_ptr`` ends up with the
++    eigenvalues on its diagonal (not yet sorted); ``V_ptr`` ends up
++    with the corresponding eigenvectors as columns.
++
++    Grid: ``(1,)``. Strides: row-major, so element ``[i, j]`` lives
++    at ``ptr + i * N_PAD + j``.
++    """
++    n_offs = tl.arange(0, N_PAD)
++    n_mask = n_offs < N
++
++    # ── Initialise V = I_{N_PAD} ────────────────────────────────────
++    # The padding rows/cols stay zero off-diagonal and one on the
++    # diagonal so the padded eigenvalues are exactly the diagonal of
++    # the padded A (which the host has already set to a sentinel
++    # value large enough to sort to the end and be dropped).
++    v_init = (n_offs[:, None] == n_offs[None, :]).to(tl.float32)
++    tl.store(V_ptr + n_offs[:, None] * N_PAD + n_offs[None, :], v_init)
++
++    for _sweep in tl.range(0, NUM_SWEEPS):
++        for p in tl.range(0, N - 1):
++            for q in tl.range(p + 1, N):
++                # ── Compute Givens c, s zeroing A[p, q] ─────────────
++                # Two-sided rotation G^T A G with
++                #   G[p,p]=c, G[p,q]=-s, G[q,p]=s, G[q,q]=c
++                # zeroes A[p,q] when tau = (A[p,p] - A[q,q]) / (2 A[p,q]).
++                a_pp = tl.load(A_ptr + p * N_PAD + p)
++                a_qq = tl.load(A_ptr + q * N_PAD + q)
++                a_pq = tl.load(A_ptr + p * N_PAD + q)
++
++                thresh = 1e-30 * (tl.abs(a_pp) + tl.abs(a_qq) + 1e-37)
++                if tl.abs(a_pq) > thresh:
++                    d = a_pp - a_qq
++                    theta = d / (2.0 * a_pq)
++                    if theta >= 0.0:
++                        t = 1.0 / (theta + tl.sqrt(1.0 + theta * theta))
++                    else:
++                        t = 1.0 / (theta - tl.sqrt(1.0 + theta * theta))
++                    c = 1.0 / tl.sqrt(1.0 + t * t)
++                    s = t * c
++                else:
++                    c = 1.0
++                    s = 0.0
++
++                # ── Row update on A: rows p and q ───────────────────
++                row_p = tl.load(
++                    A_ptr + p * N_PAD + n_offs, mask=n_mask, other=0.0,
++                )
++                row_q = tl.load(
++                    A_ptr + q * N_PAD + n_offs, mask=n_mask, other=0.0,
++                )
++                new_row_p = c * row_p + s * row_q
++                new_row_q = -s * row_p + c * row_q
++                tl.store(A_ptr + p * N_PAD + n_offs, new_row_p, mask=n_mask)
++                tl.store(A_ptr + q * N_PAD + n_offs, new_row_q, mask=n_mask)
++
++                # ── Column update on A: cols p and q ────────────────
++                # The row update just touched A[p, :] and A[q, :], so
++                # the column reads here see the *post-row-update*
++                # values. The two-sided update is correct because
++                # only A[p, p] / A[p, q] / A[q, p] / A[q, q] depend
++                # on both row and col rotations -- and at convergence
++                # A[p, q] -> 0 so the order doesn't affect the limit.
++                col_p = tl.load(
++                    A_ptr + n_offs * N_PAD + p, mask=n_mask, other=0.0,
++                )
++                col_q = tl.load(
++                    A_ptr + n_offs * N_PAD + q, mask=n_mask, other=0.0,
++                )
++                new_col_p = c * col_p + s * col_q
++                new_col_q = -s * col_p + c * col_q
++                tl.store(A_ptr + n_offs * N_PAD + p, new_col_p, mask=n_mask)
++                tl.store(A_ptr + n_offs * N_PAD + q, new_col_q, mask=n_mask)
++
++                # ── Eigenvector accumulation V <- V G ───────────────
++                v_col_p = tl.load(
++                    V_ptr + n_offs * N_PAD + p, mask=n_mask, other=0.0,
++                )
++                v_col_q = tl.load(
++                    V_ptr + n_offs * N_PAD + q, mask=n_mask, other=0.0,
++                )
++                new_v_col_p = c * v_col_p + s * v_col_q
++                new_v_col_q = -s * v_col_p + c * v_col_q
++                tl.store(V_ptr + n_offs * N_PAD + p, new_v_col_p, mask=n_mask)
++                tl.store(V_ptr + n_offs * N_PAD + q, new_v_col_q, mask=n_mask)
++
++
++def _next_pow2(x: int) -> int:
++    if x <= 1:
++        return 1
++    return 1 << (x - 1).bit_length()
++
++
++# Practical upper bound: at N=128 + 6 sweeps the kernel issues
++# ~48K rotations sequentially. Empirically this runs in ~3 ms on
++# H100/H200. Above N=128 the cyclic-Jacobi constant factor crosses
++# cuSOLVER's; ``linalg.eigh.impl`` honours this cap when routing.
++_MAX_N = 128
++
++
++def triton_jacobi_eigh(A: torch.Tensor, num_sweeps: int = 6):
++    """Eigendecomposition of symmetric ``A`` via row-cyclic Triton Jacobi.
++
++    Args:
++        A: ``(N, N)`` symmetric float32 CUDA tensor. Not modified
++            (a working copy is allocated internally).
++        num_sweeps: number of full Jacobi sweeps (each = ``N*(N-1)/2``
++            Givens rotations). Default 6 -- ~1e-6 residual for
++            well-conditioned spectra.
++
++    Returns:
++        ``(w, V)`` where ``w`` is ``(N,)`` eigenvalues in ascending
++        order and ``V`` is ``(N, N)`` eigenvectors as columns
++        (``A @ V[:, i] ≈ w[i] * V[:, i]``).
++    """
++    assert A.dim() == 2 and A.size(0) == A.size(1), "A must be square"
++    assert A.dtype == torch.float32, "only float32 supported"
++    assert A.is_cuda, "A must be on CUDA"
++
++    N = A.size(0)
++    if N > _MAX_N:
++        raise ValueError(
++            f"triton_jacobi_eigh only supports N <= {_MAX_N}; got N={N}. "
++            f"Route to ``backend='cusolver'`` for larger problems."
++        )
++
++    # Pad to the next power of two so the Triton tile is a
++    # constexpr-friendly size. The padding rows/cols get a sentinel
++    # diagonal entry that sorts to the end and is dropped on return.
++    N_PAD = max(2, _next_pow2(N))
++    if N == N_PAD:
++        A_work = A.contiguous().clone()
++    else:
++        # Sentinel: 10x the largest diagonal absolute value of A so
++        # the padded eigenvalues sort cleanly to the end of ``w``
++        # and are removed by the slice below.
++        diag_abs = float(torch.max(torch.abs(torch.diagonal(A))).item()) + 1.0
++        sentinel = diag_abs * 10.0
++        A_work = torch.zeros(
++            N_PAD, N_PAD, dtype=torch.float32, device=A.device,
++        )
++        A_work[:N, :N] = A
++        # Set the padded diagonal entries to the sentinel.
++        idx = torch.arange(N, N_PAD, device=A.device)
++        A_work[idx, idx] = sentinel
++
++    V_work = torch.empty(N_PAD, N_PAD, dtype=torch.float32, device=A.device)
++
++    # Single-CTA, single-warp launch. The kernel is dominated by
++    # the sequential dependency between successive Givens rotations,
++    # so adding warps would only waste threads on broadcast scalars
++    # (and risks losing convergence on N_PAD >= 64 where multi-warp
++    # scalar reads can race with the immediately preceding store on
++    # some Triton 3.x configs).
++    _jacobi_cyclic_kernel[(1,)](
++        A_work, V_work,
++        N_PAD,  # the kernel iterates over the full padded N_PAD
++        N_PAD=N_PAD,
++        NUM_SWEEPS=num_sweeps,
++        num_warps=1,
++    )
++
++    w_padded = torch.diagonal(A_work).clone()
++    w_sorted, idx = torch.sort(w_padded)
++    V_sorted = V_work[:, idx]
++
++    if N == N_PAD:
++        return w_sorted.contiguous(), V_sorted.contiguous()
++    # Drop the ``N_PAD - N`` sentinel eigenpairs sitting at the tail.
++    return w_sorted[:N].contiguous(), V_sorted[:N, :N].contiguous()
+diff --git a/tsvdlib/_kernels/primitives/__init__.py b/tsvdlib/_kernels/primitives/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tsvdlib/_kernels/primitives/truncated_svd/__init__.py b/tsvdlib/_kernels/primitives/truncated_svd/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tsvdlib/_kernels/primitives/truncated_svd/triton/__init__.py b/tsvdlib/_kernels/primitives/truncated_svd/triton/__init__.py
+new file mode 100644
+index 0000000..8002b6e
+--- /dev/null
++++ b/tsvdlib/_kernels/primitives/truncated_svd/triton/__init__.py
+@@ -0,0 +1,17 @@
++"""truncated_svd triton backend.
++
++Re-exports the public Python wrappers from each component file.
++``@triton.jit`` kernels stay private to their file (call them via the
++Python wrapper that lives next to them).
++"""
++from tsvdlib._kernels.primitives.truncated_svd.triton.svd import (
++    _triton_svd_cov,
++    _triton_svd_dual,
++    triton_truncated_svd,
++    flash_truncated_svd,
++)
++
++__all__ = [
++    "triton_truncated_svd",
++    "flash_truncated_svd",
++]
+diff --git a/tsvdlib/_kernels/primitives/truncated_svd/triton/svd.py b/tsvdlib/_kernels/primitives/truncated_svd/triton/svd.py
+new file mode 100644
+index 0000000..a89ed6c
+--- /dev/null
++++ b/tsvdlib/_kernels/primitives/truncated_svd/triton/svd.py
+@@ -0,0 +1,86 @@
++"""Truncated SVD via cuBLAS GEMMs + ``tsvdlib._kernels.linalg.eigh``.
++
++Auto-dispatches between two paths:
++
++1. N >= D (cov path):
++     gram = X.T @ X (cuBLAS TF32 GEMM)
++     eigh(gram, K=K, tol=tol)
++     S = sqrt(lambda); Vh = eigvecs.T (descending)
++
++2. D >  N (dual path):
++     G = X @ X.T  (cuBLAS TF32 GEMM)
++     eigh(G, K=K, tol=tol)
++     V = X.T @ U; column-normalise; S = sqrt(lambda)
++
++Mathematically identical to PCA (without centering):
++  SVD singular values = sqrt(eigenvalues of X.T @ X)
++  SVD right singular vectors = eigenvectors of X.T @ X
++
++Precision is owned by ``tsvdlib._kernels.linalg.eigh.eigh`` -- pass ``tol=None``
++(default) for an exact path (cuSOLVER / MKL), pass ``tol >= 1e-4`` to opt
++into Halko subspace iteration when shape favours it.
++"""
++import torch
++
++from tsvdlib._kernels.linalg.eigh import eigh
++
++
++def _triton_svd_cov(X: torch.Tensor, K: int, *, tol=None):
++    """Truncated SVD via cuBLAS TF32 cov GEMM + eigh on D x D."""
++    N, D = X.shape
++    gram = X.T @ X                                # cuBLAS TF32 GEMM
++    top_eigvals, top_eigvecs = eigh(gram, K=K, tol=tol)
++    S = torch.sqrt(top_eigvals.clamp(min=0)).flip(0)
++    Vh = top_eigvecs.T.flip(0)                    # (K, D), descending
++    return S, Vh
++
++
++def _triton_svd_dual(X: torch.Tensor, K: int, *, tol=None):
++    """Truncated SVD via cuBLAS gram GEMM + eigh on N x N + projection."""
++    N, D = X.shape
++    G = X @ X.T                                   # cuBLAS TF32 GEMM
++    top_eigvals, U = eigh(G, K=K, tol=tol)
++    V = X.T @ U                                   # cuBLAS TF32 GEMM
++    V = V / V.norm(dim=0, keepdim=True).clamp(min=1e-10)
++    S = torch.sqrt(top_eigvals.clamp(min=0)).flip(0)
++    Vh = V.T.flip(0)                              # (K, D), descending
++    return S, Vh
++
++
++def triton_truncated_svd(X: torch.Tensor, K: int, *, tol=None):
++    """Truncated SVD: picks the path whose eigh dimension is smaller.
++
++    All ``torch.matmul`` calls run with TF32 enabled on Hopper/Ampere
++    (the same internal precision the prior in-house Triton kernels used);
++    the global flag is restored on exit.
++
++    Args:
++        X: ``(N, D)`` input on CUDA.
++        K: number of singular components.
++        tol: residual tolerance. ``None`` (default) -> exact eigh on the
++            cov / Gram matrix. Otherwise: Halko if ``tol >= 1e-4`` AND
++            ``K*4 < M`` AND ``M >= 256`` (``M = D`` for cov, ``N`` for
++            dual); QDWH variants for very large ``N``.
++
++    Returns:
++        S: ``(K,)`` top-K singular values, descending.
++        Vh: ``(K, D)`` top-K right singular vectors, rows.
++    """
++    # tol=None -> EXACT: keep PyTorch's default IEEE matmul (no TF32).
++    # tol>0    -> caller opted into a lossy budget: TF32 enabled for
++    # auxiliary ``@`` ops; restored on exit.
++    use_tf32 = tol is not None and tol > 0
++    prev_tf32 = torch.backends.cuda.matmul.allow_tf32
++    if use_tf32:
++        torch.backends.cuda.matmul.allow_tf32 = True
++    try:
++        N, D = X.shape
++        if D <= N:
++            return _triton_svd_cov(X, K, tol=tol)
++        return _triton_svd_dual(X, K, tol=tol)
++    finally:
++        if use_tf32:
++            torch.backends.cuda.matmul.allow_tf32 = prev_tf32
++
++
++flash_truncated_svd = triton_truncated_svd
 diff --git a/tsvdlib/tsvd.py b/tsvdlib/tsvd.py
-index f1b4fe7..6216694 100644
+index f1b4fe7..96b5c0c 100644
 --- a/tsvdlib/tsvd.py
 +++ b/tsvdlib/tsvd.py
-@@ -1,36 +1,22 @@
+@@ -1,36 +1,27 @@
 -"""Truncated SVD of a dense matrix -- the reference you must optimise.
-+"""Truncated SVD of a dense matrix -- Gram-matrix accelerated.
++"""Truncated SVD of a dense matrix -- vendored best-in-repo Triton path.
  
 -This implementation is intentionally naive. It computes the FULL singular value
 -decomposition of the ``(N, D)`` matrix with :func:`torch.linalg.svd` and then
@@ -43,22 +789,21 @@ index f1b4fe7..6216694 100644
 -triples even though only the leading ``k`` are ever used. It is correct and
 -deterministic, but it does far more work and moves far more memory than a
 -truncated decomposition needs.
-+The naive baseline computed the FULL SVD of the ``(N, D)`` matrix and sliced off
-+the top-k factors. Here it is replaced by a Gram-matrix decomposition
-+(:func:`tsvdlib._gram_tsvd.truncated_svd`): the right singular vectors of ``X``
-+are the eigenvectors of ``G = X^T X`` (one ``(D, D)`` GEMM) and the singular
-+values are the square roots of the leading eigenvalues, so no
-+``(N, min(N, D))`` factor is ever materialised.
- 
+-
 -Contract (do NOT change):
-+Public contract is unchanged:
++Delegates to the exact Triton truncated-SVD entry vendored under
++``tsvdlib._kernels``. It forms the Gram / cov matrix with cuBLAS GEMMs and
++runs an exact top-k eigendecomposition (cuSOLVER, with a small-D CPU-MKL
++fast path) instead of the naive full ``torch.linalg.svd``. The public
++contract is unchanged:
  
      truncated_svd(x, n_components) -> (singular_values, components)
  
 -    x               : (N, D) float32 CUDA tensor. NOT centered -- this is a
 -                      truncated SVD of the raw matrix, not PCA.
--    n_components (k) : int, number of leading singular triples to return.
--
++    x               : (N, D) float32 CUDA tensor. NOT centered.
+     n_components (k) : int, number of leading singular triples to return.
+ 
 -    singular_values : (k,) float32, the top-k singular values in DESCENDING
 -                      order.
 -    components       : (k, D) float32, the top-k right singular vectors as
@@ -68,18 +813,19 @@ index f1b4fe7..6216694 100644
 -of :func:`truncated_svd` freely (e.g. a Gram-matrix + top-k eigendecomposition,
 -fused kernels, better memory traffic), as long as the public contract above is
 -preserved.
-+    x               : (N, D) float32 CUDA tensor (NOT centered).
-+    n_components (k): int, number of leading singular triples to return.
-+    singular_values : (k,) float32 top-k singular values, descending.
-+    components       : (k, D) float32 top-k right singular vectors (orthonormal
-+                      rows).
++    singular_values : (k,) float32, top-k singular values, DESCENDING.
++    components       : (k, D) float32, top-k right singular vectors as
++                      rows (orthonormal).
  """
  from __future__ import annotations
  
--import torch
--
--
--def truncated_svd(x, n_components):
+ import torch
+ 
++from tsvdlib._kernels.primitives.truncated_svd.triton.svd import triton_truncated_svd
++
+ 
+ def truncated_svd(x, n_components):
 -    U, S, Vh = torch.linalg.svd(x, full_matrices=False)   # full SVD -- naive/expensive
 -    return S[:n_components].contiguous(), Vh[:n_components].contiguous()
-+from tsvdlib._gram_tsvd import truncated_svd
++    s, vh = triton_truncated_svd(x, n_components, tol=None)   # (k,), (k, D) descending
++    return s.contiguous(), vh.contiguous()

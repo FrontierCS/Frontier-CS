@@ -1,78 +1,77 @@
-"""Public self-test for the brute-force k-NN kernel-optimization task.
+"""Public GPU self-test for the brute-force k-NN kernel-optimization task.
 
-Runs the (patched) knnlib on the two public shapes, checks the nearest-neighbour
-quality (recall@k) against a local naive cdist+topk recomputation, and prints a
-rough speedup. This is a convenience for local iteration only -- the graded
-workloads and thresholds are hidden and differ from these shapes.
+Times your current /app/knnlib against the naive baseline on a Modal GPU and
+reports the quality verdict + speedup on two public shapes. Requires
+MODAL_TOKEN_ID / MODAL_TOKEN_SECRET in the environment. The graded workloads and
+their thresholds are hidden and differ from these public shapes.
 """
 from __future__ import annotations
 
+import os
 import sys
-import time
+from pathlib import Path
+
+sys.path.insert(0, "/opt")
+
+APP_DIR = os.environ.get("APP_DIR", "/app")
+PKG = "knnlib"
+BASELINE_DIR = "/opt/knn_ref"
 
 PUBLIC_WORKLOADS = [
-    {"Q": 1024, "M": 100_000, "D": 64, "k": 10, "seed": 1},
-    {"Q": 2048, "M": 200_000, "D": 128, "k": 10, "seed": 2},
+    {"id": "p0", "Q": 1024, "M": 100_000, "D": 64, "k": 10, "seed": 1},
+    {"id": "p1", "Q": 2048, "M": 200_000, "D": 128, "k": 10, "seed": 2},
 ]
 
+CFG = {
+    "primitive": "knn",
+    "pkg": PKG,
+    "ref_module": "refknn",
+    "gpu": os.environ.get("FLASH_PUBLIC_GPU", "H100"),
+    "cuda_image": "nvidia/cuda:12.4.1-devel-ubuntu22.04",
+    "pip": ["torch==2.5.1", "triton==3.1.0", "numpy"],
+    "app_name": "knn-kernel-opt-public",
+    "modal_timeout_seconds": 1800,
+    "warmup": 2,
+    "iters": 5,
+    "inertia_tolerance": 0.02,
+    "recall_threshold": 0.99,
+    "captured_tolerance": 0.02,
+    "ortho_tolerance": 0.02,
+}
 
-def naive_knn(queries, database, k):
-    import torch
-    d2 = torch.cdist(queries, database) ** 2
-    dist, idx = torch.topk(d2, k, dim=1, largest=False)
-    return dist, idx.to(torch.long)
 
-
-def recall(agent_idx, ref_idx):
-    # Fraction of the true k nearest indices recovered, averaged over queries.
-    hit = (agent_idx.unsqueeze(2) == ref_idx.unsqueeze(1)).any(dim=2)
-    Q, k = ref_idx.shape
-    return float(hit.sum().item()) / (Q * k)
-
-
-def bench(fn, warmup=2, iters=5):
-    import torch
-    for _ in range(warmup):
-        fn(); torch.cuda.synchronize()
-    ts = []
-    for _ in range(iters):
-        torch.cuda.synchronize(); t0 = time.perf_counter()
-        fn(); torch.cuda.synchronize()
-        ts.append(time.perf_counter() - t0)
-    ts.sort()
-    return ts[len(ts) // 2] * 1000.0
+def _read(root: str, sub: str = "") -> dict:
+    base = Path(root)
+    scan = base / sub if sub else base
+    return {str(p.relative_to(base)): p.read_text(encoding="utf-8", errors="replace")
+            for p in scan.rglob("*.py")}
 
 
 def main() -> int:
+    import flash_gpu  # baked at /opt/flash_gpu.py
+    if not flash_gpu.modal_available():
+        print("Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to run the GPU public test.")
+        return 1
+    payload = {
+        "baseline_files": _read(BASELINE_DIR),
+        "patched_files": _read(APP_DIR, PKG),
+        "workloads": PUBLIC_WORKLOADS,
+        "cfg": CFG,
+    }
     try:
-        import torch
-    except Exception as e:  # pragma: no cover
-        print(f"torch import failed: {e}")
+        result = flash_gpu.run_remote(payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"GPU run failed: {exc}")
         return 1
-    if not torch.cuda.is_available():
-        print("no CUDA device available; run this in a GPU-enabled container.")
+    if not result.get("ok"):
+        print(f"worker error: {result.get('error')}")
         return 1
-    import knnlib
-
-    for w in PUBLIC_WORKLOADS:
-        Q, M, D, k, seed = w["Q"], w["M"], w["D"], w["k"], w["seed"]
-        g = torch.Generator(device="cuda").manual_seed(seed)
-        db = torch.randn(M, D, generator=g, device="cuda", dtype=torch.float32)
-        queries = torch.randn(Q, D, generator=g, device="cuda", dtype=torch.float32)
-
-        _, ref_idx = naive_knn(queries, db, k)
-        out = knnlib.knn(queries, db, k)
-        agent_idx = out[1].long()
-        rec = recall(agent_idx, ref_idx)
-
-        ref_ms = bench(lambda: naive_knn(queries, db, k))
-        agent_ms = bench(lambda: knnlib.knn(queries, db, k))
-        ok = "OK" if rec >= 0.99 else "RECALL REGRESSION"
-        print(f"(Q={Q}, M={M}, D={D}, k={k}) recall@k={rec:.4f} [{ok}]  "
-              f"baseline={ref_ms:.2f}ms  yours={agent_ms:.2f}ms  "
-              f"speedup={ref_ms / agent_ms:.2f}x")
-        del queries, db
-        torch.cuda.empty_cache()
+    print(f"{'workload':10s} {'status':16s} {'speedup':>10s}")
+    for row in result["rows"]:
+        if row.get("ok"):
+            print(f"{row['id']:10s} {'OK':16s} {row['speedup']:>9.2f}x")
+        else:
+            print(f"{row['id']:10s} {'FAIL:' + str(row.get('reason','')):16s} {'-':>10s}")
     return 0
 
 

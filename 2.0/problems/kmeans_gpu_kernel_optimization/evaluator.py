@@ -1,21 +1,20 @@
-"""Evaluator for the K-Means GPU kernel-optimization task.
+"""Generic evaluator for the flashlib GPU kernel-optimization task family.
 
-The agent submits a unified diff over the ``kmeanslib`` Python package. The
-judge:
+Identical across all four tasks (kmeans / knn / pca / truncated_svd); every
+primitive-specific value comes from the ``evaluation`` block of the task's
+config (delivered to the judge as ``/judge/task_config.json``), which is not
+present in the agent workspace.
 
-1. statically validates the patch against an allowlist (only ``kmeanslib/**``
-   may change; no ``flashlib``/cuML/network/env access; bounded size);
-2. applies it to a pristine copy of ``kmeanslib`` baked into the judge image
-   at ``/opt/kmeanslib-clean``;
-3. runs an isolated worker subprocess that, for each hidden ``(N, D, K)``
-   workload, times the patched ``kmeanslib.kmeans`` against a *frozen* naive
-   baseline (``/opt/kmeans_ref/refkmeans.py``) on identical seeded data and
-   measures each result's k-means inertia;
-4. gates on clustering quality (agent inertia must not regress beyond a small
-   tolerance vs the baseline) and scores by the geometric-mean speedup.
+Flow: statically validate the patch (only ``<pkg>/**`` may change; no external
+optimized libs / env / process / network access) -> apply it to the pristine
+package baked at ``clean_source`` -> hand the frozen baseline + patched package
+sources to a Modal GPU worker (``flash_gpu.run_remote``) that times both on
+fresh per-iteration data and verifies clustering/retrieval/subspace quality on
+every iteration -> gate on the worker's per-workload verdict -> score by the
+geometric-mean speedup.
 
-When the judge source tree is not present (e.g. local static checks on a box
-without a GPU), the evaluator still validates the patch policy and returns a
+Without Modal credentials or the baked judge sources (e.g. repo CI on a box with
+no GPU/Modal), the evaluator still validates the patch policy and returns a
 smoke pass, so ``python3 evaluator.py reference.patch`` works anywhere.
 """
 from __future__ import annotations
@@ -30,17 +29,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-MAX_PATCH_BYTES = 1_000_000
-MAX_CHANGED_FILES = 40
 TASK_CONFIG_PATH = Path("/judge/task_config.json")
-
-DEFAULT_CLEAN_SOURCE = Path("/opt/kmeanslib-clean")   # pristine package (patched here)
-DEFAULT_BASELINE_SOURCE = Path("/opt/kmeans_ref")     # frozen naive baseline (refkmeans.py)
 
 
 def _load_task_config() -> dict[str, Any]:
@@ -52,29 +45,29 @@ def _load_task_config() -> dict[str, Any]:
 
 
 TASK_CONFIG = _load_task_config()
-EVALUATION_CONFIG = TASK_CONFIG.get("evaluation", {}) if isinstance(TASK_CONFIG.get("evaluation"), dict) else {}
+EVAL = TASK_CONFIG.get("evaluation", {}) if isinstance(TASK_CONFIG.get("evaluation"), dict) else {}
 
 
-def _cfg(name: str, default):
-    return EVALUATION_CONFIG.get(name, default)
+def _get(name: str, default):
+    return EVAL.get(name, default)
 
 
-def _cfg_int(name: str, default: int) -> int:
+def _get_int(name: str, default: int) -> int:
     try:
-        return int(EVALUATION_CONFIG.get(name, default))
+        return int(EVAL.get(name, default))
     except Exception:
         return default
 
 
-def _cfg_float(name: str, default: float) -> float:
+def _get_float(name: str, default: float) -> float:
     try:
-        return float(EVALUATION_CONFIG.get(name, default))
+        return float(EVAL.get(name, default))
     except Exception:
         return default
 
 
-def _cfg_bool(name: str, default: bool) -> bool:
-    raw = EVALUATION_CONFIG.get(name, default)
+def _get_bool(name: str, default: bool) -> bool:
+    raw = EVAL.get(name, default)
     if isinstance(raw, bool):
         return raw
     if isinstance(raw, str):
@@ -82,50 +75,49 @@ def _cfg_bool(name: str, default: bool) -> bool:
     return bool(raw)
 
 
-WARMUP_ITERS = _cfg_int("warmup_iters", 3)
-TIMED_ITERS = _cfg_int("timed_iters", 7)
-INERTIA_TOL = _cfg_float("inertia_tolerance", 0.01)   # agent inertia <= (1+tol)*ref
-SPEEDUP_TARGET = _cfg_float("speedup_target", 8.0)    # geomean speedup mapped to full score
-WORKER_TIMEOUT_SECONDS = _cfg_int("worker_timeout_seconds", 3600)
-BASE_SEED = _cfg_int("base_seed", 20260701)
+# --- Per-task identity: the ONLY lines that differ across the four tasks. ---
+# Kept as constants (not config) so the patch policy is enforceable locally / in
+# CI without /judge/task_config.json. Everything else is config-driven and only
+# needed on the GPU path.
+PRIMITIVE = "kmeans"
+PKG = "kmeanslib"
+REF_MODULE = "refkmeans"
 
-# Editable surface: only the shipped package.
-ALLOWED_PATTERNS = (
-    "kmeanslib/**",
-)
-# Never touchable, even though they are not shipped in the agent workspace.
+MAX_PATCH_BYTES = _get_int("max_patch_bytes", 2_000_000)
+MAX_CHANGED_FILES = _get_int("max_changed_files", 80)
+CLEAN_SOURCE = Path(f"/opt/{PKG}-clean")
+BASELINE_SOURCE = Path(f"/opt/{PRIMITIVE}_ref")
+SPEEDUP_TARGET = _get_float("speedup_target", 8.0)
+
+ALLOWED_PATTERNS = (f"{PKG}/**",)
 DENIED_PATTERNS = (
     "evaluator.py",
+    "flash_gpu.py",
     "reference.patch",
-    "refkmeans.py",
-    "**/refkmeans.py",
+    f"{REF_MODULE}.py",
+    f"**/{REF_MODULE}.py",
     "**/conftest.py",
     "**/test_*.py",
     "pyproject.toml",
     "setup.py",
     "setup.cfg",
 )
-# Forbidden substrings in added lines (defense in depth). The agent must write
-# its own kernels, not call an external optimized library, read the
-# environment, spawn processes, or touch the network.
-FORBIDDEN_TOKENS = (
-    "flashlib",
-    "cuml",
-    "cudf",
-    "cupy",
-    "faiss",
-    "sklearn",
-    "scikit",
-    "os.environ",
-    "getenv",
-    "putenv",
-    "setenv",
-    "subprocess",
-    "socket",
-    "urllib",
-    "requests",
-    "importlib.import_module",
-    "__import__",
+# Defense in depth (the load-bearing anti-tamper defense is structural, inside
+# the GPU worker: it captures its perf_counter / synchronize references before
+# importing the submission, regenerates data every iteration, and re-verifies
+# quality each iteration). These patterns are matched surgically so that
+# legitimate vendored/optimized kernel source is not rejected:
+#   * external optimized libraries, matched as IMPORT statements (not bare words,
+#     so a comment mentioning a name is fine); none are installed on the GPU
+#     image anyway;
+#   * process / network / measurement-tamper patterns that never appear in a
+#     real GPU kernel.
+FORBIDDEN_IMPORT_RE = re.compile(
+    r"(?:^|\n)\s*(?:import|from)\s+(flashlib|cuml|cudf|cupy|faiss|sklearn|scikit|cutlass|cuvs)\b"
+)
+FORBIDDEN_PATTERN_RE = re.compile(
+    r"\bsubprocess\b|\bsocket\b|\burllib\b|\brequests\b|os\.system|"
+    r"torch\.cuda\.synchronize\s*=|time\.perf_counter\s*=|setattr\(\s*torch\.cuda"
 )
 
 
@@ -134,7 +126,6 @@ class PatchFile:
     old_path: str
     new_path: str
     added_lines: tuple[str, ...]
-    removed_lines: tuple[str, ...]
 
     @property
     def path(self) -> str:
@@ -142,7 +133,7 @@ class PatchFile:
 
 
 def _match(path: str, patterns: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+    return any(fnmatch.fnmatch(path, p) for p in patterns)
 
 
 def _invalid(message: str, metrics: dict[str, Any] | None = None):
@@ -153,41 +144,27 @@ def _invalid(message: str, metrics: dict[str, Any] | None = None):
 
 def _parse_patch(text: str) -> list[PatchFile]:
     files: list[PatchFile] = []
-    current_old = ""
-    current_new = ""
+    old = new = ""
     added: list[str] = []
-    removed: list[str] = []
     in_file = False
-
     for line in text.splitlines():
         if line.startswith("diff --git "):
             if in_file:
-                files.append(PatchFile(current_old, current_new, tuple(added), tuple(removed)))
-            in_file = True
-            current_old = current_new = ""
-            added = []
-            removed = []
+                files.append(PatchFile(old, new, tuple(added)))
+            in_file, old, new, added = True, "", "", []
             continue
         if not in_file:
             continue
         if line.startswith("--- "):
-            current_old = line[4:].strip()
-            if current_old.startswith("a/"):
-                current_old = current_old[2:]
-            continue
-        if line.startswith("+++ "):
-            current_new = line[4:].strip()
-            if current_new.startswith("b/"):
-                current_new = current_new[2:]
-            continue
-        if line.startswith("+") and not line.startswith("+++ "):
+            old = line[4:].strip()
+            old = old[2:] if old.startswith("a/") else old
+        elif line.startswith("+++ "):
+            new = line[4:].strip()
+            new = new[2:] if new.startswith("b/") else new
+        elif line.startswith("+") and not line.startswith("+++ "):
             added.append(line[1:])
-            continue
-        if line.startswith("-") and not line.startswith("--- "):
-            removed.append(line[1:])
-
     if in_file:
-        files.append(PatchFile(current_old, current_new, tuple(added), tuple(removed)))
+        files.append(PatchFile(old, new, tuple(added)))
     return files
 
 
@@ -199,7 +176,7 @@ def _validate_path(path: str) -> tuple[bool, str]:
     if _match(path, DENIED_PATTERNS):
         return False, f"changed file is outside task boundary: {path}"
     if not _match(path, ALLOWED_PATTERNS):
-        return False, f"changed file is not allowlisted (only kmeanslib/** may change): {path}"
+        return False, f"changed file is not allowlisted (only {PKG}/** may change): {path}"
     if not path.endswith(".py"):
         return False, f"only Python files may change: {path}"
     return True, ""
@@ -212,69 +189,40 @@ def validate_patch(patch_path: Path) -> tuple[bool, str, dict[str, Any]]:
     if size > MAX_PATCH_BYTES:
         return False, f"patch is too large ({size} bytes > {MAX_PATCH_BYTES})", {}
     text = patch_path.read_text(encoding="utf-8", errors="replace")
-    patch_hash = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
     files = _parse_patch(text)
     metrics: dict[str, Any] = {
         "patch_bytes": size,
-        "patch_sha256": patch_hash,
+        "patch_sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest(),
         "changed_files": len(files),
     }
     if len(files) > MAX_CHANGED_FILES:
         return False, f"too many changed files ({len(files)} > {MAX_CHANGED_FILES})", metrics
-
-    for patch_file in files:
-        path = patch_file.path
-        if patch_file.new_path == "/dev/null":
-            return False, f"deleting files is outside task boundary: {patch_file.old_path}", metrics
-        if patch_file.old_path != "/dev/null" and patch_file.old_path != patch_file.new_path:
-            ok, err = _validate_path(patch_file.old_path)
+    for pf in files:
+        path = pf.path
+        if pf.new_path == "/dev/null":
+            return False, f"deleting files is outside task boundary: {pf.old_path}", metrics
+        if pf.old_path != "/dev/null" and pf.old_path != pf.new_path:
+            ok, err = _validate_path(pf.old_path)
             if not ok:
-                return False, f"rename/copy source is outside task boundary: {err}", metrics
+                return False, f"rename source is outside task boundary: {err}", metrics
         ok, err = _validate_path(path)
         if not ok:
             return False, err, metrics
-        added_text = "\n".join(patch_file.added_lines)
-        low = added_text.lower()
-        for token in FORBIDDEN_TOKENS:
-            if token in low:
-                return False, f"{path}: forbidden token in added code ({token})", metrics
-
+        added = "\n".join(pf.added_lines)
+        m = FORBIDDEN_IMPORT_RE.search(added)
+        if m:
+            return False, f"{path}: forbidden import of an external optimized library ({m.group(1)})", metrics
+        m = FORBIDDEN_PATTERN_RE.search(added)
+        if m:
+            return False, f"{path}: forbidden pattern in added code ({m.group(0).strip()[:40]})", metrics
     metrics["valid_patch"] = 1
     return True, "patch accepted by static policy", metrics
 
 
-def clean_env(tmp_root: Path) -> dict[str, str]:
-    home = tmp_root / "home"
-    tmp = tmp_root / "tmp"
-    home.mkdir(parents=True, exist_ok=True)
-    tmp.mkdir(parents=True, exist_ok=True)
-    env = {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "HOME": str(home),
-        "TMPDIR": str(tmp),
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    for key in ("CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LD_LIBRARY_PATH",
-                "TRITON_CACHE_DIR", "CUDA_HOME"):
-        if key in os.environ:
-            env[key] = os.environ[key]
-    env.setdefault("TRITON_CACHE_DIR", str(tmp_root / "triton_cache"))
-    return env
-
-
-def run_checked(cmd: list[str], *, cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd, cwd=str(cwd), env=env, timeout=timeout,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
-    )
-
-
-def sanitize_error_text(text: str) -> str:
-    text = re.sub(r"/tmp/[A-Za-z0-9_./-]+", "<tmp>", text)
+def sanitize(text: str) -> str:
+    text = re.sub(r"/tmp/[A-Za-z0-9_./-]+", "<tmp>", text or "")
     text = re.sub(r"/opt/[A-Za-z0-9_./-]+", "<judge>", text)
-    text = re.sub(r"N=\d+", "N=<hidden>", text)
-    text = re.sub(r"seed[=:]?\s*\d+", "seed=<hidden>", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bN=\d+|\bseed[=:]?\s*\d+", "<hidden>", text, flags=re.IGNORECASE)
     return text[-600:]
 
 
@@ -284,226 +232,123 @@ def geometric_mean(values: list[float]) -> float:
     return math.exp(sum(math.log(max(v, 1e-9)) for v in values) / len(values))
 
 
-def score_from_speedup(gm_speedup: float) -> float:
-    if gm_speedup <= 0:
+def score_from_speedup(gm: float) -> float:
+    if gm <= 0:
         return 0.0
-    raw = 100.0 * math.log(gm_speedup) / math.log(max(SPEEDUP_TARGET, 1.0000001))
+    raw = 100.0 * math.log(gm) / math.log(max(SPEEDUP_TARGET, 1.0000001))
     return max(0.0, min(100.0, raw))
 
 
-def is_final_submission_role() -> bool:
+def is_final_role() -> bool:
     return os.environ.get("FRONTIER_SUBMISSION_ROLE", "agent") == "final"
 
 
-# Hidden workloads. (N, D, K, max_iters). Agent role runs a fast subset for
-# iterative feedback; the final verifier runs the full set. Seeds are derived
-# from BASE_SEED so data is deterministic but not guessable from the statement.
-_HIDDEN_WORKLOADS = (
-    {"id": "w0", "N": 100_000,   "D": 32,  "K": 128,  "max_iters": 12},
-    {"id": "w1", "N": 200_000,   "D": 64,  "K": 256,  "max_iters": 10},
-    {"id": "w2", "N": 500_000,   "D": 128, "K": 256,  "max_iters": 10},
-    {"id": "w3", "N": 200_000,   "D": 512, "K": 256,  "max_iters": 8},   # split-D regime
-    {"id": "w4", "N": 1_000_000, "D": 64,  "K": 512,  "max_iters": 8},
-    {"id": "w5", "N": 300_000,   "D": 128, "K": 1024, "max_iters": 8},   # large-K regime
-)
-
-
-def _workloads(*, final_role: bool) -> list[dict[str, Any]]:
-    configured = _cfg("workloads", None)
-    workloads = list(configured) if isinstance(configured, list) and configured else list(_HIDDEN_WORKLOADS)
+def _workloads(final_role: bool) -> list[dict[str, Any]]:
+    workloads = list(_get("workloads", []) or [])
     if not final_role:
-        n_agent = _cfg_int("agent_workload_count", 3)
-        workloads = workloads[:n_agent]
+        n = _get_int("agent_workload_count", 3)
+        workloads = workloads[:n]
+    base = _get_int("base_seed", 20260701)
     for i, w in enumerate(workloads):
-        w.setdefault("seed", BASE_SEED + 1000 * (i + 1))
+        w.setdefault("seed", base + 1000 * (i + 1))
     return workloads
 
 
-# The worker runs the untrusted patched package in its own process. It imports
-# the frozen baseline (refkmeans) and the patched kmeanslib, times both on
-# identical seeded data, and reports per-workload timings + inertias as JSON.
-_WORKER_SOURCE = r'''
-import argparse, json, sys, time, traceback
-
-def _load(baseline_dir, patched_dir):
-    import importlib
-    sys.path.insert(0, patched_dir)   # patched `kmeanslib` package
-    sys.path.insert(0, baseline_dir)  # frozen `refkmeans` module
-    import refkmeans
-    import kmeanslib
-    return refkmeans, kmeanslib
-
-def gen(N, D, K, seed, device):
-    import torch
-    g = torch.Generator(device=device).manual_seed(int(seed))
-    x = torch.randn(N, D, generator=g, device=device, dtype=torch.float32)
-    perm = torch.randperm(N, generator=g, device=device)[:K]
-    init = x.index_select(0, perm).clone()
-    return x, init
-
-def inertia(x, centroids):
-    import torch
-    centroids = centroids.to(torch.float32)
-    cn = (centroids * centroids).sum(1)
-    total = 0.0
-    CH = 16384
-    for i in range(0, x.shape[0], CH):
-        xb = x[i:i+CH].to(torch.float32)
-        d = (xb * xb).sum(1, keepdim=True) - 2.0 * (xb @ centroids.t()) + cn[None, :]
-        total += float(d.min(1).values.clamp_min(0).sum().item())
-    return total
-
-def bench(fn, warmup, iters):
-    import torch
-    for _ in range(warmup):
-        fn(); torch.cuda.synchronize()
-    ts = []
-    for _ in range(iters):
-        torch.cuda.synchronize(); t0 = time.perf_counter()
-        fn(); torch.cuda.synchronize()
-        ts.append(time.perf_counter() - t0)
-    ts.sort()
-    return ts[len(ts) // 2] * 1000.0
-
-def check_result(out, N, D, K):
-    import torch
-    if not (isinstance(out, tuple) and len(out) == 3):
-        raise ValueError("kmeans must return a 3-tuple (labels, centroids, n_iter)")
-    labels, centroids, _ = out
-    if tuple(centroids.shape) != (K, D):
-        raise ValueError("centroids has wrong shape")
-    if labels.shape[0] != N:
-        raise ValueError("labels has wrong length")
-    if not torch.isfinite(centroids).all():
-        raise ValueError("centroids contain non-finite values")
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline-dir", required=True)
-    ap.add_argument("--patched-dir", required=True)
-    ap.add_argument("--workloads", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--warmup", type=int, default=3)
-    ap.add_argument("--iters", type=int, default=7)
-    a = ap.parse_args()
-    import torch
-    if not torch.cuda.is_available():
-        json.dump({"ok": False, "error": "cuda_unavailable"}, open(a.out, "w"))
-        return
-    refkmeans, kmeanslib = _load(a.baseline_dir, a.patched_dir)
-    device = "cuda"
-    rows = []
-    for w in json.loads(a.workloads):
-        N, D, K, it, seed = w["N"], w["D"], w["K"], w["max_iters"], w["seed"]
-        x, init = gen(N, D, K, seed, device)
-        ref_fn = lambda: refkmeans.kmeans(x, K, max_iters=it, init_centroids=init, tol=0.0)
-        agent_fn = lambda: kmeanslib.kmeans(x, K, max_iters=it, init_centroids=init, tol=0.0)
-        ref_out = ref_fn(); torch.cuda.synchronize()
-        ref_inertia = inertia(x, ref_out[1])
-        try:
-            agent_out = agent_fn(); torch.cuda.synchronize()
-            check_result(agent_out, N, D, K)
-            agent_inertia = inertia(x, agent_out[1])
-        except Exception as e:
-            rows.append({"id": w["id"], "ok": False, "error": type(e).__name__ + ": " + str(e)[:200]})
-            del x, init
-            torch.cuda.empty_cache()
-            continue
-        ref_ms = bench(ref_fn, a.warmup, a.iters)
-        agent_ms = bench(agent_fn, a.warmup, a.iters)
-        rows.append({"id": w["id"], "ok": True, "ref_ms": ref_ms, "agent_ms": agent_ms,
-                     "ref_inertia": ref_inertia, "agent_inertia": agent_inertia})
-        del x, init
-        torch.cuda.empty_cache()
-    json.dump({"ok": True, "rows": rows}, open(a.out, "w"))
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        traceback.print_exc(); sys.exit(3)
-'''
+def _build_cfg() -> dict[str, Any]:
+    return {
+        "primitive": PRIMITIVE,
+        "pkg": PKG,
+        "ref_module": REF_MODULE,
+        "gpu": str(_get("gpu", "H100")),
+        "cuda_image": str(_get("cuda_image", "nvidia/cuda:12.4.1-devel-ubuntu22.04")),
+        "pip": list(_get("pip", ["torch==2.5.1", "triton==3.1.0", "numpy"])),
+        "app_name": str(_get("app_name", "flash-kernel-eval")),
+        "modal_timeout_seconds": _get_int("modal_timeout_seconds", 1800),
+        "warmup": _get_int("warmup_iters", 3),
+        "iters": _get_int("timed_iters", 7),
+        "inertia_tolerance": _get_float("inertia_tolerance", 0.02),
+        "recall_threshold": _get_float("recall_threshold", 0.99),
+        "captured_tolerance": _get_float("captured_tolerance", 0.02),
+        "ortho_tolerance": _get_float("ortho_tolerance", 0.02),
+    }
 
 
-def _run_worker(patched_parent: Path, tmp_root: Path, env: dict[str, str],
-                workloads: list[dict[str, Any]]) -> dict[str, Any]:
-    worker_path = tmp_root / "kmeans_worker.py"
-    worker_path.write_text(_WORKER_SOURCE, encoding="utf-8")
-    out_path = tmp_root / "worker_out.json"
-    cmd = [
-        sys.executable, str(worker_path),
-        "--baseline-dir", str(DEFAULT_BASELINE_SOURCE),
-        "--patched-dir", str(patched_parent),
-        "--workloads", json.dumps(workloads),
-        "--out", str(out_path),
-        "--warmup", str(WARMUP_ITERS),
-        "--iters", str(TIMED_ITERS),
-    ]
-    run_checked(cmd, cwd=tmp_root, env=env, timeout=WORKER_TIMEOUT_SECONDS)
-    return json.loads(out_path.read_text(encoding="utf-8"))
+def _read_dir(root: Path, rel_to: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for p in root.rglob("*.py"):
+        out[str(p.relative_to(rel_to))] = p.read_text(encoding="utf-8", errors="replace")
+    return out
 
 
 def full_evaluation(patch_path: Path, metrics: dict[str, Any]):
-    final_role = is_final_submission_role()
+    final_role = is_final_role()
     metrics["submission_role"] = "final" if final_role else "agent"
-    workloads = _workloads(final_role=final_role)
+    workloads = _workloads(final_role)
 
-    if not DEFAULT_CLEAN_SOURCE.exists() or not DEFAULT_BASELINE_SOURCE.exists():
+    # Import the Modal harness baked into the judge image; missing harness or
+    # missing credentials/sources -> policy smoke pass.
+    sys.path.insert(0, "/opt")
+    try:
+        import flash_gpu  # type: ignore
+    except Exception:
         metrics["full_benchmark"] = 0
-        return (1.0, 1.0,
-                "patch policy smoke passed; kmeanslib judge source is not configured in this environment",
-                metrics)
+        return 1.0, 1.0, "patch policy smoke passed; GPU harness not available in this environment", metrics
+    if not flash_gpu.modal_available() or not CLEAN_SOURCE.exists() or not BASELINE_SOURCE.exists():
+        metrics["full_benchmark"] = 0
+        return 1.0, 1.0, "patch policy smoke passed; Modal/judge sources not configured in this environment", metrics
 
-    with tempfile.TemporaryDirectory(prefix="kmeans_kernel_opt_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="flash_kernel_opt_") as tmp:
         tmp_root = Path(tmp)
-        env = clean_env(tmp_root)
-        patched_parent = tmp_root / "patched"
-        shutil.copytree(DEFAULT_CLEAN_SOURCE, patched_parent)
-
+        patched = tmp_root / "patched"
+        shutil.copytree(CLEAN_SOURCE, patched)
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_root),
+               "LC_ALL": "C", "LANG": "C"}
         if int(metrics.get("changed_files", 0)) > 0:
-            run_checked(["git", "apply", "--check", str(patch_path)], cwd=patched_parent, env=env, timeout=60)
-            run_checked(["git", "apply", str(patch_path)], cwd=patched_parent, env=env, timeout=60)
+            try:
+                subprocess.run(["git", "apply", "--check", str(patch_path)], cwd=patched, env=env,
+                               check=True, capture_output=True, text=True, timeout=60)
+                subprocess.run(["git", "apply", str(patch_path)], cwd=patched, env=env,
+                               check=True, capture_output=True, text=True, timeout=60)
+            except subprocess.CalledProcessError as exc:
+                metrics["stderr_tail"] = sanitize(exc.stderr or "")
+                return _invalid("patch does not apply to the clean package tree", metrics)
             metrics["applied_patch"] = 1
         else:
             metrics["used_empty_patch"] = 1
 
-        result = _run_worker(patched_parent, tmp_root, env, workloads)
-        if not result.get("ok"):
-            return _invalid(f"benchmark worker failed ({result.get('error', 'unknown')})", metrics)
+        payload = {
+            "baseline_files": _read_dir(BASELINE_SOURCE, BASELINE_SOURCE),
+            "patched_files": _read_dir(patched, patched),
+            "workloads": workloads,
+            "cfg": _build_cfg(),
+        }
+        try:
+            result = flash_gpu.run_remote(payload)
+        except Exception as exc:
+            metrics["error_detail"] = sanitize(str(exc))
+            return _invalid("GPU evaluation failed", metrics)
 
-        rows = result.get("rows", [])
-        speedups: list[float] = []
-        per_workload: dict[str, Any] = {}
-        for row in rows:
-            if not row.get("ok"):
-                metrics["failed_workload_error"] = sanitize_error_text(str(row.get("error", "")))
-                return _invalid("submitted kmeans crashed or returned an invalid result on a hidden workload", metrics)
-            ref_inertia = row["ref_inertia"]
-            agent_inertia = row["agent_inertia"]
-            if agent_inertia > (1.0 + INERTIA_TOL) * ref_inertia + 1e-6:
-                metrics["inertia_regression"] = {
-                    "ref": ref_inertia, "agent": agent_inertia, "tol": INERTIA_TOL,
-                }
-                return _invalid("submitted kmeans clustering quality regressed beyond tolerance", metrics)
-            speedup = row["ref_ms"] / row["agent_ms"] if row["agent_ms"] > 0 else 0.01
-            speedups.append(max(speedup, 0.01))
-            per_workload[row["id"]] = {
-                "ref_ms": row["ref_ms"], "agent_ms": row["agent_ms"], "speedup": speedup,
-            }
+    if not result.get("ok"):
+        metrics["worker_error"] = sanitize(str(result.get("error", "unknown")))
+        return _invalid("GPU benchmark worker failed", metrics)
 
-        if not speedups:
-            return _invalid("no workloads were evaluated", metrics)
+    speedups: list[float] = []
+    per_workload: dict[str, Any] = {}
+    for row in result.get("rows", []):
+        if not row.get("ok"):
+            metrics["failed_workload"] = {"reason": row.get("reason", "error")}
+            return _invalid("submission failed the quality gate or crashed on a hidden workload", metrics)
+        speedups.append(max(float(row["speedup"]), 0.01))
+        per_workload[row["id"]] = {"speedup": row["speedup"]}
+    if not speedups:
+        return _invalid("no workloads were evaluated", metrics)
 
-        gm = geometric_mean(speedups)
-        bounded = score_from_speedup(gm)
-        metrics.update({
-            "full_benchmark": 1,
-            "workload_count": len(speedups),
-            "geomean_speedup": gm,
-        })
-        if _cfg_bool("expose_per_workload_metrics", False):
-            metrics["per_workload"] = per_workload
-        return (bounded, bounded, f"kmeans geomean speedup {gm:.3f}x over the naive baseline", metrics)
+    gm = geometric_mean(speedups)
+    bounded = score_from_speedup(gm)
+    metrics.update({"full_benchmark": 1, "workload_count": len(speedups), "geomean_speedup": gm})
+    if _get_bool("expose_per_workload_metrics", False):
+        metrics["per_workload"] = per_workload
+    return bounded, bounded, f"{PRIMITIVE} geomean speedup {gm:.3f}x over the naive baseline", metrics
 
 
 def evaluate(solution_path: str) -> tuple[float, float, str, dict[str, Any]]:
@@ -513,17 +358,9 @@ def evaluate(solution_path: str) -> tuple[float, float, str, dict[str, Any]]:
         return _invalid(message, metrics)
     try:
         return full_evaluation(patch_path, metrics)
-    except subprocess.TimeoutExpired:
-        return _invalid("benchmark worker timed out", metrics)
-    except subprocess.CalledProcessError as exc:
-        stderr = sanitize_error_text(exc.stderr or "")
-        cmd0 = Path(str(exc.cmd[0])).name if isinstance(exc.cmd, list) and exc.cmd else "subprocess"
-        metrics["failed_command"] = "git apply" if cmd0 == "git" else cmd0
-        metrics["stderr_tail"] = stderr
-        return _invalid("patch apply or benchmark command failed", metrics)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         metrics["error_type"] = type(exc).__name__
-        metrics["error_detail"] = sanitize_error_text(str(exc))
+        metrics["error_detail"] = sanitize(str(exc))
         return _invalid("evaluation failed", metrics)
 
 
@@ -531,13 +368,9 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("Usage: evaluator.py SOLUTION_PATCH", file=sys.stderr)
         return 2
-    score, score_unbounded, message, metrics = evaluate(argv[1])
-    print(json.dumps({
-        "score": score,
-        "score_unbounded": score_unbounded,
-        "message": message,
-        "metrics": metrics,
-    }, indent=2, sort_keys=True))
+    score, unbounded, message, metrics = evaluate(argv[1])
+    print(json.dumps({"score": score, "score_unbounded": unbounded,
+                      "message": message, "metrics": metrics}, indent=2, sort_keys=True))
     return 0
 
 
