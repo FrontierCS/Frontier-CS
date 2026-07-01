@@ -28,7 +28,7 @@ CFG = {
     "ref_module": "refkmeans",
     "gpu": os.environ.get("FLASH_PUBLIC_GPU", "H100"),
     "cuda_image": "nvidia/cuda:12.4.1-devel-ubuntu22.04",
-    "pip": ["torch==2.5.1", "triton==3.1.0", "numpy"],
+    "pip": ["torch", "numpy"],
     "app_name": "kmeans-kernel-opt-public",
     "modal_timeout_seconds": 1800,
     "warmup": 2,
