@@ -19,7 +19,7 @@ evaluation:
   cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
   pip: ["torch", "numpy"]
   app_name: "ivfpq-kernel-opt-eval"
-  modal_timeout_seconds: 1800
+  modal_timeout_seconds: 2400    # the naive per-query-loop baseline is seconds/call; give the judge margin (agent speed is unknown in a trial)
   warmup_iters: 2
   timed_iters: 7
   recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; the Triton reference measured iso-recall 1.0 on all workloads, so 0.95 leaves margin for ADC tie-breaks
