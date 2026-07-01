@@ -47,7 +47,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 7
   inertia_tolerance: 0.02        # agent inertia must be <= (1+tol) x baseline on every iteration
-  speedup_target: 8.0            # geomean speedup mapped to full bounded score (calibrate vs reference)
+  speedup_target: 5.0            # calibrated: reference (flashlib-best) geomean ~5.3x on Modal H100
   base_seed: 20260701
   agent_workload_count: 3        # agent role runs a fast subset; final verifier runs them all
   expose_per_workload_metrics: false

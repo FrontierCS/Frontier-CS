@@ -46,7 +46,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 7
   recall_threshold: 0.99
-  speedup_target: 6.0
+  speedup_target: 5.0            # calibrated: reference (flashlib-best) geomean ~5.3x on Modal H100
   base_seed: 20260701
   agent_workload_count: 3
   expose_per_workload_metrics: false

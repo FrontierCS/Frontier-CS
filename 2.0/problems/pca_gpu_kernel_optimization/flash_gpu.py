@@ -220,9 +220,14 @@ def _build_image(cfg: dict):
     import modal
     pip = list(cfg.get("pip", ["torch==2.5.1", "triton==3.1.0", "numpy"]))
     base = cfg.get("cuda_image", "nvidia/cuda:12.4.1-devel-ubuntu22.04")
-    return (modal.Image.from_registry(base, add_python="3.11")
+    # add_python must match the judge/agent container Python (ubuntu:24.04 -> 3.12)
+    # because the worker ships via serialized=True (cloudpickle is version-sensitive).
+    # add_local_python_source mounts THIS module into the image so the remote can
+    # import it when deserializing the (module-level) worker function.
+    return (modal.Image.from_registry(base, add_python=str(cfg.get("python", "3.12")))
             .entrypoint([])
-            .pip_install(*pip))
+            .pip_install(*pip)
+            .add_local_python_source("flash_gpu"))
 
 
 # Substrings that mark a transient Modal control-plane / image-build failure
@@ -232,7 +237,8 @@ _TRANSIENT_MARKERS = (
     "external shut-down", "terminated due to external", "please try again",
     "app_state_stopped", "conflicterror", "deadline exceeded", "connection reset",
     "502 bad gateway", "503 service", "temporarily unavailable", "timed out",
-    "gateway", "eviction", "internalfailure",
+    "gateway", "eviction", "internalfailure", "internalerror",
+    "failed to get new inputs", "runner failed", "task exited",
 )
 
 

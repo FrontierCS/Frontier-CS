@@ -48,7 +48,7 @@ evaluation:
   timed_iters: 7
   captured_tolerance: 0.02       # agent captured energy must be >= (1-tol) x baseline on every iteration
   ortho_tolerance: 0.02          # max |V V^T - I_k| must stay within this tolerance
-  speedup_target: 6.0            # geomean speedup mapped to full bounded score (calibrate vs reference)
+  speedup_target: 8.0            # calibrated: reference (flashlib-best) geomean ~8.7x on Modal H100
   base_seed: 20260701
   agent_workload_count: 3        # agent role runs a fast subset; final verifier runs them all
   expose_per_workload_metrics: false

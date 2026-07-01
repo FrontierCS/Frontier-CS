@@ -40,7 +40,7 @@ evaluation:
   timed_iters: 7
   captured_tolerance: 0.02
   ortho_tolerance: 0.02
-  speedup_target: 4.0
+  speedup_target: 7.0            # calibrated: reference (flashlib-best) geomean ~7.7x on Modal H100
   base_seed: 20260701
   agent_workload_count: 3
   expose_per_workload_metrics: false
