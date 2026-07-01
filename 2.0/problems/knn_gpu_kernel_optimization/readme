@@ -1,0 +1,124 @@
+# GPU Brute-Force k-NN Kernel Optimization
+
+## Problem
+
+You are given a small GPU brute-force k-nearest-neighbours library, `knnlib`,
+in the Harbor workspace at `/app/knnlib`. Its public entry point is:
+
+```python
+knnlib.knn(queries, database, k) -> (distances, indices)
+```
+
+`queries` is a `(Q, D)` float32 CUDA tensor of query points, `database` is an
+`(M, D)` float32 CUDA tensor of database points to search, and `k` is the number
+of nearest neighbours to return per query. The function returns `distances`, a
+`(Q, k)` float32 tensor of the **squared-L2** distances to the `k` nearest
+database points (ascending, nearest first), and `indices`, a `(Q, k)` int64
+tensor of the corresponding database row indices. The shipped implementation is
+correct but deliberately naive: it materializes the full `(Q, M)` pairwise
+distance matrix with `torch.cdist`, then runs `torch.topk` over the whole
+matrix.
+
+Your goal is to make `knnlib.knn` **as fast as possible** on the GPU while
+returning the same nearest neighbours. You may add modules and Triton kernels
+inside the `knnlib` package and rewrite the internals freely (fused/streamed
+running top-k, tiled distance computation, reduced memory traffic, and so on) —
+in particular you should avoid ever materializing the full `(Q, M)` distance
+matrix. The public function signature and return contract above must not change.
+
+## Workload
+
+The judge evaluates a family of held-out dense search workloads that vary
+`(Q, M, D, k)`, spanning small/large database sizes `M`, wide-feature (large
+`D`) and many-neighbour (large `k`) regimes. All workloads use squared-L2
+distance, float32 data, and randomly generated queries/database, so each result
+is a deterministic function of the inputs.
+
+Two representative *public* shapes you can use for local development (the graded
+shapes are different and hidden):
+
+```text
+(Q=1024, M=100000, D=64,  k=10)
+(Q=2048, M=200000, D=128, k=10)
+```
+
+Treat the workload as a general dense brute-force k-NN, not as shapes to
+special-case. Improvements should be general kernel/throughput improvements, not
+lookups keyed on specific `(Q, M, D, k)` values.
+
+## Submission
+
+The submitted artifact is a patch file over the `knnlib` package:
+
+```text
+/app/solution.patch
+```
+
+After editing `/app/knnlib`, generate and submit a patch:
+
+```bash
+bash /app/make_submission.sh
+bash /app/submit.sh
+```
+
+Submissions are asynchronous; submit early and keep iterating. The judge applies
+your patch to a clean copy of `knnlib`, imports the patched package, and times
+it against the original naive implementation on the same hardware and the same
+seeded queries/database.
+
+## Correctness
+
+Correctness is a gate. For each workload the judge recomputes the exact `k`
+nearest database indices from an exact baseline and measures the **recall@k** of
+your result — the fraction of the true `k` nearest indices your `knn` recovers,
+averaged over all queries. Your recall@k must stay at or above a high threshold
+(~0.99). Crashes, non-finite outputs, wrong shapes/dtypes, timeouts, and results
+that drop below the recall threshold are all penalized before speed is
+considered. You may trade a little numerical precision (e.g. lower-precision
+accumulation) for speed as long as you stay above the recall threshold.
+
+## Scoring
+
+Valid submissions are scored by speedup relative to the naive baseline on the
+same hardware and workloads. For each workload:
+
+```text
+speedup = baseline_time / your_time
+```
+
+The objective is the geometric mean of per-workload speedups, so broad speedups
+across the workload family are preferred over one large outlier. A result no
+faster than the baseline earns 0; regressions earn 0. The raw geometric-mean
+speedup is reported in the evaluator metrics.
+
+## Patch Policy
+
+The evaluator validates the patch before running it. Only files under the
+package may change:
+
+```text
+knnlib/**
+```
+
+New Python modules inside `knnlib/` (for example Triton kernel files) are
+allowed. Patches may not:
+
+- modify anything outside `knnlib/`;
+- import or call an external optimized ML/kernel library (the point is to write
+  the kernels yourself);
+- read or write environment variables, spawn processes, or access the network;
+- special-case the hidden workload shapes.
+
+The patch must be reasonably sized and apply cleanly to the clean `knnlib` tree.
+
+## Resource Budget
+
+```text
+GPU: single device (H100 reference; Triton paths also run on L40S / A100)
+vCPUs: 8
+memory: 32 GiB
+storage: 32 GiB
+```
+
+The judge runs the timing worker in a subprocess under a clean, minimal
+environment with a fixed warmup/measurement schedule and a per-run timeout.

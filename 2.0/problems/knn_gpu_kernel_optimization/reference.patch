@@ -1,0 +1,104 @@
+diff --git a/knnlib/_chunked_knn.py b/knnlib/_chunked_knn.py
+new file mode 100644
+index 0000000..df258eb
+--- /dev/null
++++ b/knnlib/_chunked_knn.py
+@@ -0,0 +1,41 @@
++"""Chunked running-top-k brute-force k-NN -- the reference optimisation.
++
++Instead of materialising the full ``(Q, M)`` distance matrix like the naive
++baseline, this tiles the database into ``CH``-row chunks and maintains a running
++per-query top-k across chunks. For each chunk it forms the squared-L2 block
++``||q||^2 - 2 <q, db_j> + ||db_j||^2`` of shape ``(Q, cj)``, concatenates it with
++the current best distances, and re-runs ``topk`` over the (small) combined set,
++carrying the winning indices forward. Peak extra memory is ``O(Q * (k + CH))``
++instead of ``O(Q * M)``, so it scales to large ``M`` and touches far less HBM.
++
++The public contract is unchanged:
++
++    knn(queries, database, k) -> (distances, indices)
++
++with ``distances`` the (Q, k) ascending squared-L2 distances and ``indices`` the
++(Q, k) int64 database row indices.
++"""
++from __future__ import annotations
++
++import torch
++
++
++def knn(queries, database, k):
++    Q = queries.shape[0]; M = database.shape[0]
++    device = queries.device
++    qn = (queries * queries).sum(1, keepdim=True)          # (Q,1)
++    best_d = torch.full((Q, k), float("inf"), device=device, dtype=torch.float32)
++    best_i = torch.zeros((Q, k), device=device, dtype=torch.long)
++    CH = 65536
++    for j0 in range(0, M, CH):
++        dbj = database[j0:j0 + CH]                          # (cj, D)
++        cj = dbj.shape[0]
++        dn = (dbj * dbj).sum(1)                             # (cj,)
++        d = qn - 2.0 * (queries @ dbj.t()) + dn[None, :]    # (Q, cj) squared L2
++        alld = torch.cat([best_d, d], dim=1)
++        idx_chunk = torch.arange(j0, j0 + cj, device=device).expand(Q, cj)
++        alli = torch.cat([best_i, idx_chunk], dim=1)
++        td, ti = torch.topk(alld, k, dim=1, largest=False)
++        best_d = td
++        best_i = torch.gather(alli, 1, ti)
++    return best_d.contiguous(), best_i.contiguous()
+diff --git a/knnlib/knn.py b/knnlib/knn.py
+index ad0c7b6..38acfc6 100644
+--- a/knnlib/knn.py
++++ b/knnlib/knn.py
+@@ -1,13 +1,14 @@
+-"""Brute-force squared-L2 k-nearest-neighbours -- the reference you must optimise.
++"""Brute-force squared-L2 k-nearest-neighbours -- chunked running top-k.
+ 
+-This implementation is intentionally naive. It computes the full ``(Q, M)``
+-pairwise distance matrix with :func:`torch.cdist` and materialises it in HBM,
+-then runs :func:`torch.topk` over the whole matrix to pick the ``k`` nearest
+-database points for every query. It is correct and deterministic, but it moves
+-far more memory than necessary (the entire ``(Q, M)`` matrix) and cannot scale
+-to large ``M`` without exhausting device memory.
++The naive baseline materialised the full ``(Q, M)`` distance matrix with
++:func:`torch.cdist` and ran :func:`torch.topk` over the whole thing. Here the
++work is delegated to :func:`knnlib._chunked_knn.knn`, which tiles the database
++into chunks and maintains a running per-query top-k across chunks, so the
++``(Q, M)`` matrix is never materialised in HBM and the search scales to large
++``M``. The squared-L2 block per chunk is formed as
++``||q||^2 - 2 <q, db_j> + ||db_j||^2``.
+ 
+-Contract (do NOT change):
++Public contract is unchanged:
+ 
+     knn(queries, database, k) -> (distances, indices)
+ 
+@@ -15,25 +16,11 @@ Contract (do NOT change):
+     database  : (M, D) float32 CUDA tensor of database points to search.
+     k         : int, number of nearest neighbours to return per query.
+ 
+-    distances : (Q, k) float32 tensor of the SQUARED-L2 distances to the ``k``
+-                nearest database points, in ascending order (nearest first).
+-    indices   : (Q, k) int64 tensor of the corresponding database row indices.
+-
+-You may add modules/kernels inside the ``knnlib`` package and rewrite the body
+-of :func:`knn` freely (fused/streamed running top-k, tiled distance kernels,
+-Triton), as long as the public contract above is preserved. In particular you
+-should avoid ever materialising the full ``(Q, M)`` distance matrix.
++    distances : (Q, k) float32 SQUARED-L2 distances, ascending (nearest first).
++    indices   : (Q, k) int64 database row indices.
+ """
+ from __future__ import annotations
+ 
+-import torch
+-
+-
+-def knn(queries, database, k):
+-    """Return the (squared-L2) k nearest database points for each query.
++from knnlib._chunked_knn import knn
+ 
+-    Naive: materialise the full (Q, M) distance matrix, then top-k.
+-    """
+-    d2 = torch.cdist(queries, database) ** 2            # (Q, M), materialized -- naive
+-    dist, idx = torch.topk(d2, k, dim=1, largest=False)
+-    return dist, idx.to(torch.long)
++__all__ = ["knn"]

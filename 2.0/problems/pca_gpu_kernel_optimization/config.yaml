@@ -1,0 +1,55 @@
+tag: systems
+runtime:
+  language: python
+  timeout_seconds: 10800
+  environment: "GPU PCA kernel optimization; agent patches the pcalib Python/Triton package; judge times the patched pca against a frozen naive full-SVD baseline on hidden (N, D, k) workloads with orthonormality and captured-variance (subspace-quality) gates."
+  apt_packages:
+    - bash
+    - ca-certificates
+    - git
+    - python3
+  judge_apt_packages:
+    - bash
+    - ca-certificates
+    - git
+    - python3
+  docker:
+    # Experimental local images. Build them with
+    # 2.0/problems/pca_gpu_kernel_optimization/docker/build_images.sh before a
+    # local Harbor trial. Both images bundle a clean copy of the pcalib
+    # package; the judge image additionally bakes the frozen naive baseline
+    # (/opt/pca_ref) and the pristine tree (/opt/pcalib-clean).
+    image: frontiercs/pca-gpu-kernel-optimization-agent:experimental-v0.1.0
+    judge_image: frontiercs/pca-gpu-kernel-optimization-judge:experimental-v0.1.0
+environment:
+  cpus: 8
+  memory_mb: 32768
+  storage_mb: 32768
+  build_timeout_seconds: 3600
+evaluation:
+  # The judge worker runs on a GPU visible to the judge container (single
+  # device). H100 is the reference accelerator; the Triton paths also run on
+  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
+  # step is the swap point for a Modal offload (see DESIGN.md).
+  gpu: "H100"
+  # Timing: warmup then median-of-N cuda-synced full-pca calls.
+  warmup_iters: 3
+  timed_iters: 7
+  # Subspace-quality gates. (1) The submitted components must be orthonormal:
+  # the max entry of |V V^T - I| must not exceed ortho_tolerance. (2) The
+  # variance captured by the submitted subspace, (1/(N-1))||Xc V||_F^2 on the
+  # SAME seeded data, must be at least (1 - captured_tolerance) x the frozen
+  # baseline's captured variance.
+  captured_tolerance: 0.02
+  ortho_tolerance: 0.02
+  # Geomean speedup (over the naive baseline) mapped to the full bounded score.
+  # Calibrate against the reference solution's measured geomean after a trial.
+  speedup_target: 4.0
+  worker_timeout_seconds: 3600
+  base_seed: 20260701
+  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
+  agent_workload_count: 3
+  expose_per_workload_metrics: false
+submission:
+  kind: file
+  path: /app/solution.patch

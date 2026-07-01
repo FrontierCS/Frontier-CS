@@ -1,0 +1,97 @@
+diff --git a/pcalib/_cov_pca.py b/pcalib/_cov_pca.py
+new file mode 100644
+index 0000000..6a7f6a7
+--- /dev/null
++++ b/pcalib/_cov_pca.py
+@@ -0,0 +1,31 @@
++"""Covariance-based top-k PCA (reference optimisation).
++
++Instead of centring the whole ``(N, D)`` matrix and running a *full* thin SVD,
++this forms the ``(D, D)`` covariance with a single GEMM (``Xᵀ X``) and a rank-1
++mean correction -- so the centred data is never materialised -- and reads off
++the leading ``k`` principal axes with a symmetric eigendecomposition
++(:func:`torch.linalg.eigh`). For ``D << N`` this replaces an ``O(N D^2)`` SVD of
++a tall matrix with one ``O(N D^2)`` GEMM followed by an ``O(D^3)`` eigensolve on
++the small ``(D, D)`` covariance, and it avoids allocating a second copy of the
++dataset.
++
++The public contract is unchanged: ``pca(x, n_components)`` returns
++``(components, explained_variance)`` with orthonormal ``(k, D)`` rows and the
++matching descending covariance eigenvalues.
++"""
++from __future__ import annotations
++
++import torch
++
++
++def pca(x, n_components):
++    N, D = x.shape
++    mean = x.mean(dim=0)
++    G = x.t() @ x                                        # (D, D), one GEMM
++    C = (G - N * torch.outer(mean, mean)) / (N - 1)      # covariance without centering the data
++    evals, evecs = torch.linalg.eigh(C)                  # ascending
++    k = int(n_components)
++    top = torch.argsort(evals, descending=True)[:k]
++    components = evecs.index_select(1, top).t().contiguous()      # (k, D)
++    explained_variance = evals.index_select(0, top).clamp_min(0).contiguous()
++    return components, explained_variance
+diff --git a/pcalib/pca.py b/pcalib/pca.py
+index ec891a2..c3d15bf 100644
+--- a/pcalib/pca.py
++++ b/pcalib/pca.py
+@@ -1,44 +1,24 @@
+-"""Principal Component Analysis (PCA) -- the reference you must optimise.
++"""Principal Component Analysis (PCA) -- covariance + top-k eigendecomposition.
+ 
+-This implementation is intentionally naive. It centres the data by explicitly
+-materialising the full ``(N, D)`` centred matrix and then runs a *full* thin
+-SVD (:func:`torch.linalg.svd`) just to read off the top ``k`` singular vectors
+-and singular values. It is correct and deterministic, but it computes the
+-entire spectrum when only the leading ``k`` components are needed and it moves
+-far more memory than necessary (the centred copy of the whole dataset).
++The naive baseline centred the data by materialising the full ``(N, D)`` centred
++matrix and ran a *full* thin SVD just to read off the leading ``k`` components.
++Here :func:`pca` delegates to :func:`pcalib._cov_pca.pca`, which forms the
++``(D, D)`` covariance with a single GEMM plus a rank-1 mean correction (so the
++centred data is never materialised) and reads off the top ``k`` principal axes
++with a symmetric eigendecomposition.
+ 
+-Contract (do NOT change):
++Public contract is unchanged:
+ 
+     pca(x, n_components) -> (components, explained_variance)
+ 
+     x               : (N, D) float32 CUDA tensor of points.
+     n_components (k): int, number of leading principal components to return.
+ 
+-    components         : (k, D) float32 tensor whose rows are the top-k
+-                         principal axes (the leading eigenvectors of the
+-                         covariance matrix), orthonormal rows.
+-    explained_variance : (k,) float32 tensor of the corresponding covariance
+-                         eigenvalues, in descending order. With the unbiased
+-                         (``N - 1``) normalisation this equals
+-                         ``S[:k] ** 2 / (N - 1)`` for singular values ``S`` of
+-                         the centred data.
+-
+-You may add modules/kernels inside the ``pcalib`` package and rewrite the body
+-of :func:`pca` freely (covariance/Gram + top-k eigendecomposition, fused
+-centring, Triton kernels, ...), as long as the public contract above is
+-preserved.
++    components         : (k, D) float32 top-k principal axes (orthonormal rows).
++    explained_variance : (k,) float32 covariance eigenvalues, descending.
+ """
+ from __future__ import annotations
+ 
+ import torch
+ 
+-
+-def pca(x, n_components):
+-    N = x.shape[0]
+-    mean = x.mean(dim=0)
+-    xc = x - mean                                       # materialized centered matrix -- naive
+-    U, S, Vh = torch.linalg.svd(xc, full_matrices=False)  # full SVD -- expensive
+-    k = int(n_components)
+-    components = Vh[:k].contiguous()
+-    explained_variance = (S[:k] ** 2) / (N - 1)
+-    return components, explained_variance.contiguous()
++from pcalib._cov_pca import pca

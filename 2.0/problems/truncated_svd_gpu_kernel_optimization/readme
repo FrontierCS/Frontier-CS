@@ -1,0 +1,133 @@
+# GPU Truncated SVD Kernel Optimization
+
+## Problem
+
+You are given a small GPU truncated-SVD library, `tsvdlib`, in the Harbor
+workspace at `/app/tsvdlib`. Its public entry point is:
+
+```python
+tsvdlib.truncated_svd(x, n_components) -> (singular_values, components)
+```
+
+`x` is an `(N, D)` float32 CUDA tensor (the raw matrix -- it is **not** centered;
+this is a truncated SVD, not PCA) and `n_components` is the number `k` of leading
+singular triples to return. The function returns `singular_values`, a `(k,)`
+float32 tensor of the top-k singular values in descending order, and
+`components`, a `(k, D)` float32 tensor whose rows are the top-k right singular
+vectors (an orthonormal set). The shipped implementation is correct but
+deliberately naive: it computes the **full** SVD of the `(N, D)` matrix with
+`torch.linalg.svd` and slices off the leading `k` factors, which is `O(N D^2)`
+with a large constant and produces all `min(N, D)` singular triples even though
+only the top `k` are ever used.
+
+Your goal is to make `tsvdlib.truncated_svd` **as fast as possible** on the GPU
+while producing a truncated decomposition of the same quality. You may add
+modules and Triton kernels inside the `tsvdlib` package and rewrite the internals
+freely (for example a Gram-matrix `X^T X` followed by a top-k eigendecomposition,
+fused kernels, reduced memory traffic, and so on). The public function signature
+and return contract above must not change.
+
+## Workload
+
+The judge evaluates a family of held-out dense matrices that vary `(N, D, k)`,
+spanning tall matrices (large `N`, small `D`), wide-feature matrices (large `D`),
+and a range of small `k`. All workloads use float32 data drawn from a fixed
+seeded generator, so each result is a deterministic function of the inputs.
+
+Two representative *public* shapes you can use for local development (the graded
+shapes are different and hidden):
+
+```text
+(N=200000, D=128, k=16)
+(N=500000, D=64,  k=8)
+```
+
+Treat the workload as a general dense truncated SVD, not as shapes to
+special-case. Improvements should be general kernel/throughput improvements, not
+lookups keyed on specific `(N, D, k)` values.
+
+## Submission
+
+The submitted artifact is a patch file over the `tsvdlib` package:
+
+```text
+/app/solution.patch
+```
+
+After editing `/app/tsvdlib`, generate and submit a patch:
+
+```bash
+bash /app/make_submission.sh
+bash /app/submit.sh
+```
+
+Submissions are asynchronous; submit early and keep iterating. The judge applies
+your patch to a clean copy of `tsvdlib`, imports the patched package, and times
+it against the original naive implementation on the same hardware and the same
+seeded data.
+
+## Correctness
+
+Correctness is a gate, and it is checked in a way that is invariant to the sign
+and rotation ambiguities of the SVD (you are not required to match the baseline's
+vectors elementwise). For each workload the judge checks two things about your
+`components` `V` (a `(k, D)` tensor):
+
+- **Orthonormality.** The rows must form an orthonormal set: the maximum
+  absolute entry of `V V^T - I_k` must stay within a small tolerance.
+- **Captured energy.** The energy your subspace captures,
+  `||X V^T||_F^2 = sum over points of ||x_n V^T||^2`, must be at least
+  `(1 - tol)` times the energy captured by the naive baseline's top-k subspace on
+  the same data.
+
+Crashes, non-finite outputs, wrong shapes/dtypes, timeouts, non-orthonormal
+components, and captured energy that regresses beyond the tolerance are all
+penalized before speed is considered. You may trade a little numerical precision
+(e.g. lower-precision accumulation) for speed as long as you stay within the
+quality tolerance.
+
+## Scoring
+
+Valid submissions are scored by speedup relative to the naive baseline on the
+same hardware and workloads. For each workload:
+
+```text
+speedup = baseline_time / your_time
+```
+
+The objective is the geometric mean of per-workload speedups, so broad speedups
+across the workload family are preferred over one large outlier. A result no
+faster than the baseline earns 0; regressions earn 0. The raw geometric-mean
+speedup is reported in the evaluator metrics.
+
+## Patch Policy
+
+The evaluator validates the patch before running it. Only files under the
+package may change:
+
+```text
+tsvdlib/**
+```
+
+New Python modules inside `tsvdlib/` (for example Triton kernel files) are
+allowed. Patches may not:
+
+- modify anything outside `tsvdlib/`;
+- import or call an external optimized ML/kernel library (the point is to write
+  the kernels yourself);
+- read or write environment variables, spawn processes, or access the network;
+- special-case the hidden workload shapes.
+
+The patch must be reasonably sized and apply cleanly to the clean `tsvdlib` tree.
+
+## Resource Budget
+
+```text
+GPU: single device (H100 reference; Triton paths also run on L40S / A100)
+vCPUs: 8
+memory: 32 GiB
+storage: 32 GiB
+```
+
+The judge runs the timing worker in a subprocess under a clean, minimal
+environment with a fixed warmup/measurement schedule and a per-run timeout.

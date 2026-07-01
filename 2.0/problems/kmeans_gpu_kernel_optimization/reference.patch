@@ -1,0 +1,164 @@
+diff --git a/kmeanslib/_triton_assign.py b/kmeanslib/_triton_assign.py
+new file mode 100644
+index 0000000..f40946a
+--- /dev/null
++++ b/kmeanslib/_triton_assign.py
+@@ -0,0 +1,75 @@
++"""Fused squared-L2 nearest-centroid assignment in Triton.
++
++Computes ``argmin_k ||x_n - c_k||^2`` without ever materialising the full
++``(N, K)`` distance matrix. Each program handles a ``BLOCK_N`` row tile,
++streams the centroids in ``BLOCK_K`` chunks, and keeps a running (min, argmin)
++in registers. Uses the x^2-free score ``||c_k||^2 - 2 <x_n, c_k>`` (the
++``-||x_n||^2`` term is constant per row and does not affect the argmin).
++"""
++from __future__ import annotations
++
++import torch
++import triton
++import triton.language as tl
++
++
++@triton.jit
++def _assign_kernel(
++    x_ptr, c_ptr, csq_ptr, out_ptr,
++    N, K, D,
++    stride_xn, stride_xd,
++    stride_ck, stride_cd,
++    BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr, BLOCK_D: tl.constexpr,
++):
++    pid = tl.program_id(0)
++    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_d = tl.arange(0, BLOCK_D)
++    n_mask = offs_n < N
++    d_mask = offs_d < D
++
++    # Row tile stays resident in registers/SRAM across the whole K sweep.
++    x_ptrs = x_ptr + offs_n[:, None] * stride_xn + offs_d[None, :] * stride_xd
++    x_tile = tl.load(x_ptrs, mask=n_mask[:, None] & d_mask[None, :], other=0.0)
++
++    best = tl.full((BLOCK_N,), float("inf"), tl.float32)
++    best_idx = tl.zeros((BLOCK_N,), tl.int32)
++
++    for k0 in range(0, K, BLOCK_K):
++        offs_k = k0 + tl.arange(0, BLOCK_K)
++        k_mask = offs_k < K
++        # centroid tile as (BLOCK_D, BLOCK_K) so tl.dot contracts over D
++        c_ptrs = c_ptr + offs_d[:, None] * stride_cd + offs_k[None, :] * stride_ck
++        c_tile = tl.load(c_ptrs, mask=d_mask[:, None] & k_mask[None, :], other=0.0)
++        dot = tl.dot(x_tile, c_tile, input_precision="ieee")  # (BLOCK_N, BLOCK_K)
++        csq = tl.load(csq_ptr + offs_k, mask=k_mask, other=float("inf"))
++        score = csq[None, :] - 2.0 * dot
++        score = tl.where(k_mask[None, :], score, float("inf"))
++        local_min = tl.min(score, axis=1)
++        local_arg = tl.argmin(score, axis=1).to(tl.int32) + k0
++        better = local_min < best
++        best = tl.where(better, local_min, best)
++        best_idx = tl.where(better, local_arg, best_idx)
++
++    tl.store(out_ptr + offs_n, best_idx, mask=n_mask)
++
++
++def euclid_assign_triton(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
++    """Return (N,) int64 nearest-centroid ids by squared-L2 distance."""
++    N, D = x.shape
++    K = centroids.shape[0]
++    x = x.contiguous()
++    centroids = centroids.to(x.dtype).contiguous()
++    csq = (centroids.float() * centroids.float()).sum(1)  # (K,) fp32
++    out = torch.empty((N,), device=x.device, dtype=torch.int32)
++    BLOCK_D = triton.next_power_of_2(D)
++    BLOCK_N, BLOCK_K = 16, 32
++    grid = (triton.cdiv(N, BLOCK_N),)
++    _assign_kernel[grid](
++        x, centroids, csq, out,
++        N, K, D,
++        x.stride(0), x.stride(1),
++        centroids.stride(0), centroids.stride(1),
++        BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, BLOCK_D=BLOCK_D,
++        num_warps=4,
++    )
++    return out.to(torch.long)
+diff --git a/kmeanslib/kmeans.py b/kmeanslib/kmeans.py
+index 6493af4..dda8081 100644
+--- a/kmeanslib/kmeans.py
++++ b/kmeanslib/kmeans.py
+@@ -1,49 +1,25 @@
+-"""Euclidean (squared-L2) Lloyd K-Means -- the reference you must optimise.
++"""Euclidean (squared-L2) Lloyd K-Means -- Triton-accelerated.
+ 
+-This implementation is intentionally naive. Every Lloyd iteration it
+-materialises the full ``(N, K)`` distance matrix with :func:`torch.cdist`
+-and recomputes the assignment and the centroid update with plain PyTorch
+-scatter ops. It is correct and deterministic, but it moves far more memory
+-than necessary and launches many small kernels.
++The assignment step is the Lloyd bottleneck: the naive baseline materialised
++the full ``(N, K)`` distance matrix every iteration. Here it is replaced by a
++fused Triton kernel (:func:`euclid_assign_triton`) that streams centroids and
++keeps a running argmin in registers, so the ``(N, K)`` matrix is never written
++to or read from HBM. The centroid update stays a scatter-mean.
+ 
+-Contract (do NOT change):
++Public contract is unchanged:
+ 
+     kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
+         -> (labels, centroids, n_iter)
+-
+-    x               : (N, D) float32 CUDA tensor of points.
+-    n_clusters (K)  : int, number of clusters.
+-    max_iters       : int, number of Lloyd iterations (fixed by the caller).
+-    init_centroids  : (K, D) tensor -- REQUIRED. The initial centroids. The
+-                      caller always supplies these so the result is a
+-                      deterministic function of (x, init_centroids, max_iters).
+-    tol             : float. If > 0, stop early once the maximum centroid
+-                      shift drops below ``tol``. The grader always calls with
+-                      ``tol=0.0`` (run all ``max_iters`` iterations).
+-
+-    labels          : (N,) int64 cluster id per point (assignment at the start
+-                      of the final iteration).
+-    centroids       : (K, D) float32 final centroids (after the final update).
+-    n_iter          : int, number of iterations actually run.
+-
+-You may add modules/kernels inside the ``kmeanslib`` package and rewrite the
+-body of :func:`kmeans`, ``_assign`` and ``_update`` freely, as long as the
+-public contract above is preserved.
+ """
+ from __future__ import annotations
+ 
+ import torch
+ 
++from kmeanslib._triton_assign import euclid_assign_triton
+ 
+-def _assign(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
+-    """Nearest-centroid assignment by squared-L2 distance.
+ 
+-    Naive: materialise the full (N, K) distance matrix, then argmin.
+-    """
+-    # torch.cdist returns Euclidean distance; argmin of distance == argmin of
+-    # squared distance, so we do not bother squaring.
+-    dist = torch.cdist(x, centroids.to(x.dtype))  # (N, K)
+-    return torch.argmin(dist, dim=1)
++def _assign(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
++    return euclid_assign_triton(x, centroids)
+ 
+ 
+ def _update(
+@@ -52,10 +28,6 @@ def _update(
+     n_clusters: int,
+     old_centroids: torch.Tensor,
+ ) -> torch.Tensor:
+-    """Recompute each centroid as the mean of its assigned points.
+-
+-    Empty clusters keep their previous centroid.
+-    """
+     N, D = x.shape
+     sums = torch.zeros((n_clusters, D), device=x.device, dtype=torch.float32)
+     counts = torch.zeros((n_clusters,), device=x.device, dtype=torch.float32)
+@@ -77,7 +49,6 @@ def kmeans(
+     init_centroids: torch.Tensor,
+     tol: float = 0.0,
+ ):
+-    """Lloyd K-Means with fixed initial centroids. See module docstring."""
+     if x.ndim != 2:
+         raise ValueError(f"x must be 2-D (N, D); got shape {tuple(x.shape)}")
+     if init_centroids is None:

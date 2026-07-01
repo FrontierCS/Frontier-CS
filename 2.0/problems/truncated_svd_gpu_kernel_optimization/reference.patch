@@ -1,0 +1,85 @@
+diff --git a/tsvdlib/_gram_tsvd.py b/tsvdlib/_gram_tsvd.py
+new file mode 100644
+index 0000000..fe425e4
+--- /dev/null
++++ b/tsvdlib/_gram_tsvd.py
+@@ -0,0 +1,24 @@
++"""Gram-matrix truncated SVD: X^T X + top-k eigendecomposition.
++
++Avoids the full SVD of the ``(N, D)`` matrix. The right singular vectors of
++``X`` are the eigenvectors of the Gram matrix ``G = X^T X`` (a single ``(D, D)``
++GEMM), and the singular values are the square roots of the corresponding
++eigenvalues. We form ``G`` once, eigendecompose the small ``(D, D)`` matrix with
++:func:`torch.linalg.eigh`, and keep only the top ``k`` triples. This is
++``O(N D^2)`` for the GEMM plus ``O(D^3)`` for the eigensolve, but with a far
++smaller constant than a full SVD and no ``(N, min(N, D))`` factor materialised.
++"""
++from __future__ import annotations
++
++import torch
++
++
++def truncated_svd(x, n_components):
++    N, D = x.shape
++    G = x.t() @ x                                  # (D, D) Gram matrix -- one GEMM
++    evals, evecs = torch.linalg.eigh(G)            # ascending
++    k = int(n_components)
++    top = torch.argsort(evals, descending=True)[:k]
++    s = evals.index_select(0, top).clamp_min(0).sqrt()      # (k,) singular values
++    comps = evecs.index_select(1, top).t().contiguous()     # (k, D) right singular vectors
++    return s, comps
+diff --git a/tsvdlib/tsvd.py b/tsvdlib/tsvd.py
+index f1b4fe7..6216694 100644
+--- a/tsvdlib/tsvd.py
++++ b/tsvdlib/tsvd.py
+@@ -1,36 +1,22 @@
+-"""Truncated SVD of a dense matrix -- the reference you must optimise.
++"""Truncated SVD of a dense matrix -- Gram-matrix accelerated.
+ 
+-This implementation is intentionally naive. It computes the FULL singular value
+-decomposition of the ``(N, D)`` matrix with :func:`torch.linalg.svd` and then
+-slices off the top ``n_components`` factors. Computing the full SVD is
+-``O(N D^2)`` with a large constant and produces all ``min(N, D)`` singular
+-triples even though only the leading ``k`` are ever used. It is correct and
+-deterministic, but it does far more work and moves far more memory than a
+-truncated decomposition needs.
++The naive baseline computed the FULL SVD of the ``(N, D)`` matrix and sliced off
++the top-k factors. Here it is replaced by a Gram-matrix decomposition
++(:func:`tsvdlib._gram_tsvd.truncated_svd`): the right singular vectors of ``X``
++are the eigenvectors of ``G = X^T X`` (one ``(D, D)`` GEMM) and the singular
++values are the square roots of the leading eigenvalues, so no
++``(N, min(N, D))`` factor is ever materialised.
+ 
+-Contract (do NOT change):
++Public contract is unchanged:
+ 
+     truncated_svd(x, n_components) -> (singular_values, components)
+ 
+-    x               : (N, D) float32 CUDA tensor. NOT centered -- this is a
+-                      truncated SVD of the raw matrix, not PCA.
+-    n_components (k) : int, number of leading singular triples to return.
+-
+-    singular_values : (k,) float32, the top-k singular values in DESCENDING
+-                      order.
+-    components       : (k, D) float32, the top-k right singular vectors as
+-                      rows. The rows are orthonormal.
+-
+-You may add modules/kernels inside the ``tsvdlib`` package and rewrite the body
+-of :func:`truncated_svd` freely (e.g. a Gram-matrix + top-k eigendecomposition,
+-fused kernels, better memory traffic), as long as the public contract above is
+-preserved.
++    x               : (N, D) float32 CUDA tensor (NOT centered).
++    n_components (k): int, number of leading singular triples to return.
++    singular_values : (k,) float32 top-k singular values, descending.
++    components       : (k, D) float32 top-k right singular vectors (orthonormal
++                      rows).
+ """
+ from __future__ import annotations
+ 
+-import torch
+-
+-
+-def truncated_svd(x, n_components):
+-    U, S, Vh = torch.linalg.svd(x, full_matrices=False)   # full SVD -- naive/expensive
+-    return S[:n_components].contiguous(), Vh[:n_components].contiguous()
++from tsvdlib._gram_tsvd import truncated_svd

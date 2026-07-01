@@ -1,0 +1,53 @@
+tag: systems
+runtime:
+  language: python
+  timeout_seconds: 10800
+  environment: "GPU brute-force k-NN kernel optimization; agent patches the knnlib Python/Triton package; judge times the patched knn against a frozen naive baseline on hidden (Q, M, D, k) workloads with a recall@k (nearest-neighbour quality) gate."
+  apt_packages:
+    - bash
+    - ca-certificates
+    - git
+    - python3
+  judge_apt_packages:
+    - bash
+    - ca-certificates
+    - git
+    - python3
+  docker:
+    # Experimental local images. Build them with
+    # 2.0/problems/knn_gpu_kernel_optimization/docker/build_images.sh before a
+    # local Harbor trial. Both images bundle a clean copy of the knnlib
+    # package; the judge image additionally bakes the frozen naive baseline
+    # (/opt/knn_ref) and the pristine tree (/opt/knnlib-clean).
+    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.1.0
+    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.1.0
+environment:
+  cpus: 8
+  memory_mb: 32768
+  storage_mb: 32768
+  build_timeout_seconds: 3600
+evaluation:
+  # The judge worker runs on a GPU visible to the judge container (single
+  # device). H100 is the reference accelerator; the Triton paths also run on
+  # L40S/A100. If Harbor cannot attach a GPU to the judge container, the worker
+  # step is the swap point for a Modal offload (see DESIGN.md).
+  gpu: "H100"
+  # Timing: warmup then median-of-N cuda-synced full-knn calls.
+  warmup_iters: 3
+  timed_iters: 7
+  # Nearest-neighbour quality gate: the submitted knn's recall@k (fraction of
+  # the true k nearest database indices it recovers) must be at least
+  # recall_threshold on every hidden workload. The judge recomputes the exact
+  # top-k from the frozen baseline on the SAME seeded queries/database.
+  recall_threshold: 0.99
+  # Geomean speedup (over the naive baseline) mapped to the full bounded score.
+  # Calibrate against the reference solution's measured geomean after a trial.
+  speedup_target: 6.0
+  worker_timeout_seconds: 3600
+  base_seed: 20260701
+  # Agent (iterative) role runs a fast subset; the final verifier runs them all.
+  agent_workload_count: 3
+  expose_per_workload_metrics: false
+submission:
+  kind: file
+  path: /app/solution.patch
