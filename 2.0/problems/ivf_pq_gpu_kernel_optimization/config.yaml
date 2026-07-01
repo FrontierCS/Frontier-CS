@@ -1,0 +1,42 @@
+tag: systems
+runtime:
+  language: python
+  timeout_seconds: 10800
+  environment: "GPU IVF-PQ search kernel optimization. The agent patches the ivfpqlib package; the judge offloads timing to a Modal GPU, comparing the patched ivf_pq_search against a frozen naive baseline over a fixed pre-built index on hidden ANN workloads with an iso-result recall gate."
+  apt_packages: [bash, ca-certificates, git, python3, python3-pip]
+  judge_apt_packages: [bash, ca-certificates, git, python3, python3-pip]
+  judge_pip_packages: [modal]
+  docker:
+    image: frontiercs/ivf-pq-gpu-kernel-optimization-agent:experimental-v0.1.0
+    judge_image: frontiercs/ivf-pq-gpu-kernel-optimization-judge:experimental-v0.1.0
+environment:
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 16384
+  build_timeout_seconds: 3600
+evaluation:
+  gpu: "H100"
+  cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  pip: ["torch", "numpy"]
+  app_name: "ivfpq-kernel-opt-eval"
+  modal_timeout_seconds: 1800
+  warmup_iters: 2
+  timed_iters: 7
+  recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; the Triton reference measured iso-recall 1.0 on all workloads, so 0.95 leaves margin for ADC tie-breaks
+  speedup_target: 800.0          # H100 calibration: flashlib Triton reference geomean ~898x over the Python-loop naive baseline (per-workload 513/907/1420/1449/442/1234x)
+  base_seed: 20260702
+  agent_workload_count: 3
+  expose_per_workload_metrics: false
+  # The index (the "database") is built ONCE per workload by the frozen baseline
+  # and reused for every timed iteration; only ivf_pq_search is timed. Queries are
+  # regenerated fresh each iteration. M=database size, Q=queries, k=neighbours.
+  workloads:
+    - {id: w0, M: 50000,  D: 64,  nlist: 256, m: 8,  nprobe: 8,  Q: 1024, k: 10}
+    - {id: w1, M: 100000, D: 96,  nlist: 512, m: 12, nprobe: 16, Q: 1024, k: 10}
+    - {id: w2, M: 150000, D: 128, nlist: 512, m: 16, nprobe: 16, Q: 2048, k: 10}
+    - {id: w3, M: 80000,  D: 64,  nlist: 256, m: 8,  nprobe: 16, Q: 2048, k: 10}
+    - {id: w4, M: 120000, D: 128, nlist: 512, m: 16, nprobe: 8,  Q: 1024, k: 20}
+    - {id: w5, M: 60000,  D: 96,  nlist: 256, m: 12, nprobe: 16, Q: 1536, k: 10}
+submission:
+  kind: file
+  path: /app/solution.patch

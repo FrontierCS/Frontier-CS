@@ -75,25 +75,53 @@ def _gpu_worker(payload: dict) -> dict:
     ref = importlib.import_module(cfg["ref_module"])
     pkg = importlib.import_module(cfg["pkg"])
 
-    # ---- per-primitive: data gen, call, and quality metric ---------------- #
-    def gen(w, seed):
+    # ---- per-primitive: fixed context, data gen, call, quality metric ----- #
+    def setup(w, seed):
+        # Built ONCE per workload (not per timed iter). IVF-PQ builds the fixed
+        # index (the "database") here; queries are generated fresh per iteration.
+        if prim == "ivfpq":
+            g = torch.Generator(device=dev).manual_seed(int(seed))
+            X = torch.randn(int(w["M"]), int(w["D"]), generator=g, device=dev, dtype=torch.float32)
+            index = ref.ivf_pq_build(X, int(w["nlist"]), m=int(w["m"]),
+                                     nprobe=int(w["nprobe"]), seed=int(seed))
+            return {"index": index, "D": int(w["D"])}
+        return {}
+
+    def gen(w, seed, ctx):
         g = torch.Generator(device=dev).manual_seed(int(seed))
+        if prim == "ivfpq":
+            q = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g, device=dev, dtype=torch.float32)
+            return {"queries": q}
         if prim == "knn":
             db = torch.randn(w["M"], w["D"], generator=g, device=dev, dtype=torch.float32)
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
+        if prim == "dbscan":
+            nc, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
+            centers = torch.randn(nc, D, generator=g, device=dev, dtype=torch.float32) * 10.0
+            asg = torch.randint(0, nc, (N,), generator=g, device=dev)
+            xb = centers.index_select(0, asg) + torch.randn(N, D, generator=g, device=dev, dtype=torch.float32) * 0.5
+            nz = int(float(w.get("noise_frac", 0.0)) * N)
+            if nz > 0:
+                lo = xb.min(0).values; hi = xb.max(0).values
+                xb[:nz] = lo + (hi - lo) * torch.rand(nz, D, generator=g, device=dev)
+            return {"x": xb, "eps": float(w["eps"]), "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
         if prim == "kmeans":
             perm = torch.randperm(w["N"], generator=g, device=dev)[: w["K"]]
             return {"x": x, "init": x.index_select(0, perm).clone()}
         return {"x": x}
 
-    def call(mod, w, data):
+    def call(mod, w, data, ctx):
+        if prim == "ivfpq":
+            return mod.ivf_pq_search(ctx["index"], data["queries"], int(w["k"]), nprobe=int(w["nprobe"]))
         if prim == "kmeans":
             return mod.kmeans(data["x"], w["K"], max_iters=w["max_iters"],
                               init_centroids=data["init"], tol=0.0)
         if prim == "knn":
             return mod.knn(data["queries"], data["database"], w["k"])
+        if prim == "dbscan":
+            return mod.dbscan(data["x"], data["eps"], data["min_samples"])
         if prim == "pca":
             return mod.pca(data["x"], w["k"])
         if prim == "tsvd":
@@ -111,6 +139,14 @@ def _gpu_worker(payload: dict) -> dict:
                 raise ValueError("bad knn output")
             if not torch.isfinite(d).all():
                 raise ValueError("non-finite distances")
+        elif prim == "ivfpq":
+            vals, ids = out
+            if tuple(ids.shape) != (int(w["Q"]), int(w["k"])) or \
+               tuple(vals.shape) != (int(w["Q"]), int(w["k"])):
+                raise ValueError("bad ivfpq output shape")
+        elif prim == "dbscan":
+            if out.ndim != 1 or int(out.shape[0]) != int(w["N"]):
+                raise ValueError("bad dbscan labels shape")
         else:
             a, b = out
             comps = a if prim == "pca" else b
@@ -132,6 +168,20 @@ def _gpu_worker(payload: dict) -> dict:
         hit = (a.unsqueeze(2) == b.unsqueeze(1)).any(2)
         return float(hit.sum().item()) / (b.shape[0] * b.shape[1])
 
+    def ari(a, b):
+        # Adjusted Rand Index between two integer label vectors (N,); noise (-1)
+        # is treated as its own label (dense-remapped first).
+        a = torch.unique(a.long(), return_inverse=True)[1]
+        b = torch.unique(b.long(), return_inverse=True)[1]
+        na = int(a.max().item()) + 1; nb = int(b.max().item()) + 1
+        cont = torch.bincount(a * nb + b, minlength=na * nb).reshape(na, nb).double()
+        ai = cont.sum(1); bj = cont.sum(0); n = cont.sum()
+        c2 = lambda z: z * (z - 1) / 2.0
+        sij = c2(cont).sum(); sa = c2(ai).sum(); sb = c2(bj).sum()
+        exp = (sa * sb / c2(n)) if float(n) > 1 else 0.0
+        den = 0.5 * (sa + sb) - exp
+        return float(((sij - exp) / den).item()) if float(den) != 0.0 else 1.0
+
     def ortho_err(comps):
         c = comps.to(torch.float32); k = c.shape[0]
         return float((c @ c.t() - torch.eye(k, device=c.device)).abs().max().item())
@@ -148,9 +198,14 @@ def _gpu_worker(payload: dict) -> dict:
             total += float((p * p).sum().item())
         return total / (x.shape[0] - 1) if center else total
 
-    def verdict(w, data, ref_out, agent_out):
+    def verdict(w, data, ctx, ref_out, agent_out):
         """Return (ok, reason, ref_val, agent_val) gating the agent output."""
         check_shape(w, agent_out)
+        if prim == "ivfpq":
+            # iso-result recall: agent ids vs frozen-baseline ids on the SAME index.
+            rec = recall(agent_out[1], ref_out[1])
+            ok = rec >= float(cfg["recall_threshold"])
+            return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "kmeans":
             rv = inertia(data["x"], ref_out[1]); av = inertia(data["x"], agent_out[1])
             tol = float(cfg["inertia_tolerance"])
@@ -160,6 +215,10 @@ def _gpu_worker(payload: dict) -> dict:
             rec = recall(agent_out[1], ref_out[1])
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
+        if prim == "dbscan":
+            val = ari(agent_out, ref_out)
+            ok = val >= float(cfg["ari_threshold"])
+            return ok, ("ari_regression" if not ok else ""), 1.0, val
         center = (prim == "pca")
         comps = agent_out[0] if prim == "pca" else agent_out[1]
         ref_comps = ref_out[0] if prim == "pca" else ref_out[1]
@@ -171,27 +230,28 @@ def _gpu_worker(payload: dict) -> dict:
         ok = av >= (1.0 - float(cfg["captured_tolerance"])) * rv - 1e-6
         return ok, ("captured_regression" if not ok else ""), rv, av
 
-    def time_call(mod, w, data):
-        _sync(); t0 = _perf(); out = call(mod, w, data); _sync()
+    def time_call(mod, w, data, ctx):
+        _sync(); t0 = _perf(); out = call(mod, w, data, ctx); _sync()
         return (_perf() - t0) * 1000.0, out
 
     rows = []
     try:
         for w in payload["workloads"]:
             base_seed = int(w["seed"])
+            ctx = setup(w, base_seed)                   # fixed context (e.g. IVF-PQ index)
             # warmup on fresh data (kernels / autotune) — not measured
             for i in range(warmup):
-                d = gen(w, base_seed + 100 + i)
-                call(ref, w, d); call(pkg, w, d); _sync()
+                d = gen(w, base_seed + 100 + i, ctx)
+                call(ref, w, d, ctx); call(pkg, w, d, ctx); _sync()
                 del d
             torch.cuda.empty_cache()
             ratios, ref_val, agent_val = [], None, None
             bad = None
             for i in range(iters):
-                d = gen(w, base_seed + 10000 + i)          # fresh every iteration
-                rt, rout = time_call(ref, w, d)
-                at, aout = time_call(pkg, w, d)
-                ok, reason, rv, av = verdict(w, d, rout, aout)   # verify THIS iter
+                d = gen(w, base_seed + 10000 + i, ctx)     # fresh every iteration
+                rt, rout = time_call(ref, w, d, ctx)
+                at, aout = time_call(pkg, w, d, ctx)
+                ok, reason, rv, av = verdict(w, d, ctx, rout, aout)   # verify THIS iter
                 if not ok:
                     bad = reason; ref_val, agent_val = rv, av
                     break
