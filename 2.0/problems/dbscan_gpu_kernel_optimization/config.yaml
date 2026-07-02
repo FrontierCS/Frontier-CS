@@ -25,8 +25,8 @@ evaluation:
   ari_threshold: 0.99            # agent clustering must agree with the baseline (Adjusted Rand Index) on every iteration; the grid reference measured ARI 1.0 on all workloads
   speedup_target: 13.0           # H100 calibration: flashlib grid DBSCAN reference geomean 13.29x over the O(N^2) matmul baseline (per-workload 7.2/12.1/9.5/18.8/16.6/21.2x)
   base_seed: 20260701
-  agent_workload_count: 3
-  expose_per_workload_metrics: false
+  agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); the params are agent-visible anyway
+  expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
   # N in the 100k-170k band: the O(N^2) matmul baseline is seconds/call (grid kernel
   # wins 6-20x) but bounded for timed_iters; below ~100k the tensor-core matmul baseline
   # is faster than the grid kernel's fixed overhead. Vary N + density so agents can't
