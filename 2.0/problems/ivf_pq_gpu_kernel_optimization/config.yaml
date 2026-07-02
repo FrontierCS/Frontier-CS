@@ -25,8 +25,8 @@ evaluation:
   recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; the Triton reference measured iso-recall 1.0 on all workloads, so 0.95 leaves margin for ADC tie-breaks
   speedup_target: 800.0          # H100 calibration: flashlib Triton reference geomean ~898x over the Python-loop naive baseline (per-workload 513/907/1420/1449/442/1234x)
   base_seed: 20260702
-  agent_workload_count: 3
-  expose_per_workload_metrics: false
+  agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
+  expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
   # The index (the "database") is built ONCE per workload by the frozen baseline
   # and reused for every timed iteration; only ivf_pq_search is timed. Queries are
   # regenerated fresh each iteration. M=database size, Q=queries, k=neighbours.

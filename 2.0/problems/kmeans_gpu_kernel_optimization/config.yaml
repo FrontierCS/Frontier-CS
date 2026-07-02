@@ -49,8 +49,8 @@ evaluation:
   inertia_tolerance: 0.02        # agent inertia must be <= (1+tol) x baseline on every iteration
   speedup_target: 5.0            # calibrated: reference (flashlib-best) geomean ~5.3x on Modal H100
   base_seed: 20260701
-  agent_workload_count: 3        # agent role runs a fast subset; final verifier runs them all
-  expose_per_workload_metrics: false
+  agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
+  expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
   # --- hidden workloads (judge-only; config.yaml/task_config.json never enter the agent image) ---
   workloads:
     - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 12}
