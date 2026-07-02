@@ -43,7 +43,7 @@ special-case.
 
 ## Iterate on a GPU
 
-The agent workspace has no GPU. Use the public test to time your current code on
+The agent workspace has no GPU. Use the public test to check your current code's correctness and speed on
 a GPU through Modal (needs `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in your
 environment):
 
