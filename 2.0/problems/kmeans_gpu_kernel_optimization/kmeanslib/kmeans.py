@@ -1,34 +1,27 @@
-"""Euclidean (squared-L2) Lloyd K-Means -- the reference you must optimise.
+"""One Lloyd K-Means step -- the function you optimise.
 
-This implementation is intentionally naive. Every Lloyd iteration it
-materialises the full ``(N, K)`` distance matrix with :func:`torch.cdist`
-and recomputes the assignment and the centroid update with plain PyTorch
-scatter ops. It is correct and deterministic, but it moves far more memory
-than necessary and launches many small kernels.
+The judge owns the iteration loop, the data, the initial centroids, and the
+iteration count; you provide a single Lloyd step and it is called repeatedly.
+This shipped step is intentionally naive (materialise a (chunk, K) distance
+matrix with a bf16 matmul + argmin, then a PyTorch scatter update).
 
 Contract (do NOT change):
 
-    kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
-        -> (labels, centroids, n_iter)
+    step(x, centroids) -> (labels, new_centroids)
 
-    x               : (N, D) float32 CUDA tensor of points.
-    n_clusters (K)  : int, number of clusters.
-    max_iters       : int, number of Lloyd iterations (fixed by the caller).
-    init_centroids  : (K, D) tensor -- REQUIRED. The initial centroids. The
-                      caller always supplies these so the result is a
-                      deterministic function of (x, init_centroids, max_iters).
-    tol             : float. If > 0, stop early once the maximum centroid
-                      shift drops below ``tol``. The grader always calls with
-                      ``tol=0.0`` (run all ``max_iters`` iterations).
+    x            : (N, D) bfloat16 CUDA tensor of points.
+    centroids    : (K, D) bfloat16 tensor -- the current centroids.
+    labels       : (N,) int64 -- nearest-centroid assignment of every point to
+                   `centroids` (a full assignment of all N points).
+    new_centroids: (K, D) -- centroids recomputed as the mean of each cluster
+                   (empty clusters keep their previous centroid).
 
-    labels          : (N,) int64 cluster id per point (assignment at the start
-                      of the final iteration).
-    centroids       : (K, D) float32 final centroids (after the final update).
-    n_iter          : int, number of iterations actually run.
-
-You may add modules/kernels inside the ``kmeanslib`` package and rewrite the
-body of :func:`kmeans`, ``_assign`` and ``_update`` freely, as long as the
-public contract above is preserved.
+This is exactly one Lloyd iteration: assign to `centroids`, then update. You may
+add modules/kernels under ``kmeanslib`` and rewrite the body of ``step``,
+``_assign`` and ``_update`` freely -- including **fusing the assign + update into
+a single kernel** -- as long as ``step(x, centroids) -> (labels, new_centroids)``
+is preserved. You cannot change how many times it runs, the data, or the initial
+centroids; the judge owns the loop and calls ``step`` a fixed number of times.
 """
 from __future__ import annotations
 
@@ -75,30 +68,13 @@ def _update(
     return new.to(x.dtype)
 
 
-def kmeans(
-    x: torch.Tensor,
-    n_clusters: int,
-    *,
-    max_iters: int = 10,
-    init_centroids: torch.Tensor,
-    tol: float = 0.0,
-):
-    """Lloyd K-Means with fixed initial centroids. See module docstring."""
+def step(x: torch.Tensor, centroids: torch.Tensor):
+    """One Lloyd iteration: assign to `centroids`, then recompute them.
+
+    Returns ``(labels, new_centroids)``. See the module docstring for the contract.
+    """
     if x.ndim != 2:
         raise ValueError(f"x must be 2-D (N, D); got shape {tuple(x.shape)}")
-    if init_centroids is None:
-        raise ValueError("init_centroids is required (deterministic initialisation)")
-
-    centroids = init_centroids.to(x.dtype).clone()
-    labels = torch.zeros((x.shape[0],), device=x.device, dtype=torch.long)
-
-    n_iter = 0
-    for n_iter in range(max_iters):
-        labels = _assign(x, centroids)
-        new_centroids = _update(x, labels, n_clusters, centroids)
-        shift = (new_centroids - centroids).norm(dim=-1).max()
-        centroids = new_centroids
-        if tol > 0.0 and float(shift) < tol:
-            break
-
-    return labels, centroids, n_iter + 1
+    labels = _assign(x, centroids)
+    new_centroids = _update(x, labels, centroids.shape[0], centroids)
+    return labels, new_centroids

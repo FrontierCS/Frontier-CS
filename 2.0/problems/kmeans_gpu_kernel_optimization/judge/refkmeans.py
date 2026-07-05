@@ -1,10 +1,9 @@
-"""Frozen naive K-Means baseline used by the judge as the speed denominator.
-
-This is a standalone (non-package) copy of the ``kmeanslib.kmeans``
-implementation the agent starts from. It is imported under its own module name
-so the judge worker can load the frozen baseline and the patched ``kmeanslib``
-package in the same process. Keep this behaviourally identical to the shipped
-``kmeanslib/kmeans.py``.
+"""Frozen naive one-step K-Means baseline used by the judge as the speed
+denominator. Behaviourally identical to the shipped ``kmeanslib.kmeans``
+(``step`` + ``_assign`` + ``_update``); imported under its own module name so the
+judge worker can load the frozen baseline and the patched ``kmeanslib`` package
+in one process. The judge owns the Lloyd loop and calls ``step`` a fixed number
+of times.
 """
 from __future__ import annotations
 
@@ -12,8 +11,6 @@ import torch
 
 
 def _assign(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
-    # Naive per-chunk squared-L2: materialise (chunk, K) via a bf16 matmul, argmin.
-    # argmin ||x-c||^2 == argmin (||c||^2 - 2 x.c^T); ||x||^2 is constant per row.
     c = centroids.to(x.dtype)
     c_sq = (c.float() * c.float()).sum(1)
     labels = torch.empty(x.shape[0], device=x.device, dtype=torch.long)
@@ -39,19 +36,9 @@ def _update(x: torch.Tensor, labels: torch.Tensor, n_clusters: int,
     return new.to(x.dtype)
 
 
-def kmeans(x, n_clusters, *, max_iters=10, init_centroids, tol=0.0):
+def step(x: torch.Tensor, centroids: torch.Tensor):
     if x.ndim != 2:
         raise ValueError(f"x must be 2-D (N, D); got shape {tuple(x.shape)}")
-    if init_centroids is None:
-        raise ValueError("init_centroids is required")
-    centroids = init_centroids.to(x.dtype).clone()
-    labels = torch.zeros((x.shape[0],), device=x.device, dtype=torch.long)
-    n_iter = 0
-    for n_iter in range(max_iters):
-        labels = _assign(x, centroids)
-        new_centroids = _update(x, labels, n_clusters, centroids)
-        shift = (new_centroids - centroids).norm(dim=-1).max()
-        centroids = new_centroids
-        if tol > 0.0 and float(shift) < tol:
-            break
-    return labels, centroids, n_iter + 1
+    labels = _assign(x, centroids)
+    new_centroids = _update(x, labels, centroids.shape[0], centroids)
+    return labels, new_centroids

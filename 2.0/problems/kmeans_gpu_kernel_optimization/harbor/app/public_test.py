@@ -17,9 +17,11 @@ APP_DIR = os.environ.get("APP_DIR", "/app")
 PKG = "kmeanslib"
 BASELINE_DIR = "/opt/kmeans_ref"
 
+# The judge owns the Lloyd loop and calls your `step(x, centroids)` exactly
+# `max_iters` times per workload (same contract as the hidden graded shapes).
 PUBLIC_WORKLOADS = [
-    {"id": "p0", "N": 50_000, "D": 32, "K": 64, "max_iters": 10, "seed": 1},
-    {"id": "p1", "N": 200_000, "D": 128, "K": 256, "max_iters": 10, "seed": 2},
+    {"id": "p0", "N": 50_000, "D": 32, "K": 64, "max_iters": 2, "seed": 1},
+    {"id": "p1", "N": 200_000, "D": 128, "K": 256, "max_iters": 2, "seed": 2},
 ]
 
 CFG = {
@@ -33,7 +35,7 @@ CFG = {
     "modal_timeout_seconds": 1800,
     "warmup": 2,
     "iters": 3,
-    "inertia_tolerance": 0.10,
+    "inertia_tolerance": 0.05,
     "recall_threshold": 0.99,
     "captured_tolerance": 0.02,
     "ortho_tolerance": 0.02,

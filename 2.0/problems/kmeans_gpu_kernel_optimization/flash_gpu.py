@@ -115,10 +115,12 @@ def _gpu_worker(payload: dict) -> dict:
             #
             # PLANTED CLUSTERS: x = well-separated blob centers + unit noise (NOT
             # random). This makes the assignment matter -- inertia is sensitive to
-            # which centroid each point takes -- so a solution that subsamples rows
-            # or feature dims, or fakes the labels, produces a wrong assignment and
-            # regresses the (labelled) inertia gate. Random data would leave inertia
-            # nearly assignment-invariant and thus hackable by doing less work.
+            # which centroid each point takes -- so a `step` that subsamples rows
+            # or feature dims, or fakes the labels, lands the final centroids in the
+            # wrong place and regresses the inertia gate (the judge re-derives
+            # inertia from the final centroids after its own max_iters-step loop).
+            # Random data would leave inertia nearly assignment-invariant and thus
+            # hackable by doing less work.
             K = int(w["K"])
             centers = torch.randn(K, int(w["D"]), generator=g, device=dev) * 6.0
             asg = torch.randint(0, K, (int(w["N"]),), generator=g, device=dev)
@@ -131,8 +133,17 @@ def _gpu_worker(payload: dict) -> dict:
         if prim == "ivfpq":
             return mod.ivf_pq_search(ctx["index"], data["queries"], int(w["k"]), nprobe=int(w["nprobe"]))
         if prim == "kmeans":
-            return mod.kmeans(data["x"], w["K"], max_iters=w["max_iters"],
-                              init_centroids=data["init"], tol=0.0)
+            # The JUDGE owns the Lloyd loop: call the solution's one-iteration
+            # `step(x, centroids)` exactly max_iters times. The solution cannot
+            # change the iteration count, the data, or the init centroids -- so it
+            # cannot skip iterations or fake the number of steps; it can only make
+            # a single step faster (e.g. fuse assign+update). This whole loop is
+            # what gets timed.
+            c = data["init"].clone()
+            lab = None
+            for _ in range(int(w["max_iters"])):
+                lab, c = mod.step(data["x"], c)
+            return lab, c, int(w["max_iters"])
         if prim == "knn":
             return mod.knn(data["queries"], data["database"], w["k"])
         if prim == "dbscan":
@@ -149,7 +160,7 @@ def _gpu_worker(payload: dict) -> dict:
             if tuple(cen.shape) != (w["K"], w["D"]) or not torch.isfinite(cen.float()).all():
                 raise ValueError("bad kmeans centroids")
             if lab.ndim != 1 or int(lab.shape[0]) != int(w["N"]):
-                raise ValueError("bad kmeans labels shape")   # labels are gated, must be full (N,)
+                raise ValueError("bad kmeans labels shape")   # step must return a full (N,) assignment
         elif prim == "knn":
             d, i = out
             if tuple(d.shape) != (w["Q"], w["k"]) or tuple(i.shape) != (w["Q"], w["k"]):
@@ -238,25 +249,14 @@ def _gpu_worker(payload: dict) -> dict:
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "kmeans":
-            tol_cen = float(cfg["inertia_tolerance"])
-            base_near = inertia(data["x"], ref_out[1])          # baseline centroid quality
-            ag_near = inertia(data["x"], agent_out[1])          # agent centroid quality
-            # (B) agent centroids must be about as good as the baseline's (nearest-
-            # centroid inertia). Multi-iteration + planted clusters compound a wrong
-            # (subsampled-dim) assignment into bad centroids, so this catches it.
-            if ag_near > (1.0 + tol_cen) * base_near + 1e-6:
-                return False, "inertia_regression", base_near, ag_near
-            # (A) label gate -- only well-defined for a SINGLE Lloyd step, where the
-            # returned labels are the argmin to `init` (the centroids the one update
-            # derives from). For max_iters>1 the labels are argmin to the pre-final
-            # centroids, which the judge cannot recompute, so the gate is skipped.
-            if int(w.get("max_iters", 1)) == 1:
-                tol_lab = float(cfg.get("label_tolerance", tol_cen))
-                lab_best = inertia(data["x"], data["init"])
-                lab_got = inertia_labeled(data["x"], data["init"], agent_out[0])
-                if lab_got > (1.0 + tol_lab) * lab_best + 1e-6:
-                    return False, "label_mismatch", lab_best, lab_got
-            return True, "", base_near, ag_near
+            # Centroid-quality gate: agent's final centroids (from the judge-owned
+            # loop over the agent's `step`) must be as good as the baseline's. Since
+            # the judge owns the loop, the solution cannot skip iterations or fake
+            # the count; a subsampled/wrong step compounds into bad centroids here.
+            rv = inertia(data["x"], ref_out[1]); av = inertia(data["x"], agent_out[1])
+            tol = float(cfg["inertia_tolerance"])
+            ok = av <= (1.0 + tol) * rv + 1e-6
+            return ok, ("inertia_regression" if not ok else ""), rv, av
         if prim == "knn":
             rec = recall(agent_out[1], ref_out[1])
             ok = rec >= float(cfg["recall_threshold"])

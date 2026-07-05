@@ -3,39 +3,48 @@
 ## Problem
 
 You are given a small GPU K-Means library, `kmeanslib`, in the Harbor workspace
-at `/app/kmeanslib`. Its public entry point is:
+at `/app/kmeanslib`. Its public entry point is a **single Lloyd iteration**:
 
 ```python
-kmeanslib.kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
-    -> (labels, centroids, n_iter)
+kmeanslib.step(x, centroids) -> (labels, new_centroids)
 ```
 
-`x` is an `(N, D)` **bfloat16** CUDA tensor, `init_centroids` is a fixed `(K, D)`
-bfloat16 tensor supplied by the caller, and the function runs Euclidean
-(squared-L2) Lloyd iterations. All data is bfloat16 — treat it as the fixed
-working precision. The shipped implementation is a straightforward, correct
-PyTorch version.
+`x` is an `(N, D)` **bfloat16** CUDA tensor of points and `centroids` is the
+current `(K, D)` bfloat16 tensor. One call performs exactly one Euclidean
+(squared-L2) Lloyd step: assign every point to its nearest centroid
+(`labels`, an `(N,)` int64 full assignment), then recompute each centroid as the
+mean of its assigned points (`new_centroids`, `(K, D)`; empty clusters keep their
+previous centroid). All data is bfloat16 — treat it as the fixed working
+precision. The shipped implementation is a straightforward, correct PyTorch
+version (a bf16 matmul + argmin, then a scatter update).
 
-Your goal is to make `kmeanslib.kmeans` **as fast as possible** on the GPU while
-producing clusterings of the same quality. You may rewrite the internals of the
-package however you like and add new modules (including Triton kernels) under
-`kmeanslib/`. The public function signature and return contract above must not
-change, and every result must remain a deterministic function of its inputs.
+**The judge owns the iteration loop.** It fixes the data and the initial
+centroids, then calls your `step` a fixed number of times per workload, feeding
+each call's `new_centroids` into the next. You do not control the data, the
+initial centroids, or how many iterations run — you control only how fast a
+single `step` executes.
+
+Your goal is to make `kmeanslib.step` **as fast as possible** on the GPU while
+producing the same clustering. You may rewrite the internals of the package
+however you like and add new modules (including Triton kernels) under
+`kmeanslib/` — in particular you may **fuse the assign and update into a single
+kernel**. The public function signature and return contract above must not
+change, and each result must remain a deterministic function of its inputs.
 
 ## Workload
 
 The graded workloads are a family of held-out dense clustering problems that
-vary `(N, D, K)` and the iteration count, spanning small/medium/large point
-counts and both wide-feature (large `D`) and many-cluster (large `K`) regimes.
-All use Euclidean distance, **bfloat16 data**, a fixed iteration count
-(`tol = 0.0`, so every iteration runs), and caller-supplied `init_centroids`.
+vary `(N, D, K)`, spanning small/medium/large point counts and both
+wide-feature (large `D`) and many-cluster (large `K`) regimes. All use Euclidean
+distance, **bfloat16 data**, well-separated planted clusters, and a fixed number
+of judge-owned `step` calls per workload with caller-supplied initial centroids.
 
 Two representative *public* shapes are available for local testing (the graded
 shapes are different and hidden):
 
 ```text
-(N=50000,  D=32,  K=64,  max_iters=10)
-(N=200000, D=128, K=256, max_iters=10)
+(N=50000,  D=32,  K=64)
+(N=200000, D=128, K=256)
 ```
 
 Treat this as a general dense K-Means, not as specific shapes to special-case.
@@ -74,15 +83,17 @@ baseline on a GPU, on the same seeded data and initial centroids.
 
 ## Correctness
 
-Correctness is a gate. On every timed iteration the judge recomputes the
-**inertia** (within-cluster sum of squared distances to the nearest final
-centroid) of your result and of the baseline on identical data, and requires your
-inertia to stay within a small relative tolerance of the baseline's. `labels`
-must be a full `(N,)` assignment. Crashes, non-finite output, wrong shapes/dtypes,
-timeouts, and clustering that regresses beyond the tolerance are penalized before
-speed is considered. The working precision is fixed at bfloat16 for every solution
-(the inputs are bfloat16), so it is not a tuning knob — speed comes from the
-kernel, not from the arithmetic precision.
+Correctness is a gate. After running the fixed loop of `step` calls, the judge
+recomputes the **inertia** (sum of squared distances of every point to its
+nearest final centroid) of your final centroids and of the baseline's on
+identical data, and requires your inertia to stay within a small relative
+tolerance of the baseline's. Each `step` must return `labels` as a full `(N,)`
+nearest-centroid assignment to the `centroids` it was given and `new_centroids`
+of shape `(K, D)`. Crashes, non-finite output, wrong shapes/dtypes, timeouts, and
+clustering that regresses beyond the tolerance are penalized before speed is
+considered. The working precision is fixed at bfloat16 for every solution (the
+inputs are bfloat16), so it is not a tuning knob — speed comes from the kernel,
+not from the arithmetic precision.
 
 ## Scoring
 
@@ -111,9 +122,9 @@ New Python modules inside `kmeanslib/` are allowed. Patches may not: modify
 anything outside `kmeanslib/`; import or call an external optimized ML/kernel
 library (write the kernels yourself); read or write environment variables, spawn
 processes, or access the network; or otherwise tamper with the measurement
-framework. The timing harness measures your code on freshly generated data every
-iteration and re-verifies quality each time, so caching results across calls does
-not help.
+framework. The judge owns the loop, the data, and the initial centroids and
+re-verifies quality from your final centroids, so faking labels, skipping the
+real assign/update work, or caching results across calls does not help.
 
 ## Resource Budget
 

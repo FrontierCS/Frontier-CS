@@ -5,11 +5,14 @@ Operator-facing. Not copied into the agent workspace by the adapter.
 ## What this task measures
 
 Can an agent turn a naive GPU K-Means into a fast one? The agent patches
-`kmeanslib`; the judge times the patched `kmeans` against a frozen naive baseline
-on hidden `(N, D, K)` workloads and scores the geometric-mean speedup, gated on
-clustering quality (inertia). First of a four-task **flashlib kernel-optimization
-family** (KMeans, KNN, TruncatedSVD, PCA) that all share one evaluator + one
-Modal GPU harness.
+`kmeanslib`, whose public entry point is **one Lloyd iteration**
+`step(x, centroids) -> (labels, new_centroids)`. **The judge owns the loop**: it
+fixes the data + initial centroids and calls `step` a fixed number of times
+(`max_iters`, feeding each output into the next), times the patched `step`
+against a frozen naive baseline on hidden `(N, D, K)` workloads, and scores the
+geometric-mean speedup, gated on clustering quality (inertia of the final
+centroids). First of a four-task **flashlib kernel-optimization family** (KMeans,
+KNN, TruncatedSVD, PCA) that all share one evaluator + one Modal GPU harness.
 
 ## Execution: Modal GPU offload (mirrors the vllm task)
 
@@ -32,24 +35,42 @@ Modal values come from `config.yaml` (delivered judge-only as
 `reference.patch` vendors flashlib's own optimized **Triton** K-Means path
 (`primitives/kmeans/triton/{kmeans,assign,update}.py`) under
 `kmeanslib/_kernels/…`, with imports rewritten and the string "flashlib"
-scrubbed, plus a thin adapter mapping our `(N, D)` contract onto flashlib's
-batched entry. It is triton-only (runs on any sm≥80), imports cleanly on CPU,
-and applies + passes the patch policy. Calibrate `speedup_target` from its
-measured geomean on the first GPU trial.
+scrubbed, plus a thin adapter mapping our `step(x, centroids)` contract onto
+flashlib's single-iteration path (`_euclid_iter`: `euclid_assign_triton` +
+`triton_centroid_update_sorted_euclid`, run once with the batch dim as `B=1`).
+It is triton-only (runs on any sm≥80), imports cleanly on CPU, and applies +
+passes the patch policy. Calibrate `speedup_target` from its measured geomean on
+the first GPU trial. (The reference does not fuse assign+update into a single
+kernel, so an agent that does can legitimately score >100.)
 
 ## Anti-reward-hack
 
-The **load-bearing** defenses are structural, inside the GPU worker (the only
-place the untrusted submission runs):
+The **primary, load-bearing** defense is the **`step` contract itself**: the
+agent owns only one Lloyd iteration `step(x, centroids)`; the judge owns the
+loop, the data, the initial centroids, and the iteration count. This structurally
+closes the reward-hacks earlier trials found when the agent owned the whole
+`kmeans(...)` call:
+
+* **iteration-skip** — the agent used to run fewer than `max_iters` iterations
+  and self-report the count; now the judge does the counting (`for _ in
+  range(max_iters): lab, c = mod.step(x, c)`), so the count is not the agent's to
+  fake;
+* **fake / subsampled labels** — the judge re-derives inertia from the *final
+  centroids after its own loop*; a `step` that returns garbage labels or
+  subsamples rows/dims produces bad centroids that compound over the loop and
+  spike inertia. `max_iters = 2` (not 1) makes it a genuine loop where a bad step
+  actually propagates, while still being too few for a converged step to degrade
+  into a no-op;
+* **precision** — data is bf16 (locked in `gen`), so fp16/tf32/fp32 buy nothing.
+
+Additional structural defenses inside the GPU worker (the only place the
+untrusted submission runs):
 
 * timing primitives (`perf_counter`, `torch.cuda.synchronize`) are captured to
   locals **before** the submission is imported → monkey-patching torch cannot
   affect measurement;
-* **fresh data every timed iteration** → memoizing on a repeated input is
-  useless;
-* quality is **re-verified from the returned tensors on every iteration** →
-  returning a stale cached result for a different input is caught;
-* the judge computes all metrics (no agent number is trusted);
+* quality is **re-verified by the judge from the returned tensors** → no agent
+  number is trusted;
 * an ephemeral Modal container per submission → no global state persists.
 
 The patch policy is surgical defense-in-depth (so it does not reject legitimate
@@ -62,33 +83,26 @@ measurement-tamper patterns (`subprocess`, `socket`, `os.system`,
 The agent-facing `readme` describes the contract, gate, scoring, and policy but
 **not** how the reference is implemented.
 
-## Correctness gate — two gates, closes the subsample hack
+## Correctness gate — centroid inertia (the step contract does the rest)
 
-The first bf16 trial exposed a **subsample reward-hack**: on random data with
-`max_iters=1` and a nearest-centroid-only inertia gate, codex subsampled rows
-(1/4) and feature dims (16 of 512) and returned all-zero labels — an approximate
-k-means that games the tolerance while doing a fraction of the work. Two changes
-close it:
+Under the `step` contract the earlier subsample / fake-label hacks are closed
+**structurally** (the judge owns the loop and re-derives quality from the final
+centroids — see Anti-reward-hack), so the separate tight *label* gate is no
+longer needed. One gate remains:
 
-1. **Planted clusters** (not random): `gen` builds `x` = well-separated blob
-   centres (`centers * 6`) + unit noise. Now the assignment *matters* — a wrong
-   (subsampled/low-dim) assignment lands points in the wrong blob and spikes
-   inertia. Random data left inertia nearly assignment-invariant, hence hackable.
-2. **Two gates** (`verdict`):
-   - **Gate A — labels** (`label_tolerance = 0.02`, tight): the returned `labels`
-     must be the genuine nearest-to-**init** assignment (init = the centroids the
-     one-step update derives from). Checked self-referentially —
-     `inertia_labeled(x, init, labels) <= (1+tol) * inertia(x, init)` — so there
-     is ~0 cross-solution bf16 drift. Fake/subsampled labels inflate it (real
-     1.0003x, all-zero 3.25x, 16-of-512-dim 1.24x). **This is what forces a real
-     full assignment** — the "do less work" shortcut is gone.
-   - **Gate B — centroids** (`inertia_tolerance = 0.05`, loose): agent
-     nearest-centroid inertia `<= (1+tol) * baseline`. On planted clusters two
-     bf16 one-step results drift up to ~2.8% at D=512 (boundary assignments), so
-     this one is loosened; it only rejects genuinely bad centroids.
+* **Planted clusters** (not random): `gen` builds `x` = well-separated blob
+  centres (`centers * 6`) + unit noise. This makes the assignment *matter* — a
+  step that assigns points to the wrong blob lands the final centroids in the
+  wrong place and spikes inertia. (Random data leaves inertia nearly
+  assignment-invariant, which is why it was hackable.)
+* **Centroid inertia gate** (`inertia_tolerance`, recalibrate): after the judge's
+  loop, the agent's final centroids' nearest-centroid inertia must be
+  `<= (1+tol) * baseline`. Computed in fp32 (upcast) on identical data. A step
+  that does less real work than a true assign+update lands worse centroids after
+  two iterations and fails this.
 
-Both are permutation/convention-independent and cheat-proof. `init_centroids` are
-always supplied and `tol = 0`, so the baseline is deterministic in
+The gate is permutation/convention-independent and cheat-proof. `init_centroids`
+are always supplied by the judge, so the baseline is deterministic in
 `(x, init_centroids, max_iters)`.
 
 ## Precision lock — bf16 (task-root, not prompt)
@@ -105,24 +119,30 @@ a trivial "use bf16 instead of the fp32 baseline" would win without kernel work.
 The inertia metric itself is still computed in fp32 (upcast) so the gate is a
 clean quality comparison.
 
-## Single-iteration timing + averaging
+## Timing unit — the judge-owned loop
 
-All workloads run `max_iters = 1` (one assign + one update) so the score isolates
-per-iteration kernel efficiency, not loop count. Because one call is tiny, each
-workload is timed `timed_iters = 10` times on fresh data and the per-run speedups
-are **averaged** (`aggregate: mean`), not median.
+The timed unit is the **judge's loop of `max_iters` `step` calls** (warmup
+`warmup_iters`, then `timed_iters = 1` timed run) — baseline and agent time the
+identical loop on the same seeded data + init. `max_iters = 2`: a genuine loop
+(so a bad step propagates and is caught by the inertia gate) but too few for a
+converged step to become a redundant no-op. The score isolates per-`step` kernel
+efficiency, since loop count is identical on both sides.
 
-## Calibration (H100 Modal trial — done)
+## Calibration (H100 Modal trial — done, step / max_iters=2)
 
-Final setup (bf16 + `max_iters=1` + planted clusters + labelled/centroid gates):
-`reference.patch` (flashlib) compiles + runs on bf16 and **passes both gates on all
-6 workloads**, running **2.6 / 2.1 / 6.9 / 2.6 / 12.3 / 7.1x** over the bf16 naive
-baseline (geomean **4.54x**). `speedup_target = 4.5`, `label_tolerance = 0.02`,
-`inertia_tolerance = 0.05`. This speedup is a *pure kernel-structure* win — both
-sides bf16, precision is not a lever, and the labelled gate forces a full real
-assignment so "subsample less work" is not a lever either.
+Final setup (bf16 + `step` contract + judge-owned loop of `max_iters=2` + planted
+clusters + centroid inertia gate): the flashlib `reference.patch` compiles + runs
+on bf16 and **passes the centroid gate on all 6 workloads**, running
+**2.1 / 2.4 / 6.7 / 3.5 / 13.2 / 9.3x** over the bf16 naive baseline (geomean
+**4.95x**). `speedup_target = 5.0`. The worst reference bf16 inertia drift is
+**+1.47%** (w3, D=512), so `inertia_tolerance = 0.05` clears it with margin while
+still rejecting genuinely bad centroids. This speedup is a *pure kernel-structure*
+win — both sides bf16 (precision is not a lever), and the judge owns the loop (so
+iteration-skip / fake-labels / subsample are not levers either).
 
-(Earlier calibrations, for the record: random-data + nearest-only gate gave
-geomean 4.97x but was subsample-hackable; the labelled gate vs the baseline failed
-the reference at D=512 with 2.66% bf16 drift, which is why gate A is
-self-referential against `init` and gate B is the loosened one.)
+(Prior `max_iters=1` calibration, for the record: bf16 + planted clusters +
+labelled/centroid gates gave the flashlib reference geomean **4.54x**, all 6
+passing. That setting let the agent own the whole `kmeans(...)` call, which is why
+iteration-skip was still reachable and motivated this `step` restructure. The
+geomean is essentially unchanged (4.54 → 4.95) because the reference does the same
+per-step work; what changed is that the hack surface is now closed structurally.)
