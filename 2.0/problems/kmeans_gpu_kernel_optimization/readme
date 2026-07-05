@@ -77,9 +77,11 @@ baseline on a GPU, on the same seeded data and initial centroids.
 ## Correctness
 
 Correctness is a gate. On every timed iteration the judge recomputes the
-**inertia** (within-cluster sum of squared distances to the nearest final
-centroid) of your result and of the baseline on identical data, and requires
-your inertia to stay within a small relative tolerance of the baseline's.
+**inertia** — the sum over points of the squared distance from each point to the
+centroid of **its returned label** — for your result and for the baseline on
+identical data, and requires yours to stay within a small relative tolerance of
+the baseline's. Both your `labels` **and** `centroids` are used, so `labels` must
+be the genuine assignment of every one of the `N` points (a full `(N,)` vector).
 Crashes, non-finite output, wrong shapes/dtypes, timeouts, and clustering that
 regresses beyond the tolerance are penalized before speed is considered. The
 working precision is fixed at bfloat16 for every solution (the inputs are

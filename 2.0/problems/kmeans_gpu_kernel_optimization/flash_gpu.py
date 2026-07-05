@@ -112,9 +112,18 @@ def _gpu_worker(payload: dict) -> dict:
             # inputs carry only bf16 precision. No solution -- baseline, reference,
             # or agent -- can trade accuracy for speed by picking a different matmul
             # dtype (fp16/tf32/fp32 buy nothing on bf16 data and are only slower).
-            # The only remaining lever is the kernel structure itself.
-            x = x.to(torch.bfloat16)
-            perm = torch.randperm(w["N"], generator=g, device=dev)[: w["K"]]
+            #
+            # PLANTED CLUSTERS: x = well-separated blob centers + unit noise (NOT
+            # random). This makes the assignment matter -- inertia is sensitive to
+            # which centroid each point takes -- so a solution that subsamples rows
+            # or feature dims, or fakes the labels, produces a wrong assignment and
+            # regresses the (labelled) inertia gate. Random data would leave inertia
+            # nearly assignment-invariant and thus hackable by doing less work.
+            K = int(w["K"])
+            centers = torch.randn(K, int(w["D"]), generator=g, device=dev) * 6.0
+            asg = torch.randint(0, K, (int(w["N"]),), generator=g, device=dev)
+            x = (centers.index_select(0, asg) + x).to(torch.bfloat16)   # top randn = unit noise
+            perm = torch.randperm(w["N"], generator=g, device=dev)[: K]
             return {"x": x, "init": x.index_select(0, perm).clone()}
         return {"x": x}
 
@@ -136,9 +145,11 @@ def _gpu_worker(payload: dict) -> dict:
 
     def check_shape(w, out):
         if prim == "kmeans":
-            _, cen, _ = out
-            if tuple(cen.shape) != (w["K"], w["D"]) or not torch.isfinite(cen).all():
-                raise ValueError("bad kmeans output")
+            lab, cen, _ = out
+            if tuple(cen.shape) != (w["K"], w["D"]) or not torch.isfinite(cen.float()).all():
+                raise ValueError("bad kmeans centroids")
+            if lab.ndim != 1 or int(lab.shape[0]) != int(w["N"]):
+                raise ValueError("bad kmeans labels shape")   # labels are gated, must be full (N,)
         elif prim == "knn":
             d, i = out
             if tuple(d.shape) != (w["Q"], w["k"]) or tuple(i.shape) != (w["Q"], w["k"]):
@@ -167,6 +178,20 @@ def _gpu_worker(payload: dict) -> dict:
             xb = x[j:j + 16384].to(torch.float32)   # metric always fp32 (x may be bf16)
             d = (xb * xb).sum(1, keepdim=True) - 2.0 * (xb @ c.t()) + cn[None, :]
             total += float(d.min(1).values.clamp_min(0).sum().item())
+        return total
+
+    def inertia_labeled(x, centroids, labels):
+        # sum_i ||x_i - centroids[labels_i]||^2 : ties the returned LABELS to the
+        # returned centroids. Fake/garbage labels or a wrong (subsampled) assignment
+        # inflate this even if the centroids alone look fine -- closes the "return
+        # good centroids + junk labels" and "subsample the assignment" hacks.
+        c = centroids.to(torch.float32)
+        lab = labels.long().clamp_(0, c.shape[0] - 1)
+        total = 0.0
+        for j in range(0, x.shape[0], 16384):
+            xb = x[j:j + 16384].to(torch.float32)
+            cl = c.index_select(0, lab[j:j + 16384])
+            total += float(((xb - cl) ** 2).sum().item())
         return total
 
     def recall(agent_idx, ref_idx):
@@ -213,7 +238,9 @@ def _gpu_worker(payload: dict) -> dict:
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "kmeans":
-            rv = inertia(data["x"], ref_out[1]); av = inertia(data["x"], agent_out[1])
+            # gate on LABELLED inertia: uses the returned (labels, centroids) jointly
+            rv = inertia_labeled(data["x"], ref_out[1], ref_out[0])
+            av = inertia_labeled(data["x"], agent_out[1], agent_out[0])
             tol = float(cfg["inertia_tolerance"])
             ok = av <= (1.0 + tol) * rv + 1e-6
             return ok, ("inertia_regression" if not ok else ""), rv, av
