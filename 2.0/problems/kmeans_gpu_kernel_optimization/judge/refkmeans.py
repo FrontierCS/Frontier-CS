@@ -12,8 +12,16 @@ import torch
 
 
 def _assign(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
-    dist = torch.cdist(x, centroids.to(x.dtype))
-    return torch.argmin(dist, dim=1)
+    # Naive per-chunk squared-L2: materialise (chunk, K) via a bf16 matmul, argmin.
+    # argmin ||x-c||^2 == argmin (||c||^2 - 2 x.c^T); ||x||^2 is constant per row.
+    c = centroids.to(x.dtype)
+    c_sq = (c.float() * c.float()).sum(1)
+    labels = torch.empty(x.shape[0], device=x.device, dtype=torch.long)
+    for lo in range(0, x.shape[0], 16384):
+        xb = x[lo:lo + 16384]
+        dist = c_sq[None, :] - 2.0 * (xb @ c.t()).float()   # bf16 matmul, fp32 accum
+        labels[lo:lo + 16384] = torch.argmin(dist, dim=1)
+    return labels
 
 
 def _update(x: torch.Tensor, labels: torch.Tensor, n_clusters: int,

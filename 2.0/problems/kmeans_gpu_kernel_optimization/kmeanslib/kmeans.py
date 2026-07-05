@@ -38,12 +38,18 @@ import torch
 def _assign(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
     """Nearest-centroid assignment by squared-L2 distance.
 
-    Naive: materialise the full (N, K) distance matrix, then argmin.
+    Naive: for each chunk of points, materialise the (chunk, K) distance matrix
+    with a bf16 matmul, then argmin. ``argmin ||x-c||^2 == argmin (||c||^2 - 2
+    x.c^T)`` since ``||x||^2`` is constant per row. bf16 in, fp32 accumulation.
     """
-    # torch.cdist returns Euclidean distance; argmin of distance == argmin of
-    # squared distance, so we do not bother squaring.
-    dist = torch.cdist(x, centroids.to(x.dtype))  # (N, K)
-    return torch.argmin(dist, dim=1)
+    c = centroids.to(x.dtype)
+    c_sq = (c.float() * c.float()).sum(1)                    # (K,) fp32
+    labels = torch.empty(x.shape[0], device=x.device, dtype=torch.long)
+    for lo in range(0, x.shape[0], 16384):
+        xb = x[lo:lo + 16384]
+        dist = c_sq[None, :] - 2.0 * (xb @ c.t()).float()   # (chunk, K) fp32
+        labels[lo:lo + 16384] = torch.argmin(dist, dim=1)
+    return labels
 
 
 def _update(

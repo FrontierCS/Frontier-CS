@@ -108,6 +108,12 @@ def _gpu_worker(payload: dict) -> dict:
             return {"x": xb, "eps": float(w["eps"]), "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
         if prim == "kmeans":
+            # PRECISION LOCK (task-root, not prompt): kmeans data is bf16, so the
+            # inputs carry only bf16 precision. No solution -- baseline, reference,
+            # or agent -- can trade accuracy for speed by picking a different matmul
+            # dtype (fp16/tf32/fp32 buy nothing on bf16 data and are only slower).
+            # The only remaining lever is the kernel structure itself.
+            x = x.to(torch.bfloat16)
             perm = torch.randperm(w["N"], generator=g, device=dev)[: w["K"]]
             return {"x": x, "init": x.index_select(0, perm).clone()}
         return {"x": x}
@@ -158,7 +164,7 @@ def _gpu_worker(payload: dict) -> dict:
         cn = (c * c).sum(1)
         total = 0.0
         for j in range(0, x.shape[0], 16384):
-            xb = x[j:j + 16384]
+            xb = x[j:j + 16384].to(torch.float32)   # metric always fp32 (x may be bf16)
             d = (xb * xb).sum(1, keepdim=True) - 2.0 * (xb @ c.t()) + cn[None, :]
             total += float(d.min(1).values.clamp_min(0).sum().item())
         return total
@@ -263,9 +269,13 @@ def _gpu_worker(payload: dict) -> dict:
                 rows.append({"id": w["id"], "ok": False, "reason": bad,
                              "ref_val": ref_val, "agent_val": agent_val})
                 continue
-            ratios.sort()
-            rows.append({"id": w["id"], "ok": True,
-                         "speedup": ratios[len(ratios) // 2],
+            # aggregate the per-run speedups: "mean" (average of the N runs) or
+            # "median" (default, noise-robust). config sets this per task.
+            if str(cfg.get("aggregate", "median")).lower() == "mean":
+                sp = sum(ratios) / len(ratios)
+            else:
+                ratios.sort(); sp = ratios[len(ratios) // 2]
+            rows.append({"id": w["id"], "ok": True, "speedup": sp,
                          "ref_val": ref_val, "agent_val": agent_val})
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}",

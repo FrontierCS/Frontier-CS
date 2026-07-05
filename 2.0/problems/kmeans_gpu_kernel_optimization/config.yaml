@@ -45,20 +45,23 @@ evaluation:
   modal_timeout_seconds: 1800
   # --- timing + quality gate ---
   warmup_iters: 2
-  timed_iters: 7
+  timed_iters: 10                # run each workload 10 times (max_iters=1 makes one call tiny) ...
+  aggregate: mean                # ... and AVERAGE the 10 per-run speedups (not median)
   inertia_tolerance: 0.02        # agent inertia must be <= (1+tol) x baseline on every iteration
-  speedup_target: 5.0            # calibrated: reference (flashlib-best) geomean ~5.3x on Modal H100
+  speedup_target: 5.0            # H100 recalibration (bf16, max_iters=1): flashlib reference geomean 4.97x over the bf16 naive baseline (per-workload 5.0/2.6/10.9/1.8/12.6/4.7x); inertia drift <0.0012%
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
-  # --- hidden workloads (judge-only; config.yaml/task_config.json never enter the agent image) ---
+  # max_iters=1 for ALL workloads: time a single Lloyd iteration (1 assign + 1
+  # update) so the score isolates per-iteration kernel efficiency. Data is bf16
+  # (locked in the worker's gen) -> precision is not a lever, only the kernel is.
   workloads:
-    - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 12}
-    - {id: w1, N: 200000,  D: 64,  K: 256,  max_iters: 10}
-    - {id: w2, N: 500000,  D: 128, K: 256,  max_iters: 10}
-    - {id: w3, N: 200000,  D: 512, K: 256,  max_iters: 8}
-    - {id: w4, N: 1000000, D: 64,  K: 512,  max_iters: 8}
-    - {id: w5, N: 300000,  D: 128, K: 1024, max_iters: 8}
+    - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 1}
+    - {id: w1, N: 200000,  D: 64,  K: 256,  max_iters: 1}
+    - {id: w2, N: 500000,  D: 128, K: 256,  max_iters: 1}
+    - {id: w3, N: 200000,  D: 512, K: 256,  max_iters: 1}
+    - {id: w4, N: 1000000, D: 64,  K: 512,  max_iters: 1}
+    - {id: w5, N: 300000,  D: 128, K: 1024, max_iters: 1}
 submission:
   kind: file
   path: /app/solution.patch

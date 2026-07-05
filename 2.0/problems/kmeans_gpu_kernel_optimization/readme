@@ -10,10 +10,11 @@ kmeanslib.kmeans(x, n_clusters, *, max_iters, init_centroids, tol=0.0)
     -> (labels, centroids, n_iter)
 ```
 
-`x` is an `(N, D)` float32 CUDA tensor, `init_centroids` is a fixed `(K, D)`
-initial-centroid tensor supplied by the caller, and the function runs Euclidean
-(squared-L2) Lloyd iterations. The shipped implementation is a straightforward,
-correct PyTorch version.
+`x` is an `(N, D)` **bfloat16** CUDA tensor, `init_centroids` is a fixed `(K, D)`
+bfloat16 tensor supplied by the caller, and the function runs Euclidean
+(squared-L2) Lloyd iterations. All data is bfloat16 — treat it as the fixed
+working precision. The shipped implementation is a straightforward, correct
+PyTorch version.
 
 Your goal is to make `kmeanslib.kmeans` **as fast as possible** on the GPU while
 producing clusterings of the same quality. You may rewrite the internals of the
@@ -24,17 +25,19 @@ change, and every result must remain a deterministic function of its inputs.
 ## Workload
 
 The graded workloads are a family of held-out dense clustering problems that
-vary `(N, D, K)` and the iteration count, spanning small/medium/large point
-counts and both wide-feature (large `D`) and many-cluster (large `K`) regimes.
-All use Euclidean distance, float32 data, a fixed iteration count (`tol = 0.0`,
-so every iteration runs), and caller-supplied `init_centroids`.
+vary `(N, D, K)`, spanning small/medium/large point counts and both wide-feature
+(large `D`) and many-cluster (large `K`) regimes. All use Euclidean distance,
+**bfloat16 data**, and caller-supplied `init_centroids`. Every call runs exactly
+**one Lloyd iteration** (`max_iters = 1`, `tol = 0.0`): the score isolates the
+efficiency of a single assign + update. Each workload is timed several times and
+the per-run speedups are averaged.
 
 Two representative *public* shapes are available for local testing (the graded
 shapes are different and hidden):
 
 ```text
-(N=50000,  D=32,  K=64,  max_iters=10)
-(N=200000, D=128, K=256, max_iters=10)
+(N=50000,  D=32,  K=64,  max_iters=1)
+(N=200000, D=128, K=256, max_iters=1)
 ```
 
 Treat this as a general dense K-Means, not as specific shapes to special-case.
@@ -78,9 +81,10 @@ Correctness is a gate. On every timed iteration the judge recomputes the
 centroid) of your result and of the baseline on identical data, and requires
 your inertia to stay within a small relative tolerance of the baseline's.
 Crashes, non-finite output, wrong shapes/dtypes, timeouts, and clustering that
-regresses beyond the tolerance are penalized before speed is considered. You may
-trade a little numerical precision for speed as long as you stay within the
-quality tolerance.
+regresses beyond the tolerance are penalized before speed is considered. The
+working precision is fixed at bfloat16 for every solution (the inputs are
+bfloat16), so it is not a tuning knob — speed comes from the kernel, not from the
+arithmetic precision.
 
 ## Scoring
 
