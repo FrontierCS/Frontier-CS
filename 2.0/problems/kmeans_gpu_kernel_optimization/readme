@@ -25,19 +25,17 @@ change, and every result must remain a deterministic function of its inputs.
 ## Workload
 
 The graded workloads are a family of held-out dense clustering problems that
-vary `(N, D, K)`, spanning small/medium/large point counts and both wide-feature
-(large `D`) and many-cluster (large `K`) regimes. All use Euclidean distance,
-**bfloat16 data**, and caller-supplied `init_centroids`. Every call runs exactly
-**one Lloyd iteration** (`max_iters = 1`, `tol = 0.0`): the score isolates the
-efficiency of a single assign + update. Each workload is timed several times and
-the per-run speedups are averaged.
+vary `(N, D, K)` and the iteration count, spanning small/medium/large point
+counts and both wide-feature (large `D`) and many-cluster (large `K`) regimes.
+All use Euclidean distance, **bfloat16 data**, a fixed iteration count
+(`tol = 0.0`, so every iteration runs), and caller-supplied `init_centroids`.
 
 Two representative *public* shapes are available for local testing (the graded
 shapes are different and hidden):
 
 ```text
-(N=50000,  D=32,  K=64,  max_iters=1)
-(N=200000, D=128, K=256, max_iters=1)
+(N=50000,  D=32,  K=64,  max_iters=10)
+(N=200000, D=128, K=256, max_iters=10)
 ```
 
 Treat this as a general dense K-Means, not as specific shapes to special-case.
@@ -77,16 +75,14 @@ baseline on a GPU, on the same seeded data and initial centroids.
 ## Correctness
 
 Correctness is a gate. On every timed iteration the judge recomputes the
-**inertia** — the sum over points of the squared distance from each point to the
-centroid of **its returned label** — for your result and for the baseline on
-identical data, and requires yours to stay within a small relative tolerance of
-the baseline's. Both your `labels` **and** `centroids` are used, so `labels` must
-be the genuine assignment of every one of the `N` points (a full `(N,)` vector).
-Crashes, non-finite output, wrong shapes/dtypes, timeouts, and clustering that
-regresses beyond the tolerance are penalized before speed is considered. The
-working precision is fixed at bfloat16 for every solution (the inputs are
-bfloat16), so it is not a tuning knob — speed comes from the kernel, not from the
-arithmetic precision.
+**inertia** (within-cluster sum of squared distances to the nearest final
+centroid) of your result and of the baseline on identical data, and requires your
+inertia to stay within a small relative tolerance of the baseline's. `labels`
+must be a full `(N,)` assignment. Crashes, non-finite output, wrong shapes/dtypes,
+timeouts, and clustering that regresses beyond the tolerance are penalized before
+speed is considered. The working precision is fixed at bfloat16 for every solution
+(the inputs are bfloat16), so it is not a tuning knob — speed comes from the
+kernel, not from the arithmetic precision.
 
 ## Scoring
 

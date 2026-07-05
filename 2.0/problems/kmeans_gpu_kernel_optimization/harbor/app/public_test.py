@@ -18,8 +18,8 @@ PKG = "kmeanslib"
 BASELINE_DIR = "/opt/kmeans_ref"
 
 PUBLIC_WORKLOADS = [
-    {"id": "p0", "N": 50_000, "D": 32, "K": 64, "max_iters": 1, "seed": 1},
-    {"id": "p1", "N": 200_000, "D": 128, "K": 256, "max_iters": 1, "seed": 2},
+    {"id": "p0", "N": 50_000, "D": 32, "K": 64, "max_iters": 10, "seed": 1},
+    {"id": "p1", "N": 200_000, "D": 128, "K": 256, "max_iters": 10, "seed": 2},
 ]
 
 CFG = {
@@ -32,9 +32,8 @@ CFG = {
     "app_name": "kmeans-kernel-opt-public",
     "modal_timeout_seconds": 1800,
     "warmup": 2,
-    "iters": 5,
-    "aggregate": "mean",
-    "inertia_tolerance": 0.02,
+    "iters": 3,
+    "inertia_tolerance": 0.10,
     "recall_threshold": 0.99,
     "captured_tolerance": 0.02,
     "ortho_tolerance": 0.02,

@@ -45,24 +45,24 @@ evaluation:
   modal_timeout_seconds: 1800
   # --- timing + quality gate ---
   warmup_iters: 2
-  timed_iters: 10                # run each workload 10 times (max_iters=1 makes one call tiny) ...
-  aggregate: mean                # ... and AVERAGE the 10 per-run speedups (not median)
-  inertia_tolerance: 0.05        # gate B (centroids): agent nearest-centroid inertia <= (1+tol) x baseline; loose because two bf16 one-step results drift ~2.8% at D=512
-  label_tolerance: 0.02          # gate A (labels): agent's labels must be the genuine nearest-to-init assignment (self-referential, ~0 drift) -- this is what blocks the subsample/fake-label hack
-  speedup_target: 4.5            # H100 recalibration (bf16, max_iters=1, planted clusters, labelled+centroid gates): flashlib reference geomean 4.54x over the bf16 baseline (2.6/2.1/6.9/2.6/12.3/7.1x), all 6 pass both gates
+  timed_iters: 1                 # one timed run per workload -- max_iters back to 8-12 makes each call substantial (low relative timing noise), so no repeat-and-average
+  inertia_tolerance: 0.10        # gate B (centroids): loose -- two correct bf16 solutions diverge to different local optima over many iterations (w0 D=32,12-iter ref drifts ~6.5% from baseline)
+  label_tolerance: 0.02          # gate A (labels): only applied when max_iters==1 (labels = argmin to init); skipped here since Lloyd runs multiple steps
+  speedup_target: 7.1            # H100 recal (bf16, multi-iter, planted, centroid gate 0.10): flashlib reference geomean 7.12x over the bf16 baseline (3.4/3.7/10.5/4.6/16.8/12.9x), all 6 pass
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
-  # max_iters=1 for ALL workloads: time a single Lloyd iteration (1 assign + 1
-  # update) so the score isolates per-iteration kernel efficiency. Data is bf16
-  # (locked in the worker's gen) -> precision is not a lever, only the kernel is.
+  # Multi-iteration Lloyd (original max_iters). Data is bf16 (locked in the worker's
+  # gen) so precision is not a lever; planted well-separated blobs so a wrong
+  # (e.g. subsampled-dim) assignment compounds over iterations into bad centroids
+  # and fails the inertia gate.
   workloads:
-    - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 1}
-    - {id: w1, N: 200000,  D: 64,  K: 256,  max_iters: 1}
-    - {id: w2, N: 500000,  D: 128, K: 256,  max_iters: 1}
-    - {id: w3, N: 200000,  D: 512, K: 256,  max_iters: 1}
-    - {id: w4, N: 1000000, D: 64,  K: 512,  max_iters: 1}
-    - {id: w5, N: 300000,  D: 128, K: 1024, max_iters: 1}
+    - {id: w0, N: 100000,  D: 32,  K: 128,  max_iters: 12}
+    - {id: w1, N: 200000,  D: 64,  K: 256,  max_iters: 10}
+    - {id: w2, N: 500000,  D: 128, K: 256,  max_iters: 10}
+    - {id: w3, N: 200000,  D: 512, K: 256,  max_iters: 8}
+    - {id: w4, N: 1000000, D: 64,  K: 512,  max_iters: 8}
+    - {id: w5, N: 300000,  D: 128, K: 1024, max_iters: 8}
 submission:
   kind: file
   path: /app/solution.patch
