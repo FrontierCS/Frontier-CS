@@ -46,7 +46,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 7
   recall_threshold: 0.99
-  speedup_target: 5.0            # calibrated: reference (flashlib-best) geomean ~5.3x on Modal H100
+  speedup_target: 10.75          # score cap = 2x the flashlib-best reference geomean (5.38x on Modal H100, per-wl 8.8/8.5/7.1/2.9/3.4/4.7x, all 6 pass recall>=0.99): the reference scores ~70/100 and a solution must be 2x faster than it to max out.
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on

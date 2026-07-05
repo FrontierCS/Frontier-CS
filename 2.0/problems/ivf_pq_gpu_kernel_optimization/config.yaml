@@ -23,7 +23,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 7
   recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; the Triton reference measured iso-recall 1.0 on all workloads, so 0.95 leaves margin for ADC tie-breaks
-  speedup_target: 800.0          # H100 calibration: flashlib Triton reference geomean ~898x over the Python-loop naive baseline (per-workload 513/907/1420/1449/442/1234x)
+  speedup_target: 1640.0         # score cap = 2x the flashlib Triton reference geomean (~821x on H100, per-wl 493/798/1514/1264/376/1081x, iso-recall 1.0 all 6): reference scores ~90/100, a solution must be 2x faster than it to max out. (Huge factor = Python-per-query-loop baseline.)
   base_seed: 20260702
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on

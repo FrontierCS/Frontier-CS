@@ -47,7 +47,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 1                 # one timed run per workload; the timed unit is the judge-owned loop of max_iters `step` calls
   inertia_tolerance: 0.05        # centroid gate: agent final centroids nearest-inertia <= (1+tol) x baseline. Worst flashlib-ref bf16 drift is +1.47% (w3, D=512) at max_iters=2, so 5% leaves margin while still rejecting bad centroids.
-  speedup_target: 5.0            # calibrated (H100, step contract, max_iters=2): flashlib reference geomean 4.95x over the frozen bf16 baseline (per-wl 2.1/2.4/6.7/3.5/13.2/9.3x), all 6 passing the gate.
+  speedup_target: 10.0           # score cap = 2x the flashlib reference geomean (4.95x, H100 step/max_iters=2, all 6 pass): the reference now scores ~70/100 and a solution must be 2x faster than the reference to max out. (Codex's fused-kernel trial hit 7.28x -> ~87/100 instead of a capped 100.)
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on

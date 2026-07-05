@@ -23,7 +23,7 @@ evaluation:
   warmup_iters: 2
   timed_iters: 3            # the O(N^2) naive baseline is seconds/call at these N; keep the timed budget bounded (median of 3)
   ari_threshold: 0.99            # agent clustering must agree with the baseline (Adjusted Rand Index) on every iteration; the grid reference measured ARI 1.0 on all workloads
-  speedup_target: 13.0           # H100 calibration: flashlib grid DBSCAN reference geomean 13.29x over the O(N^2) matmul baseline (per-workload 7.2/12.1/9.5/18.8/16.6/21.2x)
+  speedup_target: 40.0           # score cap = 2x the flashlib grid-DBSCAN reference geomean (~19.9x on H100, per-wl 7.7/17.3/15.6/31.4/28.6/33.9x, ARI 1.0 all 6): reference scores ~73/100, a solution must be 2x faster than it to max out. NB the O(N^2) baseline timing is thermally sensitive (an earlier run measured 13.3x), so the ratio carries some cross-run variance.
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); the params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
