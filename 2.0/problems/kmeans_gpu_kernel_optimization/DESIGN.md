@@ -62,12 +62,33 @@ measurement-tamper patterns (`subprocess`, `socket`, `os.system`,
 The agent-facing `readme` describes the contract, gate, scoring, and policy but
 **not** how the reference is implemented.
 
-## Correctness gate
+## Correctness gate — two gates, closes the subsample hack
 
-Inertia = sum of squared L2 distances to the nearest **final** centroid, judge-
-computed from the returned centroids on each iteration's data. Permutation- and
-convention-independent, robust to fp drift, cheat-proof. `init_centroids` are
-always supplied and `tol = 0`, so the baseline is a deterministic function of
+The first bf16 trial exposed a **subsample reward-hack**: on random data with
+`max_iters=1` and a nearest-centroid-only inertia gate, codex subsampled rows
+(1/4) and feature dims (16 of 512) and returned all-zero labels — an approximate
+k-means that games the tolerance while doing a fraction of the work. Two changes
+close it:
+
+1. **Planted clusters** (not random): `gen` builds `x` = well-separated blob
+   centres (`centers * 6`) + unit noise. Now the assignment *matters* — a wrong
+   (subsampled/low-dim) assignment lands points in the wrong blob and spikes
+   inertia. Random data left inertia nearly assignment-invariant, hence hackable.
+2. **Two gates** (`verdict`):
+   - **Gate A — labels** (`label_tolerance = 0.02`, tight): the returned `labels`
+     must be the genuine nearest-to-**init** assignment (init = the centroids the
+     one-step update derives from). Checked self-referentially —
+     `inertia_labeled(x, init, labels) <= (1+tol) * inertia(x, init)` — so there
+     is ~0 cross-solution bf16 drift. Fake/subsampled labels inflate it (real
+     1.0003x, all-zero 3.25x, 16-of-512-dim 1.24x). **This is what forces a real
+     full assignment** — the "do less work" shortcut is gone.
+   - **Gate B — centroids** (`inertia_tolerance = 0.05`, loose): agent
+     nearest-centroid inertia `<= (1+tol) * baseline`. On planted clusters two
+     bf16 one-step results drift up to ~2.8% at D=512 (boundary assignments), so
+     this one is loosened; it only rejects genuinely bad centroids.
+
+Both are permutation/convention-independent and cheat-proof. `init_centroids` are
+always supplied and `tol = 0`, so the baseline is deterministic in
 `(x, init_centroids, max_iters)`.
 
 ## Precision lock — bf16 (task-root, not prompt)
@@ -93,8 +114,15 @@ are **averaged** (`aggregate: mean`), not median.
 
 ## Calibration (H100 Modal trial — done)
 
-bf16 + `max_iters=1`: `reference.patch` (flashlib) compiles + runs on bf16, passes
-the inertia gate with **<0.0012%** drift on all 6 workloads, and runs
-**5.0 / 2.6 / 10.9 / 1.8 / 12.6 / 4.7x** over the bf16 naive baseline
-(geomean **4.97x**). `speedup_target = 5.0`, `inertia_tolerance = 0.02` (huge
-margin). This 5x is now a *pure kernel-structure* speedup (both sides bf16).
+Final setup (bf16 + `max_iters=1` + planted clusters + labelled/centroid gates):
+`reference.patch` (flashlib) compiles + runs on bf16 and **passes both gates on all
+6 workloads**, running **2.6 / 2.1 / 6.9 / 2.6 / 12.3 / 7.1x** over the bf16 naive
+baseline (geomean **4.54x**). `speedup_target = 4.5`, `label_tolerance = 0.02`,
+`inertia_tolerance = 0.05`. This speedup is a *pure kernel-structure* win — both
+sides bf16, precision is not a lever, and the labelled gate forces a full real
+assignment so "subsample less work" is not a lever either.
+
+(Earlier calibrations, for the record: random-data + nearest-only gate gave
+geomean 4.97x but was subsample-hackable; the labelled gate vs the baseline failed
+the reference at D=512 with 2.66% bf16 drift, which is why gate A is
+self-referential against `init` and gate B is the loosened one.)
