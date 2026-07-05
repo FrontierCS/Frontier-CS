@@ -47,8 +47,9 @@ evaluation:
   warmup_iters: 2
   timed_iters: 10                # run each workload 10 times (max_iters=1 makes one call tiny) ...
   aggregate: mean                # ... and AVERAGE the 10 per-run speedups (not median)
-  inertia_tolerance: 0.02        # agent inertia must be <= (1+tol) x baseline on every iteration
-  speedup_target: 5.0            # H100 recalibration (bf16, max_iters=1): flashlib reference geomean 4.97x over the bf16 naive baseline (per-workload 5.0/2.6/10.9/1.8/12.6/4.7x); inertia drift <0.0012%
+  inertia_tolerance: 0.05        # gate B (centroids): agent nearest-centroid inertia <= (1+tol) x baseline; loose because two bf16 one-step results drift ~2.8% at D=512
+  label_tolerance: 0.02          # gate A (labels): agent's labels must be the genuine nearest-to-init assignment (self-referential, ~0 drift) -- this is what blocks the subsample/fake-label hack
+  speedup_target: 4.5            # H100 recalibration (bf16, max_iters=1, planted clusters, labelled+centroid gates): flashlib reference geomean 4.54x over the bf16 baseline (2.6/2.1/6.9/2.6/12.3/7.1x), all 6 pass both gates
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on

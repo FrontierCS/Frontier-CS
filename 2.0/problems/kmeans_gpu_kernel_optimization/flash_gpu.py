@@ -238,12 +238,27 @@ def _gpu_worker(payload: dict) -> dict:
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "kmeans":
-            # gate on LABELLED inertia: uses the returned (labels, centroids) jointly
-            rv = inertia_labeled(data["x"], ref_out[1], ref_out[0])
-            av = inertia_labeled(data["x"], agent_out[1], agent_out[0])
-            tol = float(cfg["inertia_tolerance"])
-            ok = av <= (1.0 + tol) * rv + 1e-6
-            return ok, ("inertia_regression" if not ok else ""), rv, av
+            init = data["init"]
+            tol_cen = float(cfg["inertia_tolerance"])                     # gate B (centroid)
+            tol_lab = float(cfg.get("label_tolerance", tol_cen))         # gate A (label)
+            base_near = inertia(data["x"], ref_out[1])          # baseline centroid quality
+            ag_near = inertia(data["x"], agent_out[1])          # agent centroid quality
+            # (B) agent centroids must be about as good as the baseline's. On planted
+            # clusters two bf16 one-step results can differ by a couple % at large D, so
+            # this tolerance is the looser one; it only rejects genuinely bad centroids.
+            if ag_near > (1.0 + tol_cen) * base_near + 1e-6:
+                return False, "inertia_regression", base_near, ag_near
+            # (A) the returned labels must be the genuine nearest-to-INIT assignment
+            # (what the returned centroids are the one-step update of). Compare the
+            # agent's labelled inertia-to-init to the judge's own best inertia-to-init
+            # -- self-referential on the shared init, so ~0 cross-solution drift; kept
+            # tight. Fake or row/dim-subsampled labels inflate it and fail here. This
+            # is what forces a real full assignment (no "do less work" shortcut).
+            lab_best = inertia(data["x"], init)
+            lab_got = inertia_labeled(data["x"], init, agent_out[0])
+            if lab_got > (1.0 + tol_lab) * lab_best + 1e-6:
+                return False, "label_mismatch", lab_best, lab_got
+            return True, "", base_near, ag_near
         if prim == "knn":
             rec = recall(agent_out[1], ref_out[1])
             ok = rec >= float(cfg["recall_threshold"])
