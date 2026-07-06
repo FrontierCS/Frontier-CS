@@ -30,16 +30,10 @@ The graded workloads are a family of held-out dense search problems that vary
 (large `D`) and many-neighbor (large `k`) regimes. All use squared-L2 distance,
 float32 data, and randomly generated queries/database.
 
-Two representative *public* shapes are available for local testing (the graded
-shapes are different and hidden):
-
-```text
-(Q=1024, M=100000, D=64,  k=10)
-(Q=2048, M=200000, D=128, k=10)
-```
-
-Treat this as a general dense brute-force k-NN, not as specific shapes to
-special-case.
+The public self-test now runs the **exact graded workloads** — the same shapes,
+thresholds, seeds, and timing the judge uses to score you — so there are no
+separate hidden shapes to guess at. Treat this as a general dense brute-force
+k-NN kernel; the workloads are just where it is measured.
 
 ## Iterate on a GPU
 
@@ -51,8 +45,10 @@ environment):
 bash /app/public_test.sh
 ```
 
-It reports, per public shape, whether your result passes the quality gate and
-your speedup over the baseline.
+It runs the **identical evaluation the judge uses to grade you** and reports, per
+graded workload, whether your result passes the quality gate, your speedup over
+the baseline, the geometric-mean speedup, and your **predicted final score**
+(0-100). Any workload that fails its gate makes the submission score 0.
 
 ## Submission
 

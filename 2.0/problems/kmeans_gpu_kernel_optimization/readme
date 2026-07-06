@@ -39,15 +39,10 @@ wide-feature (large `D`) and many-cluster (large `K`) regimes. All use Euclidean
 distance, **bfloat16 data**, well-separated planted clusters, and a fixed number
 of judge-owned `step` calls per workload with caller-supplied initial centroids.
 
-Two representative *public* shapes are available for local testing (the graded
-shapes are different and hidden):
-
-```text
-(N=50000,  D=32,  K=64)
-(N=200000, D=128, K=256)
-```
-
-Treat this as a general dense K-Means, not as specific shapes to special-case.
+The public self-test now runs the **exact graded workloads** — the same shapes,
+thresholds, seeds, and timing the judge uses to score you — so there are no
+separate hidden shapes to guess at. Treat this as a general dense K-Means
+kernel; the workloads are just where it is measured.
 
 ## Iterate on a GPU
 
@@ -59,8 +54,10 @@ environment):
 bash /app/public_test.sh
 ```
 
-It reports, per public shape, whether your result passes the quality gate and
-your speedup over the baseline.
+It runs the **identical evaluation the judge uses to grade you** and reports, per
+graded workload, whether your result passes the quality gate, your speedup over
+the baseline, the geometric-mean speedup, and your **predicted final score**
+(0-100). Any workload that fails its gate makes the submission score 0.
 
 ## Submission
 

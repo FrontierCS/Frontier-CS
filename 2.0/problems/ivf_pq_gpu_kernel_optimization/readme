@@ -41,13 +41,9 @@ databases: `M` from tens of thousands to a few hundred thousand rows, `D` in the
 8–32, and `nq` a thousand-plus queries per call. Treat it as general IVF-PQ
 search, not as specific indices to special-case.
 
-Two representative *public* shapes are available for local testing (the graded
-shapes are different and hidden):
-
-```text
-(M=40000,  D=64,  nlist=256, m=8,  nprobe=8,  nq=1024, k=10)
-(M=100000, D=96,  nlist=512, m=12, nprobe=16, nq=1024, k=10)
-```
+The public self-test now runs the **exact graded workloads** — the same shapes,
+thresholds, seeds, and timing the judge uses to score you — so there are no
+separate hidden shapes to guess at.
 
 ## Iterate on a GPU
 
@@ -57,6 +53,11 @@ a GPU through Modal (needs `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`):
 ```bash
 bash /app/public_test.sh
 ```
+
+It runs the **identical evaluation the judge uses to grade you** and reports, per
+graded workload, pass/fail on the quality gate, your speedup, the geometric-mean
+speedup, and your **predicted final score** (0-100). Any workload that fails its
+gate makes the submission score 0.
 
 ## Submission
 
