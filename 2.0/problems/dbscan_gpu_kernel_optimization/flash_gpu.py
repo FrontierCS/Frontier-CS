@@ -97,15 +97,31 @@ def _gpu_worker(payload: dict) -> dict:
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
         if prim == "dbscan":
-            nc, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
-            centers = torch.randn(nc, D, generator=g, device=dev, dtype=torch.float32) * 10.0
-            asg = torch.randint(0, nc, (N,), generator=g, device=dev)
-            xb = centers.index_select(0, asg) + torch.randn(N, D, generator=g, device=dev, dtype=torch.float32) * 0.5
-            nz = int(float(w.get("noise_frac", 0.0)) * N)
-            if nz > 0:
-                lo = xb.min(0).values; hi = xb.max(0).values
-                xb[:nz] = lo + (hi - lo) * torch.rand(nz, D, generator=g, device=dev)
-            return {"x": xb, "eps": float(w["eps"]), "min_samples": int(w["min_samples"])}
+            # NON-SEPARABLE data: single-center concentric rings in a 2-D subspace,
+            # padded to D dims with a little noise. Centroid/Voronoi methods (k-means)
+            # CANNOT reproduce concentric rings -- only exact eps-density connectivity
+            # (the kernel work being timed) clusters them, so a cheap approximation
+            # cannot substitute for a real DBSCAN kernel. No uniform noise (matches
+            # flashlib's noise-free make_blobs benchmark). D>=3 so flashlib routes to
+            # its benchmarked brute-force (flash_knn) path, not the D==2 grid path.
+            nr, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
+            eps = float(w["eps"]); TWO_PI = 6.283185307179586
+            base, gap, width = 3.0 * eps, 3.0 * eps, 0.35 * eps
+            radii = base + torch.arange(nr, device=dev, dtype=torch.float32) * gap
+            counts = torch.clamp((radii / radii.sum() * N).long(), min=1)
+            counts[-1] += N - int(counts.sum())                      # exact total = N
+            parts = []
+            for j in range(nr):
+                c = int(counts[j])
+                th = torch.rand(c, generator=g, device=dev) * TWO_PI
+                rr = radii[j] + (torch.rand(c, generator=g, device=dev) - 0.5) * width
+                xy = torch.stack([rr * torch.cos(th), rr * torch.sin(th)], 1)
+                pad_std = 0.15 * eps / ((D - 2) ** 0.5) if D > 2 else 0.0
+                pad = torch.randn(c, D - 2, generator=g, device=dev) * pad_std
+                parts.append(torch.cat([xy, pad], 1))
+            x = torch.cat(parts, 0).to(torch.float32)
+            x = x.index_select(0, torch.randperm(N, generator=g, device=dev))  # de-positional
+            return {"x": x, "eps": eps, "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
         if prim == "kmeans":
             perm = torch.randperm(w["N"], generator=g, device=dev)[: w["K"]]

@@ -23,10 +23,13 @@ remain a deterministic function of the inputs.
 
 ## Workload
 
-The graded workloads are held-out planar (D = 2) point sets with planted density
-structure (well-separated clusters plus a little uniform noise), varying `N`,
-cluster count, `eps`, and `min_samples`. Treat it as general 2-D Euclidean
-DBSCAN, not as specific point sets to special-case.
+The graded workloads are held-out `(N, D)` point sets (`D >= 8`) with
+**density-connected clusters that are not convex/blob-shaped** — clustering them
+correctly genuinely requires DBSCAN's `eps`-neighbourhood connectivity, not a
+centroid/partition heuristic. Workloads vary `N`, `D`, cluster count, `eps`, and
+`min_samples`. Treat it as general Euclidean DBSCAN and reproduce the exact
+clustering — your labels are graded against the exact reference clustering (ARI),
+so an approximation that only *roughly* recovers the clusters will not pass.
 
 The public self-test now runs the **exact graded workloads** — the same shapes,
 thresholds, seeds, and timing the judge uses to score you — so there are no
