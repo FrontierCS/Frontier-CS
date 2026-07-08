@@ -27,8 +27,8 @@ RUN printf '%s\n' '__pycache__/' '*.pyc' > /app/.gitignore && \
     git -C /app add -A -- dbscanlib .gitignore && \
     git -C /app -c commit.gpgsign=false commit -qm "pristine dbscanlib"
 
-# Shared Modal GPU harness + the frozen naive baseline (the public-test speed
-# denominator). The baseline is exactly the code the agent starts from, so it is
-# not secret.
-COPY flash_gpu.py /opt/flash_gpu.py
-COPY judge/refdbscan.py /opt/dbscan_ref/refdbscan.py
+# NOTE: the GPU harness (flash_gpu.py) and its data GENERATOR are deliberately
+# NOT baked into the agent image -- they live only in the judge. The agent gets
+# feedback by submitting to the judge (public_test == the graded submission),
+# so it cannot read how the workloads are generated and hardcode a
+# data-specific shortcut. See harbor_app/public_test.py.

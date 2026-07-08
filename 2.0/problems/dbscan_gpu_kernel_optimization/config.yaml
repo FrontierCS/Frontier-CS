@@ -23,24 +23,22 @@ evaluation:
   warmup_iters: 2
   timed_iters: 3            # the O(N^2) naive baseline is seconds/call at these N; keep the timed budget bounded (median of 3)
   ari_threshold: 0.99            # agent clustering must match the baseline exact DBSCAN (Adjusted Rand Index) every iteration. On the non-separable concentric-ring data a centroid/partition approximation (k-means) scores ARI <= ~0.1 -> fails; only exact eps-connectivity passes. Exact reference measures ARI ~1.0.
-  speedup_target: 413.0          # score cap = 2x the flashlib brute-force (flash_knn) reference geomean (206.6x on H100 over the O(N^2) baseline, per-wl 81/126/202/292/262/495x, ARI 1.0 all 6). Large factor = the naive baseline recomputes O(N^2) distances every label-propagation CC pass; the reference does one bf16 flash_knn + union-find. Reference scores ~88/100; maxing out needs 2x the reference.
+  speedup_target: 51.0           # score cap = 2x the flashlib brute-force (flash_knn) reference geomean (25.4x on H100 over the O(N^2) baseline, per-wl 19.6/18.9/26.8/42.1x, ARI ~1.0 all 4 flashlib blob shapes). Reference scores ~82/100; maxing out needs 2x the reference.
   base_seed: 20260701
-  agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); the params are agent-visible anyway
+  agent_workload_count: 4            # all 4 flashlib graded workloads (feedback covers every graded shape)
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
   # N in the 100k-170k band: the O(N^2) matmul baseline is seconds/call (grid kernel
   # wins 6-20x) but bounded for timed_iters; below ~100k the tensor-core matmul baseline
   # is faster than the grid kernel's fixed overhead. Vary N + density so agents can't
   # special-case. (H100 crossover sweep: 100k->6.0x, 150k->14.1x, 200k->27.0x.)
   workloads:
-    # Non-separable concentric-ring data (see flash_gpu.gen): `n_centers` = number of
-    # rings; D>=3 routes flashlib to its benchmarked brute-force (flash_knn) path; N in
-    # flashlib's brute range. No noise_frac (rings are noise-free, like flashlib's make_blobs).
-    - {id: w0, N: 20000, D: 8,  n_centers: 4, eps: 1.5, min_samples: 8}
-    - {id: w1, N: 30000, D: 8,  n_centers: 5, eps: 1.5, min_samples: 8}
-    - {id: w2, N: 30000, D: 16, n_centers: 6, eps: 1.4, min_samples: 8}
-    - {id: w3, N: 40000, D: 8,  n_centers: 6, eps: 1.4, min_samples: 8}
-    - {id: w4, N: 40000, D: 32, n_centers: 5, eps: 1.5, min_samples: 10}
-    - {id: w5, N: 50000, D: 8,  n_centers: 8, eps: 1.5, min_samples: 10}
+    # flashlib's own DBSCAN benchmark shapes (benchmarks/vs_cuml/dbscan.py): make_blobs
+    # data, cluster_std=1.0, no noise. D>=8 -> flashlib's benchmarked brute-force
+    # (flash_knn) path. The generator is judge-only (hidden from the agent).
+    - {id: w0, N: 20000, D: 8,  eps: 1.5, min_samples: 5, n_centers: 4}
+    - {id: w1, N: 20000, D: 32, eps: 6.0, min_samples: 5, n_centers: 6}
+    - {id: w2, N: 20000, D: 64, eps: 8.0, min_samples: 5, n_centers: 10}
+    - {id: w3, N: 50000, D: 16, eps: 3.5, min_samples: 5, n_centers: 8}
 submission:
   kind: file
   path: /app/solution.patch

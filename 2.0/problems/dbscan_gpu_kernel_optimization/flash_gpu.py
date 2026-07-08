@@ -97,31 +97,17 @@ def _gpu_worker(payload: dict) -> dict:
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
         if prim == "dbscan":
-            # NON-SEPARABLE data: single-center concentric rings in a 2-D subspace,
-            # padded to D dims with a little noise. Centroid/Voronoi methods (k-means)
-            # CANNOT reproduce concentric rings -- only exact eps-density connectivity
-            # (the kernel work being timed) clusters them, so a cheap approximation
-            # cannot substitute for a real DBSCAN kernel. No uniform noise (matches
-            # flashlib's noise-free make_blobs benchmark). D>=3 so flashlib routes to
-            # its benchmarked brute-force (flash_knn) path, not the D==2 grid path.
-            nr, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
-            eps = float(w["eps"]); TWO_PI = 6.283185307179586
-            base, gap, width = 3.0 * eps, 3.0 * eps, 0.35 * eps
-            radii = base + torch.arange(nr, device=dev, dtype=torch.float32) * gap
-            counts = torch.clamp((radii / radii.sum() * N).long(), min=1)
-            counts[-1] += N - int(counts.sum())                      # exact total = N
-            parts = []
-            for j in range(nr):
-                c = int(counts[j])
-                th = torch.rand(c, generator=g, device=dev) * TWO_PI
-                rr = radii[j] + (torch.rand(c, generator=g, device=dev) - 0.5) * width
-                xy = torch.stack([rr * torch.cos(th), rr * torch.sin(th)], 1)
-                pad_std = 0.15 * eps / ((D - 2) ** 0.5) if D > 2 else 0.0
-                pad = torch.randn(c, D - 2, generator=g, device=dev) * pad_std
-                parts.append(torch.cat([xy, pad], 1))
-            x = torch.cat(parts, 0).to(torch.float32)
-            x = x.index_select(0, torch.randperm(N, generator=g, device=dev))  # de-positional
-            return {"x": x, "eps": eps, "min_samples": int(w["min_samples"])}
+            # flashlib's own DBSCAN benchmark data: sklearn make_blobs equivalent --
+            # Gaussian blobs, centers ~ U(-10, 10)^D, cluster_std = 1.0, no noise.
+            # (The generator is judge-only and NOT present in the agent image, so the
+            # agent cannot read the data structure and hardcode a data-specific labeler.)
+            nc, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
+            std = float(w.get("cluster_std", 1.0))
+            centers = (torch.rand(nc, D, generator=g, device=dev) * 2.0 - 1.0) * 10.0
+            asg = torch.randint(0, nc, (N,), generator=g, device=dev)
+            x = centers.index_select(0, asg) + torch.randn(N, D, generator=g, device=dev) * std
+            return {"x": x.to(torch.float32), "eps": float(w["eps"]),
+                    "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
         if prim == "kmeans":
             perm = torch.randperm(w["N"], generator=g, device=dev)[: w["K"]]
