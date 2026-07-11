@@ -107,16 +107,17 @@ Do NOT skip self-testing. This is standard competitive programming practice.
 
 ## Iterative submission via the graded judge
 
-You have direct access to the same judge that produces the final score. Use it
-as a feedback signal; there is no penalty for low-scoring submissions.
+You have access to a graded submission endpoint backed by the same judge that
+produces the final score. Use its sanitized score feedback as a signal; there is
+no penalty for low-scoring submissions.
 
 ```bash
 bash /app/submit.sh           # grades /app/solution.cpp
 bash /app/submit.sh path.cpp  # grades any file you point at
 ```
 
-Each call prints the status, normalized score, raw score, judge feedback, and
-case pass count when available. Every call is recorded in
+Each call prints the status, normalized score, raw score, sanitized feedback,
+and aggregate metrics when available. Every call is recorded in
 `/logs/agent/submissions.jsonl` for analysis, including failed calls.
 """
 

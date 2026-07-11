@@ -22,8 +22,16 @@ dependencies = [
 frontier = "frontier_cs.cli:main"
 frontier-eval = "frontier_cs.cli:main"  # deprecated alias
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]

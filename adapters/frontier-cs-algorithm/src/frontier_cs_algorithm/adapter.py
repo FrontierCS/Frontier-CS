@@ -245,8 +245,14 @@ class FrontierCSAdapter:
         problem_files = self._copy_problem_files(task_paths, problem)
         self._write_agent_md(task_paths, problem)
 
+        verifier_timeout = self._verifier_timeout(problem)
+        max_poll_time = int(verifier_timeout - 30)
         (task_paths.environment_dir / "docker-compose.yaml").write_text(
-            self._render_environment_compose(problem.problem_id, problem_files)
+            self._render_environment_compose(
+                problem.problem_id,
+                problem_files,
+                max_poll_time=max_poll_time,
+            )
         )
 
     def _copy_problem_files(
@@ -275,7 +281,11 @@ class FrontierCSAdapter:
         (task_paths.environment_dir / "AGENT.md").write_text(content)
 
     def _render_environment_compose(
-        self, problem_id: int, problem_files: list[str]
+        self,
+        problem_id: int,
+        problem_files: list[str],
+        *,
+        max_poll_time: int,
     ) -> str:
         if self.judge_docker_image:
             judge_source = f'    image: "{self.judge_docker_image}"'
@@ -285,13 +295,16 @@ class FrontierCSAdapter:
         # Mount only the single problem dir (judge resolves problemsRoot/{id}).
         judge_volume_lines = [
             f"      - ${{FRONTIER_CS_ALGORITHMIC_PATH}}/problems/{problem_id}:/app/problems/{problem_id}:ro",
-            "      - ${HOST_ARTIFACTS_PATH}/judge/submissions:/app/submissions",
         ]
         if self.preserve_judge_artifacts:
+            judge_volume_lines.append(
+                "      - ${HOST_ARTIFACTS_PATH}/judge/submissions:/app/submissions"
+            )
             judge_volume_lines.append(
                 "      - ${HOST_ARTIFACTS_PATH}/judge/data:/app/data"
             )
         else:
+            judge_volume_lines.append("      - /app/submissions")
             judge_volume_lines.append("      - /app/data")
         judge_volumes = "\n".join(judge_volume_lines)
 
@@ -316,6 +329,7 @@ class FrontierCSAdapter:
             judge_source=judge_source,
             judge_volumes=judge_volumes,
             problem_id=problem_id,
+            max_poll_time=max_poll_time,
         )
 
     def _write_tests(self, task_paths: TaskPaths) -> None:
@@ -350,9 +364,7 @@ class FrontierCSAdapter:
         template_text = config_template.read_text().replace(
             "{problem_id}", str(problem.problem_id)
         )
-        verifier_timeout = max(
-            120.0, problem.n_cases * problem.time_limit_seconds * 5 + 60
-        )
+        verifier_timeout = self._verifier_timeout(problem)
         max_poll_time = int(verifier_timeout - 30)
 
         metadata = {
@@ -385,7 +397,7 @@ class FrontierCSAdapter:
             # evaluate.py can write the reward file before the container is killed.
             config.verifier.env = {
                 "PROBLEM_ID": str(problem.problem_id),
-                "JUDGE_URL": "http://judge:8081",
+                "JUDGE_URL": "http://judge:8082",
                 "MAX_POLL_TIME": str(max_poll_time),
             }
 
@@ -404,6 +416,10 @@ class FrontierCSAdapter:
                 docker_image=self.docker_image,
             )
         task_paths.config_path.write_text(toml_text)
+
+    @staticmethod
+    def _verifier_timeout(problem: FrontierCSProblem) -> float:
+        return max(120.0, problem.n_cases * problem.time_limit_seconds * 5 + 60)
 
 
 def _collapse_task_authors_inline(toml_text: str) -> str:
@@ -498,7 +514,7 @@ def _render_task_toml_without_harbor(
     verifier_env = (
         "\n[verifier.env]\n"
         f'PROBLEM_ID = "{problem.problem_id}"\n'
-        'JUDGE_URL = "http://judge:8081"\n'
+        'JUDGE_URL = "http://judge:8082"\n'
         f'MAX_POLL_TIME = "{max_poll_time}"\n'
     )
     text = text.replace("\n[agent]\n", verifier_env + "\n[agent]\n", 1)

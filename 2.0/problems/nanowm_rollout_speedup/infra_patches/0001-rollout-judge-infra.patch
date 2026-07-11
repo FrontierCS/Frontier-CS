@@ -1,0 +1,174 @@
+diff --git a/src/sample/evaluate_metrics.py b/src/sample/evaluate_metrics.py
+index cc6846d..6132034 100644
+--- a/src/sample/evaluate_metrics.py
++++ b/src/sample/evaluate_metrics.py
+@@ -34,7 +34,21 @@ def main():
+     parser.add_argument("--history_length", type=int, default=1, help="Number of history frames (context)")
+     
+     args = parser.parse_args()
+-    
++
++    # Deterministic metric (judge infra): the scored LPIPS runs on GPU by default,
++    # so without this the AlexNet/VGG convs are cuDNN-nondeterministic and the
++    # baseline vs patched arms (separate metric processes) can differ even for a
++    # no-op patch -- reintroducing the run-to-run noise the rollout determinism
++    # is meant to remove. Mirror rollout.py: deterministic kernels + TF32 off.
++    # NWM_DETERMINISM_STRICT=1 makes a missing deterministic kernel raise (proof).
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if args.device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     video_dir = Path(args.video_dir)
+     if not video_dir.exists():
+         print(f"Directory {video_dir} does not exist.")
+diff --git a/src/sample/rollout.py b/src/sample/rollout.py
+index b83f0ee..d87ba9c 100644
+--- a/src/sample/rollout.py
++++ b/src/sample/rollout.py
+@@ -9,6 +9,7 @@ Uses the sliced dataset for evaluation consistency.
+ """
+ import os
+ import sys
++import time
+ sys.path.append(os.path.split(sys.path[0])[0])
+ 
+ import torch
+@@ -37,7 +38,35 @@ torch.backends.cudnn.allow_tf32 = True
+ def main(args):
+     torch.set_grad_enabled(False)
+     device = "cuda" if torch.cuda.is_available() else "cpu"
+-    
++
++    # Deterministic numerics (judge infra, outside the agent's editable sampling
++    # scope). Goal: the baseline (unpatched) and patched arms share an identical
++    # numerical pipeline -- not just identical initial noise from the per-clip
++    # seed below, but identical arithmetic -- so a cached/separate-run baseline is
++    # a valid common-random-numbers partner. Otherwise GPU reduction/atomic
++    # nondeterminism (and TF32, which upstream turns ON at import) reintroduce
++    # ~2-3% run-to-run LPIPS noise, the same magnitude as the speedup quality
++    # guardrail and the stability drift effect. CUBLAS_WORKSPACE_CONFIG is
++    # exported by the launcher before the process starts (cuBLAS needs it set
++    # before the first CUDA call).
++    #
++    # CAVEAT: warn_only=True (the default) means any op WITHOUT a deterministic
++    # CUDA kernel (an atomicAdd scatter/index_add, some interpolate variants)
++    # runs nondeterministically and is only WARNED about, so bit-stability is not
++    # guaranteed until proven for this exact model+VAE+decode on the production
++    # GPU. Run ONCE during H100 calibration with NWM_DETERMINISM_STRICT=1
++    # (warn_only=False) to PROVE no op falls back -- it raises instead of warning
++    # if one does -- and re-establish no-op-CRN-pair -> 0.0 there. Production may
++    # then stay strict (a fallback raises -> judged an infra error and re-run,
++    # never a silently corrupted score) or relax to warn_only once proven clean.
++    _strict = os.environ.get("NWM_DETERMINISM_STRICT", "0") == "1"
++    torch.use_deterministic_algorithms(True, warn_only=not _strict)
++    if device == "cuda":
++        torch.backends.cudnn.deterministic = True
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++
+     save_dir = Path(args.save_path)
+     save_dir.mkdir(parents=True, exist_ok=True)
+     
+@@ -131,9 +160,20 @@ def main(args):
+     print(f"  History length: {history_length}")
+     print(f"  Rollout length: {rollout_length}")
+     
++    gen_seconds = 0.0  # accumulated sampling-region wall-clock (excludes load/decode)
+     for start_idx in range(0, num_samples, batch_size):
+         end_idx = min(start_idx + batch_size, num_samples)
+         current_batch_size = end_idx - start_idx
++
++        # Deterministic, clip-keyed RNG (judge infra, outside the agent's editable
++        # sampling scope): seed by the global clip index so the rollout is
++        # reproducible and the baseline (unpatched) and patched arms draw the SAME
++        # initial noise per clip (common random numbers). Batch boundaries are
++        # clip-aligned, so a QUICK K-clip eval is a noise-identical prefix of FINAL.
++        _seed = int(getattr(args, "seed", 42)) + start_idx
++        torch.manual_seed(_seed)
++        if device == "cuda":
++            torch.cuda.manual_seed_all(_seed)
+         
+         print(f"Processing batch {start_idx//batch_size + 1} (slices {start_idx} to {end_idx-1})...")
+         
+@@ -181,7 +221,12 @@ def main(args):
+         gt_latents = encode_frames(vae, gt_visual, device, vae_precision=vae_precision)
+         generated_latents = gt_latents[:, :history_length]
+         
+-        # Now every sample in the batch has exactly rollout_length frames
++        # Now every sample in the batch has exactly rollout_length frames.
++        # Time ONLY the diffusion sampling region — the part the agent's patch can
++        # affect; model/VAE/dataset load and the VAE decode are excluded.
++        if device == "cuda":
++            torch.cuda.synchronize()
++        _samp_t0 = time.time()
+         for t in tqdm(range(history_length, rollout_length), desc=f"Rollout progress"):
+             context_latents = generated_latents[:, -history_length:]
+             
+@@ -224,9 +269,25 @@ def main(args):
+             new_latent = pred_latents[:, history_length:history_length+1]
+             generated_latents = torch.cat([generated_latents, new_latent], dim=1)
+             
++        if device == "cuda":
++            torch.cuda.synchronize()
++        gen_seconds += time.time() - _samp_t0
++
+         print(f"Decoding and saving batch results...")
+-        gen_frames_batch = decode_latents(vae, generated_latents, vae_precision=vae_precision)
+-        gt_frames_batch = decode_latents(vae, gt_latents, vae_precision=vae_precision)
++        # Decode in (episode, frame-chunk) tiles + free generation memory first:
++        # for 320x512 CSGO frames the VAE decoder activations are huge, and the
++        # long rollout leaves little headroom, so a single big decode OOMs.
++        torch.cuda.empty_cache()
++        _DEC_FCHUNK = 6
++        def _decode_chunked(lat):
++            outs = []
++            for i in range(lat.shape[0]):
++                fr = [decode_latents(vae, lat[i:i+1, j:j+_DEC_FCHUNK], vae_precision=vae_precision)
++                      for j in range(0, lat.shape[1], _DEC_FCHUNK)]
++                outs.append(torch.cat(fr, dim=1))
++            return torch.cat(outs)
++        gen_frames_batch = _decode_chunked(generated_latents)
++        gt_frames_batch = _decode_chunked(gt_latents)
+         
+         for i in range(current_batch_size):
+             sample_id = start_idx + i
+@@ -234,6 +295,15 @@ def main(args):
+             save_video(gt_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_gt.mp4"), fps=args.fps)
+             save_comparison_video(gt_frames_batch[i], gen_frames_batch[i], str(save_dir / f"sample_{sample_id:04d}_compare.mp4"), fps=args.fps)
+             
++    # Expose the sampling-region wall-clock to the judge so the speedup metric
++    # isolates the patchable region (falls back to total wall if file unset).
++    _tf = os.environ.get("NWM_TIME_FILE")
++    if _tf:
++        try:
++            Path(_tf).write_text(f"{gen_seconds}\n")
++        except Exception:
++            pass
++
+     print(f"Done! Processed {num_samples} samples.")
+ 
+ if __name__ == "__main__":
+@@ -259,6 +329,9 @@ if __name__ == "__main__":
+                         help="DFoT stabilization noise level in [0, 1) for context frames. "
+                              "0.0 disables; 0.02 is the DFoT default recommended starting point.")
+     parser.add_argument("--use_fp16", action="store_true", help="Use fp16")
++    parser.add_argument("--seed", type=int, default=42,
++                        help="Deterministic RNG seed (judge infra). Per-clip seed = seed + clip_index "
++                             "so the baseline and patched arms share initial noise (common random numbers).")
+     parser.add_argument("--vae_model_path", type=str, default=None,
+                         help="Override the VAE path from the training config (e.g. local dir for offline nodes).")
+ 
+@@ -282,7 +355,7 @@ if __name__ == "__main__":
+ 
+     # Top-level / non-hierarchical CLI args
+     for key in ('ckpt', 'save_path', 'num_samples', 'batch_size', 'rollout_length',
+-                'history_length', 'fps', 'eta', 'use_fp16', 'vae_model_path'):
++                'history_length', 'fps', 'eta', 'use_fp16', 'vae_model_path', 'seed'):
+         val = cli_args.get(key)
+         if val is not None:
+             cli_overrides[key] = val

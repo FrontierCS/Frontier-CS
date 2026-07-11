@@ -494,6 +494,7 @@ class EvaluationState:
             - score_at_1: average of base variant (variant=0) scores across problems
             - avg_at_5: average of per-problem mean scores (across 5 variants)
             - score_at_5: average of per-problem max scores (across 5 variants)
+              Failed evaluations count as 0 for @k metrics.
             - pass_at_1: fraction of problems where base variant scores > 0
             - pass_at_5: fraction of problems where any variant scores > 0
         """
@@ -532,14 +533,18 @@ class EvaluationState:
                 by_model[model] = []
             by_model[model].append(result)
 
-            # Collect for @k metrics (only successful results with scores)
-            if result.is_success and result.score is not None:
-                score = max(0, min(100, result.score))  # Clamp to 0-100
-                if model not in by_model_problem:
-                    by_model_problem[model] = {}
-                if problem not in by_model_problem[model]:
-                    by_model_problem[model][problem] = {}
-                by_model_problem[model][problem][variant] = score
+            # Collect for @k metrics. Failed evaluations count as zero; successful
+            # scores are clamped to the bounded 0-100 range.
+            score = (
+                max(0, min(100, result.score))
+                if result.is_success and result.score is not None
+                else 0
+            )
+            if model not in by_model_problem:
+                by_model_problem[model] = {}
+            if problem not in by_model_problem[model]:
+                by_model_problem[model][problem] = {}
+            by_model_problem[model][problem][variant] = score
 
         aggregated = {}
         for model, results in by_model.items():
