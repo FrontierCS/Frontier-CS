@@ -34,30 +34,29 @@ change, and each result must remain a deterministic function of its inputs.
 ## Workload
 
 The graded workloads are a family of held-out dense clustering problems that
-vary `(N, D, K)`, spanning small/medium/large point counts and both
-wide-feature (large `D`) and many-cluster (large `K`) regimes. All use Euclidean
-distance, **bfloat16 data**, well-separated planted clusters, and a fixed number
-of judge-owned `step` calls per workload with caller-supplied initial centroids.
-
-The public self-test now runs the **exact graded workloads** — the same shapes,
-thresholds, seeds, and timing the judge uses to score you — so there are no
-separate hidden shapes to guess at. Treat this as a general dense K-Means
-kernel; the workloads are just where it is measured.
+vary `(N, D, K)`, spanning small/medium/large point counts and both wide-feature
+(large `D`) and many-cluster (large `K`) regimes, in **bfloat16**, with a fixed
+number of judge-owned `step` calls per workload and caller-supplied initial
+centroids. How the point sets are generated is not disclosed — implement a
+**general** exact Lloyd step (correct assignment to the given centroids + exact
+cluster-mean update) and do not special-case the data.
 
 ## Iterate on a GPU
 
-The agent workspace has no GPU. Use the public test to check your current code's correctness and speed on
-a GPU through Modal (needs `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in your
-environment):
+The agent workspace has no GPU, and the data generator is judge-only (it is not in
+your image). To check your current code, **submit it to the judge** — it runs the
+exact graded workloads on a GPU and returns your per-workload result + score. This
+one command packages, submits, and waits for the result:
 
 ```bash
 bash /app/public_test.sh
 ```
 
-It runs the **identical evaluation the judge uses to grade you** and reports, per
-graded workload, whether your result passes the quality gate, your speedup over
-the baseline, the geometric-mean speedup, and your **predicted final score**
-(0-100). Any workload that fails its gate makes the submission score 0.
+It reports, per graded workload, whether your result passes the quality gate and
+your speedup, plus the geometric-mean speedup and your score (0-100) — the
+identical evaluation used for your final grade. (Equivalently:
+`bash /app/make_submission.sh && bash /app/submit.sh`, then poll with
+`bash /app/submissions.sh`.) Submissions are asynchronous; submit early and iterate.
 
 ## Submission
 
