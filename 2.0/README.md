@@ -47,6 +47,14 @@ applies the submitted patch to a clean skeleton, runs a hidden arena against
 multiple baseline bot families, and scores by mean baseline win rate with a
 small faster-win tiebreak. The online generals.io service is not used.
 
+## RocksDB Native Compaction Policy
+
+This systems problem asks agents to patch the leveled compaction picker in a
+pinned RocksDB checkout. Its problem ID is `rocksdb_native_compaction_policy`.
+The judge runs native RocksDB workloads, checks snapshots and full database
+contents, and scores paired improvements in write/read/space amplification and
+compaction debt against unmodified RocksDB.
+
 ## vLLM LLM-Serving Optimization
 
 This systems problem asks agents to patch a clean upstream vLLM checkout to
