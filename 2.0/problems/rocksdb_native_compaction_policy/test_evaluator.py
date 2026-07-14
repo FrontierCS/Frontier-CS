@@ -78,6 +78,48 @@ def test_gain_at_half_percent_floor_scores_zero() -> None:
     assert abs(unbounded) < 1e-9
 
 
+def test_reference_level_gain_lands_midscale() -> None:
+    score, unbounded, _ = EVALUATOR._score_cases(_cases([1.011] * 6))
+    assert 45.0 < score < 55.0
+    assert abs(score - unbounded) < 1e-9
+
+
+def test_invalid_submission_ranks_below_any_valid_run() -> None:
+    score, unbounded, _, metrics = EVALUATOR._invalid("boom")
+    assert score == 0.0
+    assert unbounded == EVALUATOR.INVALID_SCORE_UNBOUNDED
+    assert metrics["valid_patch"] == 0
+
+    _, worst_valid_unbounded, _ = EVALUATOR._score_cases(_cases([0.5] * 6))
+    assert worst_valid_unbounded > EVALUATOR.INVALID_SCORE_UNBOUNDED
+    assert (0.0, worst_valid_unbounded) > (0.0, EVALUATOR.INVALID_SCORE_UNBOUNDED)
+    assert (0.0, 0.0) > (0.0, worst_valid_unbounded)
+
+
+def test_evaluate_reports_sentinel_for_invalid_patch(tmp_path) -> None:
+    reference = (PROBLEM_DIR / "reference.patch").read_text()
+    outside = reference.replace(
+        "db/compaction/compaction_picker.cc", "db/db_impl/db_impl.cc"
+    )
+    patch = tmp_path / "solution.patch"
+    patch.write_text(outside)
+    score, unbounded, message, metrics = EVALUATOR.evaluate(str(patch))
+    assert score == 0.0
+    assert unbounded == EVALUATOR.INVALID_SCORE_UNBOUNDED
+    assert "outside the editable surface" in message
+    assert metrics["valid_patch"] == 0
+
+
+def test_evaluate_keeps_empty_patch_as_neutral_baseline(tmp_path) -> None:
+    patch = tmp_path / "solution.patch"
+    patch.write_text("")
+    score, unbounded, message, metrics = EVALUATOR.evaluate(str(patch))
+    assert score == 0.0
+    assert unbounded == 0.0
+    assert metrics["empty_patch"] == 1
+    assert unbounded > EVALUATOR.INVALID_SCORE_UNBOUNDED
+
+
 def test_single_profile_spike_scores_zero() -> None:
     cases = _cases([1.10] + [1.0] * 5)
     score, _, metrics = EVALUATOR._score_cases(cases)
@@ -94,10 +136,18 @@ def test_multi_profile_improvement_can_score() -> None:
     assert metrics["improved_profile_count"] == 3
 
 
-def test_broad_target_improvement_reaches_full_score() -> None:
-    score, unbounded, _ = EVALUATOR._score_cases(_cases([1.20] * 6))
+def test_target_gain_reaches_full_score() -> None:
+    score, unbounded, _ = EVALUATOR._score_cases(
+        _cases([EVALUATOR.TARGET_ROBUST_GAIN] * 6)
+    )
     assert score > 99.9
-    assert unbounded > 99.9
+    assert abs(unbounded - 100.0) < 1e-6
+
+
+def test_gains_far_above_target_saturate_bounded_score() -> None:
+    score, unbounded, _ = EVALUATOR._score_cases(_cases([1.20] * 6))
+    assert score == 100.0
+    assert unbounded > 100.0
 
 
 def test_severe_component_regression_hard_fails() -> None:

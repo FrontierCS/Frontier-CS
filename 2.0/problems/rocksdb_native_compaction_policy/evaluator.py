@@ -26,6 +26,11 @@ SOURCE_COMMIT_MARKER = ".frontier-upstream-commit"
 MAX_PATCH_BYTES = 256 * 1024
 MAX_CHANGED_FILES = 5
 
+# Harbor keeps the best iterative artifact by (score, score_unbounded), and
+# valid below-floor runs report small negative unbounded scores, so invalid
+# submissions must carry a far lower sentinel than any valid run can reach.
+INVALID_SCORE_UNBOUNDED = -1.0e6
+
 ALLOWLIST = frozenset(
     {
         "db/compaction/compaction_picker.cc",
@@ -591,7 +596,10 @@ METRIC_FLOORS = {
 }
 
 MIN_ROBUST_GAIN = 1.005
-TARGET_ROBUST_GAIN = 1.20
+# Saturation anchor for 100 points, calibrated so the reference patch
+# (robust_gain ~1.011 on the final suite) lands near 50 while keeping
+# headroom above it before the bounded score saturates.
+TARGET_ROBUST_GAIN = 1.017
 PROFILE_IMPROVEMENT_GAIN = MIN_ROBUST_GAIN
 PROFILE_REGRESSION_GAIN = 0.98
 MIN_IMPROVED_PROFILE_FRACTION = 0.40
@@ -825,7 +833,7 @@ def _public_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 def _invalid(message: str, metrics: dict[str, Any] | None = None):
     payload = dict(metrics or {})
     payload.setdefault("valid_patch", 0)
-    return 0.0, 0.0, message, _public_metrics(payload)
+    return 0.0, INVALID_SCORE_UNBOUNDED, message, _public_metrics(payload)
 
 
 def _band(score: float) -> str:
