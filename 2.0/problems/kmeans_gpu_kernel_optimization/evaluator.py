@@ -267,6 +267,7 @@ def _build_cfg() -> dict[str, Any]:
         "warmup": _get_int("warmup_iters", 3),
         "iters": _get_int("timed_iters", 7),
         "inertia_tolerance": _get_float("inertia_tolerance", 0.02),
+        "label_mismatch_tolerance": _get_float("label_mismatch_tolerance", 0.002),
         "recall_threshold": _get_float("recall_threshold", 0.99),
         "captured_tolerance": _get_float("captured_tolerance", 0.02),
         "ortho_tolerance": _get_float("ortho_tolerance", 0.02),

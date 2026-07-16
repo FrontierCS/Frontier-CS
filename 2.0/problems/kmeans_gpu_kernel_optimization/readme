@@ -80,14 +80,17 @@ baseline on a GPU, on the same seeded data and initial centroids.
 ## Correctness
 
 Correctness is a gate. After running the fixed loop of `step` calls, the judge
-recomputes the **inertia** (sum of squared distances of every point to its
-nearest final centroid) of your final centroids and of the baseline's on
-identical data, and requires your inertia to stay within a small relative
-tolerance of the baseline's. Each `step` must return `labels` as a full `(N,)`
-nearest-centroid assignment to the `centroids` it was given and `new_centroids`
-of shape `(K, D)`. Crashes, non-finite output, wrong shapes/dtypes, timeouts, and
-clustering that regresses beyond the tolerance are penalized before speed is
-considered. The working precision is fixed at bfloat16 for every solution (the
+computes the **inertia of your returned clustering** — the sum of squared
+distances of every point to `new_centroids[labels]`, i.e. using **the `labels`
+and `new_centroids` your final `step` returned** — and compares it to the
+baseline's, requiring your inertia to stay within a small relative tolerance.
+Because the gate reads your returned `labels`, they must be the real full `(N,)`
+nearest-centroid assignment to the `centroids` each `step` was given: returning
+fake/empty labels, a partial or sub-sampled assignment, or centroids computed
+from a subset of points all inflate this inertia and fail the gate. Each `step`
+returns `labels` `(N,)` and `new_centroids` `(K, D)`. Crashes, non-finite output,
+wrong shapes/dtypes, timeouts, and clustering that regresses beyond the tolerance
+are penalized before speed is considered. The working precision is fixed at bfloat16 for every solution (the
 inputs are bfloat16), so it is not a tuning knob — speed comes from the kernel,
 not from the arithmetic precision.
 

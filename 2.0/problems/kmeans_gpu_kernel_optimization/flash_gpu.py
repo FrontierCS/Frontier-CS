@@ -113,16 +113,25 @@ def _gpu_worker(payload: dict) -> dict:
             # or agent -- can trade accuracy for speed by picking a different matmul
             # dtype (fp16/tf32/fp32 buy nothing on bf16 data and are only slower).
             #
-            # PLANTED CLUSTERS: x = well-separated blob centers + unit noise (NOT
-            # random). This makes the assignment matter -- inertia is sensitive to
-            # which centroid each point takes -- so a `step` that subsamples rows
-            # or feature dims, or fakes the labels, lands the final centroids in the
-            # wrong place and regresses the inertia gate (the judge re-derives
-            # inertia from the final centroids after its own max_iters-step loop).
-            # Random data would leave inertia nearly assignment-invariant and thus
-            # hackable by doing less work.
+            # PLANTED CLUSTERS: x = blob centers + unit noise (NOT random). This
+            # makes the assignment matter -- inertia is sensitive to which centroid
+            # each point takes -- so a `step` that subsamples rows, fakes the labels,
+            # or drops feature dims lands points on the wrong centroid and regresses
+            # the inertia gate. Random data would leave inertia nearly
+            # assignment-invariant and thus hackable by doing less work.
+            #
+            # SEPARATION IS SPREAD OVER ALL D DIMS. The nearest-competitor margin is
+            # ~ scale * sqrt(D/2) sigma of the unit noise. With a FIXED scale the
+            # margin grows as sqrt(D): at scale 6.0 / D=512 it is ~96 sigma, so a
+            # solution can assign using only the leading 128 dims and still land the
+            # exact same labels -- free work-skipping no output gate can see. Scaling
+            # by sqrt(2/D) pins the full-D margin at ~4 sigma, so using only a
+            # fraction f of the dims cuts it to 4*sqrt(f) (D=512 -> 128 dims: 2 sigma)
+            # and misassigns boundary points, which the inertia gate does see. Every
+            # dimension must be read.
             K = int(w["K"])
-            centers = torch.randn(K, int(w["D"]), generator=g, device=dev) * 6.0
+            D = int(w["D"])
+            centers = torch.randn(K, D, generator=g, device=dev) * (4.0 * (2.0 / D) ** 0.5)
             asg = torch.randint(0, K, (int(w["N"]),), generator=g, device=dev)
             x = (centers.index_select(0, asg) + x).to(torch.bfloat16)   # top randn = unit noise
             perm = torch.randperm(w["N"], generator=g, device=dev)[: K]
@@ -141,9 +150,13 @@ def _gpu_worker(payload: dict) -> dict:
             # what gets timed.
             c = data["init"].clone()
             lab = None
+            c_in = None
             for _ in range(int(w["max_iters"])):
+                c_in = c                      # centroids the LAST step was handed
                 lab, c = mod.step(data["x"], c)
-            return lab, c, int(w["max_iters"])
+            # c_in is returned so the gate can re-derive the exact assignment the
+            # final `step` was supposed to produce and compare it to `lab`.
+            return lab, c, int(w["max_iters"]), c_in
         if prim == "knn":
             return mod.knn(data["queries"], data["database"], w["k"])
         if prim == "dbscan":
@@ -156,7 +169,7 @@ def _gpu_worker(payload: dict) -> dict:
 
     def check_shape(w, out):
         if prim == "kmeans":
-            lab, cen, _ = out
+            lab, cen = out[0], out[1]
             if tuple(cen.shape) != (w["K"], w["D"]) or not torch.isfinite(cen.float()).all():
                 raise ValueError("bad kmeans centroids")
             if lab.ndim != 1 or int(lab.shape[0]) != int(w["N"]):
@@ -205,6 +218,30 @@ def _gpu_worker(payload: dict) -> dict:
             total += float(((xb - cl) ** 2).sum().item())
         return total
 
+    def label_mismatch(x, centroids, labels):
+        # Fraction of points whose returned label is NOT the exact nearest centroid
+        # (fp32 metric) of the centroids that `step` was given. Inertia alone is a
+        # blunt detector: it is dominated by within-cluster noise, so misassigning
+        # 1% of the points moves it by only ~0.1% and hides under any usable
+        # tolerance. The assignment itself is what the contract specifies, so check
+        # it directly -- this is what catches assigning on a subset of the feature
+        # dims (or any other approximate distance) while the inertia stays flat.
+        c = centroids.to(torch.float32)
+        cn = (c * c).sum(1)
+        lab = labels.long()
+        bad = 0
+        for j in range(0, x.shape[0], 16384):
+            xb = x[j:j + 16384].to(torch.float32)
+            d = (xb * xb).sum(1, keepdim=True) - 2.0 * (xb @ c.t()) + cn[None, :]
+            exact = d.argmin(1)
+            got = lab[j:j + 16384]
+            # a point sitting on a true tie may legitimately go either way: only
+            # count it when the returned centroid is strictly farther than the best
+            best = d.gather(1, exact[:, None]).squeeze(1)
+            mine = d.gather(1, got.clamp(0, c.shape[0] - 1)[:, None]).squeeze(1)
+            bad += int((mine > best * (1.0 + 1e-6) + 1e-6).sum().item())
+        return bad / max(1, x.shape[0])
+
     def recall(agent_idx, ref_idx):
         a = agent_idx.long(); b = ref_idx.long()
         hit = (a.unsqueeze(2) == b.unsqueeze(1)).any(2)
@@ -249,14 +286,28 @@ def _gpu_worker(payload: dict) -> dict:
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "kmeans":
-            # Centroid-quality gate: agent's final centroids (from the judge-owned
-            # loop over the agent's `step`) must be as good as the baseline's. Since
-            # the judge owns the loop, the solution cannot skip iterations or fake
-            # the count; a subsampled/wrong step compounds into bad centroids here.
-            rv = inertia(data["x"], ref_out[1]); av = inertia(data["x"], agent_out[1])
+            # Clustering-quality gate on the inertia of the RETURNED (labels,
+            # centroids) pair -- NOT the centroids alone. Using the agent's own
+            # labels closes the "return good centroids + junk/zeroed labels" hack
+            # (e.g. labels = torch.empty(N)) and the "subsample the assignment"
+            # hack: a fake or partial assignment inflates the agent's inertia even
+            # when its centroids look fine. The judge owns the Lloyd loop, so the
+            # solution can only make one honest step faster.
+            rv = inertia_labeled(data["x"], ref_out[1], ref_out[0])
+            av = inertia_labeled(data["x"], agent_out[1], agent_out[0])
             tol = float(cfg["inertia_tolerance"])
             ok = av <= (1.0 + tol) * rv + 1e-6
-            return ok, ("inertia_regression" if not ok else ""), rv, av
+            if not ok:
+                return False, "inertia_regression", rv, av
+            # Assignment gate: the returned labels must BE the exact nearest-centroid
+            # assignment for the centroids the final step was handed. Catches
+            # approximate distances (e.g. assigning on a subset of the feature dims)
+            # that barely move inertia but are not the step the contract asks for.
+            mis = label_mismatch(data["x"], agent_out[3], agent_out[0])
+            lt = float(cfg.get("label_mismatch_tolerance", 0.002))
+            if mis > lt:
+                return False, "assignment_not_nearest_centroid", rv, av
+            return True, "", rv, av
         if prim == "knn":
             rec = recall(agent_out[1], ref_out[1])
             ok = rec >= float(cfg["recall_threshold"])
