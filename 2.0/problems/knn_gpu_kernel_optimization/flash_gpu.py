@@ -76,6 +76,19 @@ def _gpu_worker(payload: dict) -> dict:
     pkg = importlib.import_module(cfg["pkg"])
 
     # ---- per-primitive: fixed context, data gen, call, quality metric ----- #
+    _ann_cache = {}
+    def _load_ann(name):
+        # Load a real ANN dataset (ann-benchmarks HDF5) from the mounted Modal
+        # Volume at /data. Cached across workloads in one worker call.
+        if name not in _ann_cache:
+            import h5py
+            import numpy as _np
+            with h5py.File(f"/data/{name}.hdf5", "r") as f:
+                base = torch.from_numpy(_np.asarray(f["train"], dtype=_np.float32)).to(dev)
+                queries = torch.from_numpy(_np.asarray(f["test"], dtype=_np.float32)).to(dev)
+            _ann_cache[name] = (base.contiguous(), queries.contiguous())
+        return _ann_cache[name]
+
     def setup(w, seed):
         # Built ONCE per workload (not per timed iter). IVF-PQ builds the fixed
         # index (the "database") here; queries are generated fresh per iteration.
@@ -85,6 +98,11 @@ def _gpu_worker(payload: dict) -> dict:
             index = ref.ivf_pq_build(X, int(w["nlist"]), m=int(w["m"]),
                                      nprobe=int(w["nprobe"]), seed=int(seed))
             return {"index": index, "D": int(w["D"])}
+        if prim == "knn" and w.get("dataset"):
+            # Real dataset: the fixed database is the full real base; queries are
+            # drawn per-iteration from the held-out query set.
+            base, queries_all = _load_ann(w["dataset"])
+            return {"base": base, "queries_all": queries_all}
         return {}
 
     def gen(w, seed, ctx):
@@ -93,6 +111,18 @@ def _gpu_worker(payload: dict) -> dict:
             q = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g, device=dev, dtype=torch.float32)
             return {"queries": q}
         if prim == "knn":
+            if w.get("dataset"):
+                # Fresh random subset of the real query set AND of the real base
+                # every iteration. The database must differ per call: handing back
+                # one fixed tensor lets a solution cache a prebuilt index/norms
+                # keyed on it (data_ptr or content) and skip the search work the
+                # timer is supposed to measure -- exactly what the synthetic path
+                # avoids by regenerating the database each iteration.
+                qa, base = ctx["queries_all"], ctx["base"]
+                qperm = torch.randperm(qa.shape[0], generator=g, device=dev)[: int(w["Q"])]
+                dperm = torch.randperm(base.shape[0], generator=g, device=dev)[: int(w["M"])]
+                return {"queries": qa.index_select(0, qperm).contiguous(),
+                        "database": base.index_select(0, dperm).contiguous()}
             db = torch.randn(w["M"], w["D"], generator=g, device=dev, dtype=torch.float32)
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
@@ -323,13 +353,18 @@ def run_remote(payload: dict) -> dict:
     last = "modal_gpu_eval_failed"
     for attempt in range(1, attempts + 1):
         app = modal.App(cfg.get("app_name", "flash-kernel-eval"))
-        remote = app.function(
+        fn_kwargs = dict(
             gpu=cfg.get("gpu", "H100"),
             image=_build_image(cfg),
             timeout=int(cfg.get("modal_timeout_seconds", 1800)),
             serialized=True,
             max_containers=1,
-        )(_gpu_worker)
+        )
+        # Mount the cached real-dataset Volume (SIFT/GIST HDF5) read-only at /data.
+        vol_name = cfg.get("dataset_volume")
+        if vol_name:
+            fn_kwargs["volumes"] = {"/data": modal.Volume.from_name(vol_name)}
+        remote = app.function(**fn_kwargs)(_gpu_worker)
         try:
             with modal.enable_output(), app.run():
                 return remote.remote(payload)

@@ -263,6 +263,7 @@ def _build_cfg() -> dict[str, Any]:
         "cuda_image": str(_get("cuda_image", "nvidia/cuda:12.4.1-devel-ubuntu22.04")),
         "pip": list(_get("pip", ["torch==2.5.1", "triton==3.1.0", "numpy"])),
         "app_name": str(_get("app_name", "flash-kernel-eval")),
+        "dataset_volume": _get("dataset_volume", None),   # Modal Volume with real SIFT/GIST datasets, mounted at /data
         "modal_timeout_seconds": _get_int("modal_timeout_seconds", 1800),
         "warmup": _get_int("warmup_iters", 3),
         "iters": _get_int("timed_iters", 7),

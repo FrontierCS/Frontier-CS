@@ -26,9 +26,16 @@ change, and every result must remain a deterministic function of its inputs.
 ## Workload
 
 The graded workloads are a family of held-out dense search problems that vary
-`(Q, M, D, k)`, spanning small/large database sizes `M` and both wide-feature
-(large `D`) and many-neighbor (large `k`) regimes. All use squared-L2 distance,
-float32 data, and randomly generated queries/database.
+`(Q, M, D, k)`, spanning both wide-feature (large `D`) and many-neighbor (large
+`k`) regimes. All use squared-L2 distance and float32 data. The points are real
+image-descriptor vectors, not synthetic noise: expect clustered, non-uniform
+data rather than i.i.d. gaussians.
+
+Every timed iteration draws a **fresh random `Q` queries and a fresh random `M`
+database rows**, so neither the query set nor the `database` tensor repeats
+across calls. Building an index or precomputing norms once and caching them for
+reuse on a later call therefore buys nothing — each call sees a database it has
+never seen. Optimize the per-call search itself.
 
 The public self-test now runs the **exact graded workloads** — the same shapes,
 thresholds, seeds, and timing the judge uses to score you — so there are no
