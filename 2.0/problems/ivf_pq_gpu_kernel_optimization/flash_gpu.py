@@ -76,10 +76,31 @@ def _gpu_worker(payload: dict) -> dict:
     pkg = importlib.import_module(cfg["pkg"])
 
     # ---- per-primitive: fixed context, data gen, call, quality metric ----- #
+    _ann_cache = {}
+    def _load_ann(name):
+        # Load a real ANN dataset (ann-benchmarks HDF5) from the mounted Modal
+        # Volume at /data. Cached across workloads in one worker call.
+        if name not in _ann_cache:
+            import h5py
+            import numpy as _np
+            with h5py.File(f"/data/{name}.hdf5", "r") as f:
+                base = torch.from_numpy(_np.asarray(f["train"], dtype=_np.float32)).to(dev)
+                queries = torch.from_numpy(_np.asarray(f["test"], dtype=_np.float32)).to(dev)
+            _ann_cache[name] = (base.contiguous(), queries.contiguous())
+        return _ann_cache[name]
+
     def setup(w, seed):
         # Built ONCE per workload (not per timed iter). IVF-PQ builds the fixed
         # index (the "database") here; queries are generated fresh per iteration.
         if prim == "ivfpq":
+            ds = w.get("dataset")
+            if ds:
+                # Real dataset: build the frozen index from the full real base;
+                # queries are drawn per-iteration from the held-out query set.
+                base, queries_all = _load_ann(ds)
+                index = ref.ivf_pq_build(base, int(w["nlist"]), m=int(w["m"]),
+                                         nprobe=int(w["nprobe"]), seed=int(w.get("seed", 0)))
+                return {"index": index, "D": int(base.shape[1]), "queries_all": queries_all}
             g = torch.Generator(device=dev).manual_seed(int(seed))
             X = torch.randn(int(w["M"]), int(w["D"]), generator=g, device=dev, dtype=torch.float32)
             index = ref.ivf_pq_build(X, int(w["nlist"]), m=int(w["m"]),
@@ -87,11 +108,34 @@ def _gpu_worker(payload: dict) -> dict:
             return {"index": index, "D": int(w["D"])}
         return {}
 
+    def _fresh_index(src):
+        # Hand every timed call a FRESH index object with freshly cloned tensors.
+        # The index content is identical (it is still the one frozen index built in
+        # setup), but the object identity and every data_ptr change per iteration,
+        # so a solution cannot attach cached state to it (`setattr(index, ...)`) or
+        # key a cache on its tensor addresses and thereby amortise index-derived
+        # precomputation (e.g. a CSR->padded layout conversion) out of the timed
+        # region and into the free warmup calls. `src` is the pristine index kept
+        # in ctx and never handed to the submission, so nothing leaks between iters.
+        new = object.__new__(type(src))
+        for k, v in vars(src).items():
+            new.__dict__[k] = v.clone() if torch.is_tensor(v) else v
+        return new
+
     def gen(w, seed, ctx):
         g = torch.Generator(device=dev).manual_seed(int(seed))
         if prim == "ivfpq":
-            q = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g, device=dev, dtype=torch.float32)
-            return {"queries": q}
+            data = {"index": _fresh_index(ctx["index"])}
+            if w.get("dataset"):
+                # Fresh subset of the real query set each iteration (anti-caching);
+                # Q must be <= number of held-out queries.
+                qa = ctx["queries_all"]
+                perm = torch.randperm(qa.shape[0], generator=g, device=dev)[: int(w["Q"])]
+                data["queries"] = qa.index_select(0, perm).contiguous()
+                return data
+            data["queries"] = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g,
+                                          device=dev, dtype=torch.float32)
+            return data
         if prim == "knn":
             db = torch.randn(w["M"], w["D"], generator=g, device=dev, dtype=torch.float32)
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
@@ -114,7 +158,9 @@ def _gpu_worker(payload: dict) -> dict:
 
     def call(mod, w, data, ctx):
         if prim == "ivfpq":
-            return mod.ivf_pq_search(ctx["index"], data["queries"], int(w["k"]), nprobe=int(w["nprobe"]))
+            # data["index"] is this iteration's fresh clone (see _fresh_index): the
+            # same frozen index, but no state can survive from a previous call.
+            return mod.ivf_pq_search(data["index"], data["queries"], int(w["k"]), nprobe=int(w["nprobe"]))
         if prim == "kmeans":
             return mod.kmeans(data["x"], w["K"], max_iters=w["max_iters"],
                               init_centroids=data["init"], tol=0.0)
@@ -323,13 +369,18 @@ def run_remote(payload: dict) -> dict:
     last = "modal_gpu_eval_failed"
     for attempt in range(1, attempts + 1):
         app = modal.App(cfg.get("app_name", "flash-kernel-eval"))
-        remote = app.function(
+        fn_kwargs = dict(
             gpu=cfg.get("gpu", "H100"),
             image=_build_image(cfg),
             timeout=int(cfg.get("modal_timeout_seconds", 1800)),
             serialized=True,
             max_containers=1,
-        )(_gpu_worker)
+        )
+        # Mount the cached real-dataset Volume (SIFT/GIST HDF5) read-only at /data.
+        vol_name = cfg.get("dataset_volume")
+        if vol_name:
+            fn_kwargs["volumes"] = {"/data": modal.Volume.from_name(vol_name)}
+        remote = app.function(**fn_kwargs)(_gpu_worker)
         try:
             with modal.enable_output(), app.run():
                 return remote.remote(payload)

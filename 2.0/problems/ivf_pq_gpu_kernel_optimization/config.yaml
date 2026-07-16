@@ -7,36 +7,45 @@ runtime:
   judge_apt_packages: [bash, ca-certificates, git, python3, python3-pip]
   judge_pip_packages: [modal]
   docker:
-    image: frontiercs/ivf-pq-gpu-kernel-optimization-agent:experimental-v0.1.0
-    judge_image: frontiercs/ivf-pq-gpu-kernel-optimization-judge:experimental-v0.1.0
+    image: frontiercs/ivf-pq-gpu-kernel-optimization-agent:experimental-v0.3.0
+    judge_image: frontiercs/ivf-pq-gpu-kernel-optimization-judge:experimental-v0.3.0
 environment:
   cpus: 4
   memory_mb: 8192
   storage_mb: 16384
   build_timeout_seconds: 3600
 evaluation:
+  # --- primitive wiring (consumed by public_test's _cfg(); the graded evaluator hardcodes these) ---
+  primitive: ivfpq
+  pkg: ivfpqlib
+  ref_module: refivfpq
   gpu: "H100"
   cuda_image: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
-  pip: ["torch", "numpy"]
+  pip: ["torch", "numpy", "h5py"]   # match the original (validated) image; torch brings its matched triton (a standalone triton pin crashes some flashlib kernels). h5py loads SIFT/GIST HDF5
   app_name: "ivfpq-kernel-opt-eval"
-  modal_timeout_seconds: 2400    # the naive per-query-loop baseline is seconds/call; give the judge margin (agent speed is unknown in a trial)
+  dataset_volume: "flashlib-ann-datasets"   # Modal Volume holding sift.hdf5 / gist.hdf5 (ann-benchmarks); mounted read-only at /data
+  modal_timeout_seconds: 3600    # the naive per-query-loop baseline is seconds/call and real GIST (D=960) is heavier; give the judge margin
   warmup_iters: 2
   timed_iters: 7
-  recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; the Triton reference measured iso-recall 1.0 on all workloads, so 0.95 leaves margin for ADC tie-breaks
-  speedup_target: 1640.0         # score cap = 2x the flashlib Triton reference geomean (~821x on H100, per-wl 493/798/1514/1264/376/1081x, iso-recall 1.0 all 6): reference scores ~90/100, a solution must be 2x faster than it to max out. (Huge factor = Python-per-query-loop baseline.)
+  recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; both baseline and Triton reference compute exact ADC over the same index, so 0.95 leaves margin for ADC tie-breaks
+  speedup_target: 1200.0         # score cap = 2x the flashlib reference geomean on the real SIFT/GIST workloads (600x on H100 with the per-call fresh index: SIFT 875/1225/1530x, GIST 290/322/305x, iso-recall >=0.999 all 6). Reference scores ~90/100; a solution must be 2x faster than it to max out. The Python-per-query-loop baseline is noisy, so measurements range ~450-600x. (A trial that cached a CSR->padded conversion on the fixed index scored 787x before _fresh_index killed that shortcut; it now measures 21x.)
   base_seed: 20260702
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
-  # The index (the "database") is built ONCE per workload by the frozen baseline
-  # and reused for every timed iteration; only ivf_pq_search is timed. Queries are
-  # regenerated fresh each iteration. M=database size, Q=queries, k=neighbours.
+  # REAL-DATA WORKLOADS: the index (the "database") is built ONCE per workload by
+  # the frozen builder from the full real base (SIFT1M 128d / GIST1M 960d), reused
+  # for every timed iteration; only ivf_pq_search is timed. Each iteration draws a
+  # fresh Q-subset of the held-out real query set (anti-caching). Real datasets have
+  # clustered, imbalanced inverted lists (unlike synthetic gaussian) -> the search
+  # kernel must handle long-tail lists. dataset in {sift,gist}; nprobe is the main
+  # recall/speed knob. Q <= #queries (SIFT 10000, GIST 1000).
   workloads:
-    - {id: w0, M: 50000,  D: 64,  nlist: 256, m: 8,  nprobe: 8,  Q: 1024, k: 10}
-    - {id: w1, M: 100000, D: 96,  nlist: 512, m: 12, nprobe: 16, Q: 1024, k: 10}
-    - {id: w2, M: 150000, D: 128, nlist: 512, m: 16, nprobe: 16, Q: 2048, k: 10}
-    - {id: w3, M: 80000,  D: 64,  nlist: 256, m: 8,  nprobe: 16, Q: 2048, k: 10}
-    - {id: w4, M: 120000, D: 128, nlist: 512, m: 16, nprobe: 8,  Q: 1024, k: 20}
-    - {id: w5, M: 60000,  D: 96,  nlist: 256, m: 12, nprobe: 16, Q: 1536, k: 10}
+    - {id: sift_np8,  dataset: sift, nlist: 4096, m: 16, nprobe: 8,  Q: 1024, k: 10}
+    - {id: sift_np16, dataset: sift, nlist: 4096, m: 16, nprobe: 16, Q: 1024, k: 10}
+    - {id: sift_np32, dataset: sift, nlist: 4096, m: 16, nprobe: 32, Q: 2048, k: 10}
+    - {id: gist_np8,  dataset: gist, nlist: 2048, m: 32, nprobe: 8,  Q: 512,  k: 10}
+    - {id: gist_np16, dataset: gist, nlist: 2048, m: 32, nprobe: 16, Q: 512,  k: 10}
+    - {id: gist_np32, dataset: gist, nlist: 2048, m: 32, nprobe: 32, Q: 512,  k: 10}
 submission:
   kind: file
   path: /app/solution.patch

@@ -1066,10 +1066,10 @@ index 0000000..cebd5c5
 +__all__ = ["pq_build_lut"]
 diff --git a/ivfpqlib/_kernels/search.py b/ivfpqlib/_kernels/search.py
 new file mode 100644
-index 0000000..2be7857
+index 0000000..3680708
 --- /dev/null
 +++ b/ivfpqlib/_kernels/search.py
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,382 @@
 +"""IVF-PQ search (Triton/GPU path). Two fine-scan strategies, one API.
 +
 +Every stage avoids the ``(nq x candidates)`` HBM matrix; the **coarse**
@@ -1412,6 +1412,15 @@ index 0000000..2be7857
 +    chosen = _pick_variant(
 +        variant, nq, nprobe, avg_list_len, index.dsub, index.m, index.nlist,
 +    )
++    # Clustered real datasets (SIFT/GIST) produce heavily imbalanced inverted
++    # lists.  The decode+GEMM fine-scan paths ("gemm"/"cute_gemm"/"cute_lut")
++    # size a per-(query, probe) candidate buffer for near-balanced lists and
++    # read out of bounds on a long-tail list; the streaming ADC-LUT "online"
++    # path is length-safe.  When the longest list far exceeds the average,
++    # route auto there.
++    if variant == "auto" and chosen not in ("online", "batch") \
++            and max_list_len > 4.0 * avg_list_len:
++        chosen = "online"
 +    if chosen == "gemm":
 +        return _search_gemm(index, Qp_all, centroids, codebooks, k, nprobe)
 +    if chosen in ("cute_lut", "cute_gemm"):

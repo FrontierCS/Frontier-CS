@@ -33,6 +33,13 @@ nothing. Your search must consume the index exactly as built (you may of course
 reorganize its arrays inside your own call). Treat the coarse centroids, PQ
 codebooks, CSR list layout, and codes as fixed inputs.
 
+Each call receives its **own fresh copy** of that index — same contents, but a
+new object with new tensors every time. Any state you attach to the index or
+cache keyed on its tensor addresses is therefore gone by the next call: work
+like a CSR-to-padded layout conversion cannot be hoisted into a warmup call and
+amortized away. Whatever your search needs, it must produce within the call
+being timed.
+
 ## Workload
 
 The graded workloads are held-out ANN search problems over random float32
