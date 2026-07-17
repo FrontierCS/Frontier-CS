@@ -106,7 +106,12 @@ def _gpu_worker(payload: dict) -> dict:
             centers = (torch.rand(nc, D, generator=g, device=dev) * 2.0 - 1.0) * 10.0
             asg = torch.randint(0, nc, (N,), generator=g, device=dev)
             x = centers.index_select(0, asg) + torch.randn(N, D, generator=g, device=dev) * std
-            return {"x": x.to(torch.float32), "eps": float(w["eps"]),
+            # PRECISION LOCK (bf16): the points carry only bf16 precision, so a
+            # solution cannot win by computing the pairwise distances in a lower
+            # dtype than everyone else -- bf16 tensor cores are the floor, and the
+            # blobs are well separated (std=1.0, centers in +-10) so bf16 rounding
+            # never flips an eps-neighbour and the clustering is unchanged.
+            return {"x": x.to(torch.bfloat16).to(torch.float32), "eps": float(w["eps"]),
                     "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
         if prim == "kmeans":
