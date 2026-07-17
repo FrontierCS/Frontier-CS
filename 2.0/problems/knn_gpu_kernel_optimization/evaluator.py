@@ -269,6 +269,7 @@ def _build_cfg() -> dict[str, Any]:
         "iters": _get_int("timed_iters", 7),
         "inertia_tolerance": _get_float("inertia_tolerance", 0.02),
         "recall_threshold": _get_float("recall_threshold", 0.99),
+        "distance_ball_tolerance": _get_float("distance_ball_tolerance", 0.0),
         "captured_tolerance": _get_float("captured_tolerance", 0.02),
         "ortho_tolerance": _get_float("ortho_tolerance", 0.02),
         "ari_threshold": _get_float("ari_threshold", 0.99),

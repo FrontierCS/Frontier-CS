@@ -9,13 +9,15 @@ the Harbor workspace at `/app/knnlib`. Its public entry point is:
 knnlib.knn(queries, database, k) -> (distances, indices)
 ```
 
-`queries` is a `(Q, D)` float32 CUDA tensor of query points, `database` is an
-`(M, D)` float32 CUDA tensor of database points to search, and `k` is the number
-of nearest neighbors to return per query. The function returns `distances`, a
-`(Q, k)` float32 tensor of the **squared-L2** distances to the `k` nearest
-database points (ascending, nearest first), and `indices`, a `(Q, k)` int64
-tensor of the corresponding database row indices. The shipped implementation is
-a straightforward, correct PyTorch version.
+`queries` is a `(Q, D)` **bfloat16** CUDA tensor of query points, `database` is an
+`(M, D)` **bfloat16** CUDA tensor of database points to search, and `k` is the
+number of nearest neighbors to return per query. The inputs are bfloat16 by
+design — treat it as the fixed working precision; upcasting to fp32/TF32 buys no
+accuracy over bf16 tensor cores here (only latency), so precision is not a tuning
+knob. The function returns `distances`, a `(Q, k)` float32 tensor of the
+**squared-L2** distances to the `k` nearest database points (ascending, nearest
+first), and `indices`, a `(Q, k)` int64 tensor of the corresponding database row
+indices. The shipped implementation is a straightforward, correct PyTorch version.
 
 Your goal is to make `knnlib.knn` **as fast as possible** on the GPU while
 returning the same nearest neighbors. You may rewrite the internals of the
@@ -78,14 +80,17 @@ baseline on a GPU, on the same seeded queries and database.
 
 ## Correctness
 
-Correctness is a gate. On every timed iteration the judge recomputes the
-**recall@k** (the fraction of the true `k` nearest database indices your result
-recovers, averaged over all queries) of your result against an exact baseline on
-identical data, and requires your recall@k to stay at or above a high threshold.
-Crashes, non-finite output, wrong shapes/dtypes, timeouts, and results that drop
-below the recall threshold are penalized before speed is considered. You may
-trade a little numerical precision for speed as long as you stay above the
-recall threshold.
+Correctness is a gate. On every timed iteration the judge scores your neighbours
+by **ball-recall**: each returned index counts if the exact (fp32) squared-L2
+distance from its query to that database row lies within the true k-nearest-
+neighbour ball (the distance to the k-th true neighbour). This is tie-robust —
+bf16 distances tie heavily near rank k, so which of several equidistant points
+you return does not matter, but returning a genuinely farther point does. Your
+ball-recall must stay at or above a high threshold. Because the inputs are bf16,
+an honest bf16 kernel clears it comfortably; a search that drops below bf16
+precision (e.g. fp8) returns farther points and fails. Crashes, non-finite
+output, wrong shapes/dtypes, and timeouts are penalized before speed is
+considered.
 
 ## Scoring
 

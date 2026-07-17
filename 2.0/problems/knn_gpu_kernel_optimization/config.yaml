@@ -23,8 +23,8 @@ runtime:
     # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
     # /app/knnlib (git) + /opt/knn_ref + /opt/flash_gpu.py; the judge image
     # additionally bakes /opt/knnlib-clean.
-    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.4.0
-    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.4.0
+    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.5.0
+    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.5.0
 environment:
   cpus: 4
   memory_mb: 8192
@@ -46,8 +46,9 @@ evaluation:
   modal_timeout_seconds: 3600    # exact brute-force over a 1M-row real database is heavier than the synthetic shapes; give margin
   warmup_iters: 2
   timed_iters: 7
-  recall_threshold: 0.99         # agent ids must match the exact baseline's top-k (iso-result recall@k) on every iteration; both compute exact squared-L2, so 0.99 leaves margin for distance ties
-  speedup_target: 5.5            # score cap = 2x the flashlib reference geomean on the real SIFT/GIST workloads with per-iteration M=500k database subsets (2.78x geomean on H100: SIFT k10/50/100 = 8.36/6.48/2.65x, GIST k10/50/100 = 1.76/1.50/1.22x, iso-recall >=0.994 all 6). Reference scores ~80/100. Headroom over the cuBLAS-cdist baseline is modest on real data (esp. high-D GIST), so the factor is smaller than the old synthetic workloads.
+  recall_threshold: 0.88         # ball-recall gate on bf16 data (see knn_ball_recall): a returned neighbour counts if its exact fp32 distance is within the true k-NN ball. bf16 distances tie heavily near rank k, so even a correct bf16 kernel only reaches ~0.94-1.0 (the flashlib reference measured 0.935-1.0). 0.88 clears that with margin while still rejecting a sub-bf16 (e.g. fp8) search, whose coarser distances drop far lower. Precision is pinned by the bf16 DATA, not this threshold.
+  distance_ball_tolerance: 0.0   # relative slack on the k-NN ball radius (the check already carries a 1e-6 absolute epsilon for fp32 reduction jitter)
+  speedup_target: 4.0            # score cap = 2x the flashlib reference geomean on the bf16 real workloads (1.94x on H100: SIFT k10/50/100 = 4.43/2.60/1.48x, GIST = 1.71/1.67/1.10x, ball-recall >=0.94 all 6). bf16 data + modest cuBLAS-cdist headroom keep the factor small.
   base_seed: 20260701
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on

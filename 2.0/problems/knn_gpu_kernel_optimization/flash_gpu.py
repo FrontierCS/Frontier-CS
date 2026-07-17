@@ -118,11 +118,17 @@ def _gpu_worker(payload: dict) -> dict:
                 # keyed on it (data_ptr or content) and skip the search work the
                 # timer is supposed to measure -- exactly what the synthetic path
                 # avoids by regenerating the database each iteration.
+                # PRECISION LOCK (bf16): hand out bf16 queries + database, so the
+                # inputs carry only bf16 precision. No solution can gain from a
+                # different distance-matmul dtype -- fp32/TF32 buy nothing over bf16
+                # tensor cores on bf16 inputs (only slower), and fp8 loses too much
+                # to clear the recall gate. Baseline and agent compute on the same
+                # bf16 data, so speed is purely about the kernel, not precision.
                 qa, base = ctx["queries_all"], ctx["base"]
                 qperm = torch.randperm(qa.shape[0], generator=g, device=dev)[: int(w["Q"])]
                 dperm = torch.randperm(base.shape[0], generator=g, device=dev)[: int(w["M"])]
-                return {"queries": qa.index_select(0, qperm).contiguous(),
-                        "database": base.index_select(0, dperm).contiguous()}
+                return {"queries": qa.index_select(0, qperm).to(torch.bfloat16).contiguous(),
+                        "database": base.index_select(0, dperm).to(torch.bfloat16).contiguous()}
             db = torch.randn(w["M"], w["D"], generator=g, device=dev, dtype=torch.float32)
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
@@ -198,6 +204,29 @@ def _gpu_worker(payload: dict) -> dict:
         hit = (a.unsqueeze(2) == b.unsqueeze(1)).any(2)
         return float(hit.sum().item()) / (b.shape[0] * b.shape[1])
 
+    def knn_ball_recall(queries, database, agent_idx, ref_idx, tol):
+        # Tie-robust recall: a returned neighbour counts if its EXACT (fp32)
+        # squared-L2 distance is within the true k-NN ball, i.e. <= the baseline's
+        # k-th distance x (1+tol). Plain index-recall is unusable on bf16 data --
+        # coarse distances tie heavily, so two *correct* searches that break ties
+        # differently disagree at ~0.9-0.97. This gate ignores which tie member is
+        # picked (any point at the k-th distance is correct) but still rejects a
+        # genuinely-farther point, so a lower-precision search that returns wrong
+        # neighbours fails while an honest bf16 kernel passes exactly.
+        qf = queries.to(torch.float32); dbf = database.to(torch.float32)
+        # k-NN ball radius per query = exact distance to the baseline's k-th nbr
+        kth = dbf.index_select(0, ref_idx[:, -1].long())          # (Q, D)
+        d_k = ((qf - kth) ** 2).sum(1)                            # (Q,)
+        thr = d_k * (1.0 + tol) + 1e-6
+        a = agent_idx.long(); Q, k = a.shape
+        hits = 0
+        for j in range(0, Q, 256):
+            qb = qf[j:j + 256]; ab = a[j:j + 256]                 # (q, D), (q, k)
+            cand = dbf.index_select(0, ab.reshape(-1)).reshape(ab.shape[0], k, -1)
+            ad = ((qb[:, None, :] - cand) ** 2).sum(2)            # (q, k) exact dists
+            hits += int((ad <= thr[j:j + 256, None]).sum().item())
+        return hits / (Q * k)
+
     def ari(a, b):
         # Adjusted Rand Index between two integer label vectors (N,); noise (-1)
         # is treated as its own label (dense-remapped first).
@@ -242,7 +271,9 @@ def _gpu_worker(payload: dict) -> dict:
             ok = av <= (1.0 + tol) * rv + 1e-6
             return ok, ("inertia_regression" if not ok else ""), rv, av
         if prim == "knn":
-            rec = recall(agent_out[1], ref_out[1])
+            rec = knn_ball_recall(data["queries"], data["database"],
+                                  agent_out[1], ref_out[1],
+                                  float(cfg.get("distance_ball_tolerance", 0.0)))
             ok = rec >= float(cfg["recall_threshold"])
             return ok, ("recall_regression" if not ok else ""), 1.0, rec
         if prim == "dbscan":
