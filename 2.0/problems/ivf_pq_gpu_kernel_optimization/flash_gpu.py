@@ -98,8 +98,13 @@ def _gpu_worker(payload: dict) -> dict:
                 # Real dataset: build the frozen index from the full real base;
                 # queries are drawn per-iteration from the held-out query set.
                 base, queries_all = _load_ann(ds)
-                index = ref.ivf_pq_build(base, int(w["nlist"]), m=int(w["m"]),
-                                         nprobe=int(w["nprobe"]), seed=int(w.get("seed", 0)))
+                # Train the coarse quantizer on enough points for a large nlist
+                # (>= ~40 per centroid); the base is 1M rows so this is a subsample.
+                nlist = int(w["nlist"])
+                tsz = min(base.shape[0], max(200000, nlist * 40))
+                index = ref.ivf_pq_build(base, nlist, m=int(w["m"]),
+                                         nprobe=int(w["nprobe"]), seed=int(w.get("seed", 0)),
+                                         train_size=tsz, pq_train_size=min(base.shape[0], 100000))
                 return {"index": index, "D": int(base.shape[1]), "queries_all": queries_all}
             g = torch.Generator(device=dev).manual_seed(int(seed))
             X = torch.randn(int(w["M"]), int(w["D"]), generator=g, device=dev, dtype=torch.float32)
@@ -118,8 +123,20 @@ def _gpu_worker(payload: dict) -> dict:
         # region and into the free warmup calls. `src` is the pristine index kept
         # in ctx and never handed to the submission, so nothing leaks between iters.
         new = object.__new__(type(src))
+        # PRECISION LOCK (bf16): round the float index tensors (coarse centroids +
+        # PQ codebooks) to bf16 precision so the coarse distance matmul and the ADC
+        # decode carry only bf16 precision for everyone. A solution then cannot win
+        # by computing them in a lower dtype than the baseline -- bf16 tensor cores
+        # are the floor, fp32/TF32 buy nothing. Codes are uint8 already; the query
+        # is bf16-rounded in gen(). Values stay fp32-typed so the search contract is
+        # unchanged.
+        _bf16 = {"centroids", "pq_codebooks"}
         for k, v in vars(src).items():
-            new.__dict__[k] = v.clone() if torch.is_tensor(v) else v
+            if torch.is_tensor(v):
+                v = v.clone()
+                if k in _bf16 and v.is_floating_point():
+                    v = v.to(torch.bfloat16).to(v.dtype)
+            new.__dict__[k] = v
         return new
 
     def gen(w, seed, ctx):
@@ -131,10 +148,13 @@ def _gpu_worker(payload: dict) -> dict:
                 # Q must be <= number of held-out queries.
                 qa = ctx["queries_all"]
                 perm = torch.randperm(qa.shape[0], generator=g, device=dev)[: int(w["Q"])]
-                data["queries"] = qa.index_select(0, perm).contiguous()
+                # bf16-round the query too (see _fresh_index): with the index tensors
+                # already at bf16 precision the whole search carries only bf16.
+                q = qa.index_select(0, perm)
+                data["queries"] = q.to(torch.bfloat16).to(q.dtype).contiguous()
                 return data
-            data["queries"] = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g,
-                                          device=dev, dtype=torch.float32)
+            q = torch.randn(int(w["Q"]), int(ctx["D"]), generator=g, device=dev, dtype=torch.float32)
+            data["queries"] = q.to(torch.bfloat16).to(torch.float32).contiguous()
             return data
         if prim == "knn":
             db = torch.randn(w["M"], w["D"], generator=g, device=dev, dtype=torch.float32)

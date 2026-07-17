@@ -7,8 +7,8 @@ runtime:
   judge_apt_packages: [bash, ca-certificates, git, python3, python3-pip]
   judge_pip_packages: [modal]
   docker:
-    image: frontiercs/ivf-pq-gpu-kernel-optimization-agent:experimental-v0.3.0
-    judge_image: frontiercs/ivf-pq-gpu-kernel-optimization-judge:experimental-v0.3.0
+    image: frontiercs/ivf-pq-gpu-kernel-optimization-agent:experimental-v0.4.0
+    judge_image: frontiercs/ivf-pq-gpu-kernel-optimization-judge:experimental-v0.4.0
 environment:
   cpus: 4
   memory_mb: 8192
@@ -28,24 +28,31 @@ evaluation:
   warmup_iters: 2
   timed_iters: 7
   recall_threshold: 0.95         # agent results must match the baseline's top-k (iso-result recall@k) on every iteration; both baseline and Triton reference compute exact ADC over the same index, so 0.95 leaves margin for ADC tie-breaks
-  speedup_target: 1200.0         # score cap = 2x the flashlib reference geomean on the real SIFT/GIST workloads (600x on H100 with the per-call fresh index: SIFT 875/1225/1530x, GIST 290/322/305x, iso-recall >=0.999 all 6). Reference scores ~90/100; a solution must be 2x faster than it to max out. The Python-per-query-loop baseline is noisy, so measurements range ~450-600x. (A trial that cached a CSR->padded conversion on the fixed index scored 787x before _fresh_index killed that shortcut; it now measures 21x.)
+  speedup_target: 620.0          # score cap = 2x the flashlib reference geomean on the real SIFT/GIST workloads with bf16-locked query+index (309x on H100 at nlist=8192/k=100: SIFT 373/456/524x, GIST 199/206/239x, iso-recall 1.0 all 6). nprobe is a real knob here (a hard nprobe<=8 cap drops iso-recall to 0.64-0.82). Query, coarse centroids and PQ codebooks all carry only bf16 precision, so the coarse matmul + ADC decode cannot win on a lower dtype.
   base_seed: 20260702
   agent_workload_count: 6            # agent's submission feedback covers ALL graded workloads (no blind pass-3/fail-6 cliff); params are agent-visible anyway
   expose_per_workload_metrics: true  # show per-workload pass/fail so the agent can fix the specific workload it regresses on
   # REAL-DATA WORKLOADS: the index (the "database") is built ONCE per workload by
   # the frozen builder from the full real base (SIFT1M 128d / GIST1M 960d), reused
-  # for every timed iteration; only ivf_pq_search is timed. Each iteration draws a
-  # fresh Q-subset of the held-out real query set (anti-caching). Real datasets have
+  # for every timed iteration (each call gets a fresh clone -- see flash_gpu
+  # _fresh_index); only ivf_pq_search is timed. Each iteration draws a fresh
+  # Q-subset of the held-out real query set (anti-caching). Real datasets have
   # clustered, imbalanced inverted lists (unlike synthetic gaussian) -> the search
-  # kernel must handle long-tail lists. dataset in {sift,gist}; nprobe is the main
-  # recall/speed knob. Q <= #queries (SIFT 10000, GIST 1000).
+  # kernel must handle long-tail lists.
+  #
+  # nprobe is the main recall/speed knob and is meant to MATTER: nlist=8192 with
+  # k=100 makes the true neighbours spread across many lists, so scanning only the
+  # nearest few lists (nprobe truncation) drops iso-recall well below the gate --
+  # measured: on SIFT nlist=8192/k=100, scanning 8 lists vs the required 32 gives
+  # only ~0.67 iso-recall (vs ~0.86 at the old nlist=4096/k=10, where truncation
+  # slipped through). A solution must honour the workload's nprobe.
   workloads:
-    - {id: sift_np8,  dataset: sift, nlist: 4096, m: 16, nprobe: 8,  Q: 1024, k: 10}
-    - {id: sift_np16, dataset: sift, nlist: 4096, m: 16, nprobe: 16, Q: 1024, k: 10}
-    - {id: sift_np32, dataset: sift, nlist: 4096, m: 16, nprobe: 32, Q: 2048, k: 10}
-    - {id: gist_np8,  dataset: gist, nlist: 2048, m: 32, nprobe: 8,  Q: 512,  k: 10}
-    - {id: gist_np16, dataset: gist, nlist: 2048, m: 32, nprobe: 16, Q: 512,  k: 10}
-    - {id: gist_np32, dataset: gist, nlist: 2048, m: 32, nprobe: 32, Q: 512,  k: 10}
+    - {id: sift_np16, dataset: sift, nlist: 8192, m: 16, nprobe: 16, Q: 1024, k: 100}
+    - {id: sift_np32, dataset: sift, nlist: 8192, m: 16, nprobe: 32, Q: 1024, k: 100}
+    - {id: sift_np64, dataset: sift, nlist: 8192, m: 16, nprobe: 64, Q: 1024, k: 100}
+    - {id: gist_np16, dataset: gist, nlist: 8192, m: 32, nprobe: 16, Q: 512,  k: 100}
+    - {id: gist_np32, dataset: gist, nlist: 8192, m: 32, nprobe: 32, Q: 512,  k: 100}
+    - {id: gist_np64, dataset: gist, nlist: 8192, m: 32, nprobe: 64, Q: 512,  k: 100}
 submission:
   kind: file
   path: /app/solution.patch
