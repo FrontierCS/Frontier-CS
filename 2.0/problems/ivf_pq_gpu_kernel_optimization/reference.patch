@@ -1538,7 +1538,7 @@ index 56b559b..8b32e5d 100644
 -
 -    return out_vals, out_ids
 +def ivf_pq_search(index, Q, k, *, nprobe=None):
-+    return ivf_pq_search_triton(index, Q, k, nprobe=nprobe)
++    return ivf_pq_search_triton(index, Q, k, nprobe=nprobe, variant="gemm")  # pin fast WGMMA gemm path (auto under-picks it)
  
  
  __all__ = ["ivf_pq_search"]
