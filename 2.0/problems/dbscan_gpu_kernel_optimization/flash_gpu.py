@@ -97,20 +97,40 @@ def _gpu_worker(payload: dict) -> dict:
             q = torch.randn(w["Q"], w["D"], generator=g, device=dev, dtype=torch.float32)
             return {"queries": q, "database": db}
         if prim == "dbscan":
-            # flashlib's own DBSCAN benchmark data: sklearn make_blobs equivalent --
-            # Gaussian blobs, centers ~ U(-10, 10)^D, cluster_std = 1.0, no noise.
-            # (The generator is judge-only and NOT present in the agent image, so the
-            # agent cannot read the data structure and hardcode a data-specific labeler.)
+            # NON-CONVEX clustering data: a union of interleaving half-moons, each
+            # moon-PAIR placed in its own random 2-D subspace of R^D (so the cluster
+            # structure spans many dims -- a PCA->2D projection cannot capture it) and
+            # offset from the other pairs. Voronoi/centroid shortcuts get non-convex
+            # moons WRONG: "k-means the points into n_centers cells then DBSCAN each
+            # cell" (and plain k-means) mislabels the interleaving arcs, so the ARI
+            # gate rejects them (kmeans-shortcut ARI ~0.72-0.75, PCA-2D ~0.5-0.6 << gate).
+            # Only a real eps-neighbourhood density scan recovers the clusters -- which
+            # is exactly the kernel this task asks you to optimise. Clusters = the arcs
+            # (n_centers of them). (The generator is judge-only and NOT in the agent image.)
             nc, D, N = int(w["n_centers"]), int(w["D"]), int(w["N"])
-            std = float(w.get("cluster_std", 1.0))
-            centers = (torch.rand(nc, D, generator=g, device=dev) * 2.0 - 1.0) * 10.0
-            asg = torch.randint(0, nc, (N,), generator=g, device=dev)
-            x = centers.index_select(0, asg) + torch.randn(N, D, generator=g, device=dev) * std
-            # PRECISION LOCK (bf16): the points carry only bf16 precision, so a
-            # solution cannot win by computing the pairwise distances in a lower
-            # dtype than everyone else -- bf16 tensor cores are the floor, and the
-            # blobs are well separated (std=1.0, centers in +-10) so bf16 rounding
-            # never flips an eps-neighbour and the clustering is unchanged.
+            pairs = max(1, nc // 2)
+            basis, _ = torch.linalg.qr(torch.randn(D, D, generator=g, device=dev))  # orthonormal
+            per = (N + pairs - 1) // pairs
+            parts = []
+            for p in range(pairs):
+                nout = per // 2; nin = per - nout
+                to = torch.rand(nout, generator=g, device=dev) * torch.pi
+                ti = torch.rand(nin, generator=g, device=dev) * torch.pi
+                mx = torch.cat([torch.cos(to), 1.0 - torch.cos(ti)])
+                my = torch.cat([torch.sin(to), 0.5 - torch.sin(ti)])
+                m = (torch.stack([mx, my], 1) + torch.randn(per, 2, generator=g, device=dev) * 0.05) * 6.0
+                b0 = basis[:, (2 * p) % D]; b1 = basis[:, (2 * p + 1) % D]
+                pts = m[:, 0:1] * b0[None, :] + m[:, 1:2] * b1[None, :]
+                pts = pts + torch.randn(per, D, generator=g, device=dev) * 0.1          # thin ambient noise
+                pts = pts + basis[:, (2 * p + 4) % D][None, :] * (p * 30.0)             # separate the pairs
+                parts.append(pts)
+            x = torch.cat(parts, 0)
+            x = x[torch.randperm(x.shape[0], generator=g, device=dev)][:N]
+            # PRECISION LOCK (bf16): points carry only bf16 precision, so no solution
+            # wins by computing the eps-graph distances in a lower dtype. eps is set so
+            # the moons stay cleanly separated under bf16 -- an honest bf16 scan equals
+            # the fp32 clustering exactly (verified: two exact scans on the same bf16
+            # data agree at ARI 1.0, so the gate is not flaky on border points).
             return {"x": x.to(torch.bfloat16).to(torch.float32), "eps": float(w["eps"]),
                     "min_samples": int(w["min_samples"])}
         x = torch.randn(w["N"], w["D"], generator=g, device=dev, dtype=torch.float32)
