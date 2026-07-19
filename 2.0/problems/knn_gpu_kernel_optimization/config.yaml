@@ -23,8 +23,8 @@ runtime:
     # run on the Modal GPU image defined in flash_gpu.py. The agent image bakes
     # /app/knnlib (git) + /opt/knn_ref + /opt/flash_gpu.py; the judge image
     # additionally bakes /opt/knnlib-clean.
-    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.5.0
-    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.5.0
+    image: frontiercs/knn-gpu-kernel-optimization-agent:experimental-v0.6.0
+    judge_image: frontiercs/knn-gpu-kernel-optimization-judge:experimental-v0.6.0
 environment:
   cpus: 4
   memory_mb: 8192

@@ -213,18 +213,34 @@ def _gpu_worker(payload: dict) -> dict:
         # picked (any point at the k-th distance is correct) but still rejects a
         # genuinely-farther point, so a lower-precision search that returns wrong
         # neighbours fails while an honest bf16 kernel passes exactly.
+        #
+        # DISTINCT-index counting (anti-hack): a returned index counts at most ONCE
+        # per query. Without this, returning the single nearest neighbour k times
+        # scores 1.0 (the 1-NN is trivially inside every k-NN ball) -- i.e. a search
+        # that finds only argmin and pads with duplicates fakes full recall. Counting
+        # distinct in-ball indices makes that hack score ~1/k; an honest top-k returns
+        # k distinct in-ball ids and still scores ~1.0.
         qf = queries.to(torch.float32); dbf = database.to(torch.float32)
+        M = dbf.shape[0]
         # k-NN ball radius per query = exact distance to the baseline's k-th nbr
         kth = dbf.index_select(0, ref_idx[:, -1].long())          # (Q, D)
         d_k = ((qf - kth) ** 2).sum(1)                            # (Q,)
         thr = d_k * (1.0 + tol) + 1e-6
         a = agent_idx.long(); Q, k = a.shape
+        sent = M + torch.arange(k, device=a.device)              # distinct sentinels >= M
         hits = 0
         for j in range(0, Q, 256):
             qb = qf[j:j + 256]; ab = a[j:j + 256]                 # (q, D), (q, k)
             cand = dbf.index_select(0, ab.reshape(-1)).reshape(ab.shape[0], k, -1)
             ad = ((qb[:, None, :] - cand) ** 2).sum(2)            # (q, k) exact dists
-            hits += int((ad <= thr[j:j + 256, None]).sum().item())
+            inball = ad <= thr[j:j + 256, None]                  # (q, k) bool
+            # out-of-ball slots -> per-slot distinct sentinels (>= M) so they never
+            # collide with a real id and are dropped by the (< M) filter below.
+            idx_ib = torch.where(inball, ab, sent[None, :])      # (q, k)
+            srt, _ = idx_ib.sort(dim=1)
+            first = torch.ones_like(srt, dtype=torch.bool)
+            first[:, 1:] = srt[:, 1:] != srt[:, :-1]             # first occurrence of each value
+            hits += int((first & (srt < M)).sum().item())        # distinct real in-ball ids
         return hits / (Q * k)
 
     def ari(a, b):
