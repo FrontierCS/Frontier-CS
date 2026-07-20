@@ -1,0 +1,7 @@
+# Problem directories are generated from the third_party/formal-conjectures
+# submodule and are not committed. Materialize them with:
+#   python3 research/problems/formal_conjectures/_generator/generate.py
+/*/
+!/_generator/
+!/common/
+!/docker/

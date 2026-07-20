@@ -362,3 +362,44 @@ Please include:
 - Area of expertise
 - Type of contribution (algorithmic/research problem)
 - Brief description of your proposed contribution
+
+## Formal Conjectures (Lean) Problems
+
+`research/problems/formal_conjectures/` hosts one problem per conjecture
+statement from [google-deepmind/formal-conjectures](https://github.com/google-deepmind/formal-conjectures)
+(categories `research open` and `research solved`). The source of truth is the
+git submodule at `third_party/formal-conjectures`, pinned to a `bench-*`
+release tag; **problem directories are generated from it and are not
+committed** (see the `.gitignore` there). Materialize them once per checkout:
+
+```bash
+git submodule update --init third_party/formal-conjectures
+python3 research/problems/formal_conjectures/_generator/generate.py
+```
+
+- The generator parses the submodule's Lean sources directly (namespaces,
+  `@[category ...]` attributes) — no Lean toolchain needed. "Fill-in-the-answer"
+  statements (`answer(sorry)`) are skipped: their elaborated types substitute a
+  placeholder for the unknown answer and would misstate the question.
+- Solutions are Lean 4 proofs, checked in a Docker image with Lean + Mathlib +
+  formal-conjectures prebuilt (`research/problems/formal_conjectures/docker/`).
+- Scoring is binary: 1.0 iff the submitted proof compiles without `sorry`,
+  proves a statement definitionally equal to the conjecture, and uses only the
+  standard axioms. See `research/problems/formal_conjectures/common/`.
+- These problems are **excluded from CI validation** (the `.skip-validation`
+  marker): open conjectures cannot have a reference solution scoring > 0.
+  They are also excluded from `research/scripts/problems.txt` and the README
+  problem count.
+
+To bump the submodule to a new upstream release:
+
+```bash
+git -C third_party/formal-conjectures checkout <new-bench-tag>
+research/problems/formal_conjectures/docker/build.sh --push   # rebuild eval image
+python3 research/problems/formal_conjectures/_generator/generate.py --wipe
+git add third_party/formal-conjectures                        # only the pointer changes
+```
+
+The parser can be cross-checked against upstream's own extractor:
+`docker run --rm <eval-image> lake exe extract_names > /tmp/extract.json`
+then `generate.py --check-against /tmp/extract.json`.

@@ -112,7 +112,9 @@ def info(text: str) -> str:
 
 
 # Directories to exclude when auto-discovering problems
-EXCLUDE_DIRS = {"common", "resources", "__pycache__", ".venv"}
+# formal_conjectures problems are auto-generated Lean proof tasks with no
+# expected LLM solutions; keep them out of the solutions matrix and problems.txt.
+EXCLUDE_DIRS = {"common", "resources", "__pycache__", ".venv", "formal_conjectures"}
 
 
 def discover_problems(problems_dir: Path) -> List[Tuple[str, Path]]:
