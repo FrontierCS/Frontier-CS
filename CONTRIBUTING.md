@@ -370,7 +370,11 @@ statement from [google-deepmind/formal-conjectures](https://github.com/google-de
 (categories `research open` and `research solved`). The source of truth is the
 git submodule at `third_party/formal-conjectures`, pinned to a `bench-*`
 release tag; **problem directories are generated from it and are not
-committed** (see the `.gitignore` there). Materialize them once per checkout:
+committed** (see the `.gitignore` there). Materialization is automatic: the
+first `frontier list|eval|show` touching these problems initializes the
+submodule and runs the generator (`src/frontier_cs/lazy_problems.py`), stamping
+the submodule commit in `_generator/.generated-ref` so later accesses serve the
+files directly. To materialize manually:
 
 ```bash
 git submodule update --init third_party/formal-conjectures

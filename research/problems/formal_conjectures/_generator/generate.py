@@ -658,6 +658,17 @@ def main() -> int:
                 shutil.rmtree(child)
 
     generate(decls, args.out, ref, lean_version, categories, args.only)
+
+    # Stamp the submodule commit so the framework's lazy materialization
+    # (src/frontier_cs/lazy_problems.py) can tell fresh from stale.
+    if not args.only and args.out == PROBLEMS_ROOT:
+        head = subprocess.run(
+            ["git", "-C", str(SUBMODULE), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        )
+        if head.returncode == 0:
+            (GENERATOR_DIR / ".generated-ref").write_text(
+                head.stdout.strip() + "\n", encoding="utf-8")
     return 0
 
 

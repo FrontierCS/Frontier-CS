@@ -142,13 +142,11 @@ Check each problem's `readme` for the specific `solve()` signature and return ty
 formalized conjecture from
 [google-deepmind/formal-conjectures](https://github.com/google-deepmind/formal-conjectures).
 Problem directories are generated from the `third_party/formal-conjectures`
-submodule and are not committed — materialize them once per checkout:
+submodule and are not committed — the framework materializes them
+automatically on first access (list/eval/show):
 
 ```bash
-git submodule update --init third_party/formal-conjectures
-python3 research/problems/formal_conjectures/_generator/generate.py
-
-# List them
+# List them (generates the problem dirs on first run)
 uv run frontier list research | grep formal_conjectures
 
 # Evaluate a proof (Docker backend; the image bundles Lean + Mathlib prebuilt)
