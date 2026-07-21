@@ -126,3 +126,14 @@ tail-frame (≥60) LPIPS-vs-GT over the unpatched baseline, gated by a wall-cloc
 guardrail (so drift can't be bought with more compute). A history-stabilization
 reference reliably beats baseline (validated t≈2.5/22 clips); beating it
 substantially is the open challenge.
+
+## Structured-LWE Public Witness Recovery
+
+This cryptanalysis task publishes 200 structured-LWE instances spanning ten
+balanced matrix/secret structure families.  Its problem ID is
+`lwe_structured_recovery`.  Agents recover any public-valid secret for as many
+instances as possible and submit an immediately updated cumulative JSON ledger;
+each solved instance contributes one point.  The evaluator holds no planted
+secret or private checking key: it deterministically reconstructs the public
+matrix and checks the submitted vector's public secret and centered-error
+predicates.
