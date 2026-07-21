@@ -1,0 +1,169 @@
+# NanoSLM Hybrid Architecture Design (fixed-wall-clock, held-out bits-per-byte)
+
+## Problem
+
+Design a language-model **architecture** that reaches the lowest possible
+held-out **bits-per-byte** (`val_bpb`) when trained **from scratch** under a
+**fixed wall-clock budget on a single H100**. You submit one file — `model.py`,
+the model definition — and nothing else. The hidden judge plugs it into a locked
+training + evaluation harness, trains it for a fixed wall-clock
+`T`, and scores its `val_bpb` against a **locked baseline architecture** trained
+under the identical budget.
+
+The starting point is the 3:1 Gated DeltaNet hybrid from *Olmo Hybrid*
+(arXiv:2604.03444); the question is how much further it can be pushed. The optimizer, learning-rate schedule,
+weight-decay grouping, data, tokenizer, and the wall-clock budget are all
+**fixed by the judge**. You control the architecture — and, as of this revision,
+the **training context length** (see below). A more compute-efficient
+architecture legitimately completes more useful training steps within `T` — that
+is the intended lever.
+
+## Metric
+
+The tokenizer is fixed by the judge: **dolma2 BPE**
+(`allenai/dolma2-tokenizer`, vocabulary 100278) over a FineWeb-Edu corpus. The
+scored quantity is held-out **bits per byte**:
+
+```
+val_bpb = total_cross_entropy_nats / (val_bytes * ln 2)
+```
+
+where `val_bytes` is the byte length of the hidden held-out **text** — not the
+number of tokens it was split into. Normalizing by bytes is what makes the
+number independent of the tokenizer, so it is comparable across architectures
+and cannot be gamed by changing tokenization. **Lower is better.**
+
+A per-token validation perplexity is also reported, for readability only. It is
+not the scored quantity, and because the tokenizer is not byte-level it is *not*
+equal to `2**val_bpb`.
+
+## Program interface
+
+Submit a single Python file `model.py` that defines a factory the harness calls:
+
+```python
+def build_model(config) -> torch.nn.Module: ...
+# or, equivalently, a class usable as NanoSLM(config):
+class NanoSLM(torch.nn.Module): ...
+```
+
+`config` is provided by the harness and has:
+
+- `config.vocab_size` — always `100278` (dolma2 BPE; do not change).
+- `config.block_size` — the context length you will be **trained** at (8192 by
+  default; see "Training context length" below).
+- `config.eval_block_size` — the context length you will be **scored** at.
+  Always `8192`, whatever you train at.
+- `config.train_seconds_hint`, `config.param_cap_hint`, `config.device_hint` —
+  read-only informational hints (no guarantees).
+
+The returned module must implement:
+
+```python
+def forward(self, idx):
+    # idx: LongTensor [B, T] of BPE token ids in [0, 100278)
+    return logits          # FloatTensor [B, T, vocab_size]
+```
+
+Returning `(logits, loss)` is accepted, but the judge **ignores any returned
+loss** and computes cross-entropy itself, from your `logits`, for both training
+and validation. You choose everything inside the model: width, depth, attention
+mechanism, normalization, positional scheme, embedding sharing, initialization,
+and so on. You do **not** control the optimizer or training loop.
+
+The vocabulary is large enough that the embedding table is a first-class design
+concern — at `d=768` it is ~77M parameters on its own, so tying, factorizing or
+otherwise reshaping it is a real lever rather than a detail.
+
+The 3:1 Gated DeltaNet hybrid `model.py` (the *Olmo Hybrid* recipe applied to the
+`olmo3_190M` baseline) is provided as a starting point.
+
+## Training context length — yours to choose, with a catch
+
+You may declare the context length you are **trained** at by defining a
+module-level integer in `model.py`:
+
+```python
+BLOCK_SIZE = 2048     # power of two in [256, 8192]; omit it to train at 8192
+```
+
+Omit it and you train at the default **8192**. A value outside `[256, 8192]`, or
+one that is not a power of two, is rejected before training (score 0).
+
+**You are always evaluated at 8192.** That is fixed for every submission — it is
+what makes `val_bpb` comparable across submissions — and it is the whole trade:
+
+- A shorter training context makes each optimizer step cheaper, so you complete
+  **more steps** inside the same fixed wall-clock budget `T`. At 8192 attention
+  is ~78–84% of layer FLOPs, so this is a large effect.
+- But your model is still scored on 8192-token windows. Train at 1024 and you
+  are asked for logits at positions **8x beyond anything you saw in training**.
+
+How well a model survives that depends heavily on its **position encoding**,
+which is not the same thing as architectural quality under a compute budget.
+Plain RoPE degrades sharply past its training length; NTK-aware / YaRN-style
+scaling, position interpolation and ALiBi extrapolate considerably better. So if
+you shorten the training context, treat the position encoding as part of the
+decision rather than an afterthought — and be aware that some of what you would
+then be measuring is extrapolation behaviour, not mixer efficiency.
+
+Practical warning: anything you size or cache off `config.block_size` — RoPE
+tables, learned positional embeddings, causal or sliding-window mask buffers —
+must still work at `config.eval_block_size`. Build such buffers against
+`config.eval_block_size`, or lazily against the actual `T` you are handed. A
+model that crashes or silently truncates at 8192 scores 0.
+
+The baseline always trains at 8192, so this trade is measured against a fixed
+point.
+
+## Validity constraints
+
+- Submission is `model.py` only, `.py`, at most 256 KB.
+- The file must define `build_model(config)` or `class NanoSLM`.
+- Train from scratch: no loading pretrained weights, no reading files, no
+  network, no environment access, no reading the clock, no timing
+  short-circuits. Submissions containing such calls are rejected before running.
+- Trainable parameters must be within the judge's param cap, and the model must
+  fit and train within GPU memory. Over-cap or out-of-memory scores 0.
+- The model must actually train (its parameters must change) and must produce a
+  non-degenerate output distribution. Untrained or constant-output models score 0.
+
+## Scoring
+
+Let `base_bpb` be the locked baseline architecture's held-out bits-per-byte and
+`sub_bpb` be your submission's, both trained for the same wall-clock `T` on the
+same H100 with the same data order (common random numbers), and both scored on
+the same hidden held-out text at the same fixed 8192-token windows. The scored
+measurement is your **absolute** bits-per-byte gain:
+
+```
+gain  = base_bpb - sub_bpb                   # bits per byte
+score = clip(100 * gain / BPB_SCORE_SCALE, 0, 100)
+```
+
+- The baseline architecture (tying its `val_bpb`) scores **0**.
+- A submission worse than the baseline scores **0**.
+- `BPB_SCORE_SCALE` is only a **scaling convention** — it exists to map bits per
+  byte onto the 0–100 range the platform expects, not to declare what counts as
+  a full result. Maximize `gain`; `score_unbounded` keeps rewarding improvements
+  past the cap.
+
+Bits per byte is the unit the language-modelling literature quotes, so a gain
+here is directly comparable to published figures. A relative improvement is also
+reported, for readability.
+
+Public feedback reports `base_val_bpb`, `sub_val_bpb`, the absolute gain and the
+relative improvement, the training context you used, the number of optimizer
+steps completed, and the training wall-clock. Hidden data, evaluator internals,
+and the baseline definition are not exposed.
+
+## Iterating
+
+During a trial you can package and score the current `model.py`:
+
+```bash
+bash /app/submit.sh
+```
+
+The best successful iterative submission is kept if a later artifact is worse or
+you time out.
