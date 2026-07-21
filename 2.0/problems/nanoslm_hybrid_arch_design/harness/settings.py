@@ -48,12 +48,15 @@ class TaskConfig:
     eval_block_size: int = 8192    # FIXED scoring window -- judge-owned
 
     # --- fixed optimization recipe (locked; agent designs architecture only) ---
-    # 8x4 rather than 32x1: at ctx 8192 a 32-sequence micro-batch is 262k tokens
-    # of activations per forward. Accumulating keeps the EFFECTIVE batch at 32
-    # sequences (unchanged from the ctx-1024 recipe, so the optimization recipe
-    # is still locked and comparable) while bounding peak memory.
-    batch_size: int = 8            # sequences per micro-batch (per device)
-    grad_accum: int = 4            # -> effective batch 32 sequences
+    # 2x16 (effective batch 32). MEASURED: micro-batch 8 at ctx 8192 OOMs on an
+    # H100 -- the [8, 8192, 100352] fp32 logits the harness materializes for CE
+    # are ~26GB, and the baseline transformer alone tried to allocate 24.48GiB
+    # with only 20.77GiB free. micro-batch 2 keeps the fp32-logits copy ~6.6GB
+    # and fits both arms (incl. the GDN hybrid) with margin; grad_accum 16 holds
+    # the effective batch at 32 so the optimization recipe stays comparable.
+    # (A fused/chunked cross-entropy would let micro-batch grow again -- TODO.)
+    batch_size: int = 2            # sequences per micro-batch (per device)
+    grad_accum: int = 16           # -> effective batch 32 sequences
     learning_rate: float = 3.0e-3  # AdamW peak LR (nanoGPT-speedrun class)
     min_lr: float = 3.0e-4
     weight_decay: float = 0.1

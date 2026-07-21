@@ -106,12 +106,24 @@ try:
             # fla's Triton kernels JIT-compile and autotune on first use. Give
             # them a writable cache so a warm container does not pay it twice.
             "TRITON_CACHE_DIR": "/tmp/triton-cache",
+            # Reduce allocator fragmentation for the large fp32-logits CE at
+            # ctx 8192 (paired with the batch_size=2 fix in settings.py).
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         })
     )
 
     app = modal.App(APP_NAME)
 
-    @app.function(image=image, gpu=GPU, timeout=6 * 60 * 60)
+    # Real corpus (FineWeb-Edu, dolma2-tokenized) staged on a Modal Volume and
+    # mounted at the data path harness/settings.py expects, so the GPU arms train
+    # on REAL tokens instead of data.py's synthetic fallback. Populated once via
+    # `modal volume put nanoslm-corpus {train,val}.bin manifest.json /`. This is
+    # the "real shard mounted for calibration" the design leaves as a TODO.
+    CORPUS_VOL = modal.Volume.from_name("nanoslm-corpus", create_if_missing=True)
+    REMOTE_DATA = "/opt/nanoslm_arch/data"
+
+    @app.function(image=image, gpu=GPU, timeout=6 * 60 * 60,
+                  volumes={REMOTE_DATA: CORPUS_VOL})
     def evaluate_remote(solution_source: str, smoke: bool = True,
                         role: str = "final", overrides: dict | None = None) -> dict:
         """Run the judge on `solution_source` and return its full result.
@@ -198,7 +210,8 @@ try:
             "stack": stack,
         }
 
-    @app.function(image=image, gpu=GPU, timeout=6 * 60 * 60)
+    @app.function(image=image, gpu=GPU, timeout=6 * 60 * 60,
+                  volumes={REMOTE_DATA: CORPUS_VOL})
     def run_pair_remote(solution_source: str, smoke: bool = False,
                         role: str = "final") -> dict:
         """Run BOTH arms on one GPU and return their metrics as plain dicts.
