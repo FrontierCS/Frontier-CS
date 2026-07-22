@@ -4,9 +4,6 @@
 # Usage:
 #   bash evaluate.sh /path/to/model.py     # score a submission (needs torch+GPU)
 #   bash evaluate.sh --selftest            # torch-free policy/scoring/fingerprint tests
-#
-# Tip: FRONTIER_NANOSLM_SMOKE=1 shrinks the model/budget for a fast CPU wiring
-# check (never used for real scoring).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

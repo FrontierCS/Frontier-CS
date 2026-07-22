@@ -4,7 +4,7 @@ Contract: ``evaluate(solution_path) -> (score, score_unbounded, message, metrics
 The submission is a single ``model.py`` (full architecture freedom). The judge
 trains it from scratch for a fixed wall-clock budget on a single H100 and scores
 held-out validation perplexity against a locked baseline architecture trained
-under the identical budget. See DESIGN.md.
+under the identical budget.
 
 Top-level imports are torch-free so this module loads (and self-tests) without a
 GPU; the training/eval path is lazy-imported inside :func:`evaluate`.
@@ -26,14 +26,14 @@ if str(_HERE) not in sys.path:
 
 from harness import policy, scoring, settings  # noqa: E402
 
-# cuBLAS determinism MUST be configured before the first CUDA call, which means
+# cuBLAS determinism must be configured before the first CUDA call, which means
 # before torch is imported anywhere. This module's top-level imports are
 # deliberately torch-free (see the docstring), so setting it here is early
 # enough on every path -- Modal, judge container, or a local GPU box.
 #
-# TaskConfig has carried `cublas_workspace_config` since the problem was
-# written, and DESIGN.md 5 lists CUBLAS_WORKSPACE_CONFIG=:4096:8 as part of the
-# determinism story, but NOTHING READ IT. So every run so far had
+# TaskConfig has carried `cublas_workspace_config` (CUBLAS_WORKSPACE_CONFIG=
+# :4096:8) since the problem was written, as part of the determinism story, but
+# nothing read it. So every run so far had
 # torch.use_deterministic_algorithms(True) set while cuBLAS remained free to be
 # non-deterministic -- which showed up as a UserWarning in the first GPU run and
 # quietly weakened the CRN pairing the score depends on.
@@ -57,13 +57,13 @@ _protect_evaluator_source()
 
 
 def _backend() -> str:
-    """MODAL (CPU judge -> Modal GPU) or LOCAL (directly-attached GPU).
+    """MODAL (CPU judge -> Modal GPU) or local (directly-attached GPU).
 
     The design specifies a CPU judge with the H100 served on Modal, the same
     shape as nanowm_rollout_* and vllm_llm_serving_optimization -- but until
     now nothing implemented it: `evaluate()` only called `_select_device()`,
     which in a CPU-only judge container returns "cpu" and would try to train a
-    ~190M model at ctx 8192 on CPU. Harbor invokes THIS module, not the manual
+    ~190M model at ctx 8192 on CPU. Harbor invokes this module, not the manual
     `modal_app.evaluate_remote` wrapper, so without this the problem is not
     runnable under Harbor at all.
 
@@ -81,7 +81,7 @@ def _backend() -> str:
 def _run_pair_modal(solution_path: str, role: str):
     """Run both arms on a Modal GPU; score judge-side.
 
-    Only ARM METRICS cross the boundary -- scoring and the hidden constants
+    Only arm metrics cross the boundary -- scoring and the hidden constants
     (bpb_score_scale) stay in the judge, so a GPU worker never sees them and cannot
     hand back a score the judge did not compute.
     """
@@ -89,11 +89,7 @@ def _run_pair_modal(solution_path: str, role: str):
 
     source = Path(solution_path).read_text(encoding="utf-8", errors="replace")
     with app.run():
-        res = run_pair_remote.remote(
-            solution_source=source,
-            smoke=settings.smoke_enabled(),
-            role=role,
-        )
+        res = run_pair_remote.remote(solution_source=source, role=role)
     return res
 
 
@@ -142,7 +138,7 @@ def _baseline_cache_put(cfg, fingerprint: str, ppl: float) -> None:
 
 
 def _load_submission_module(path: str):
-    """Import the submitted model.py AFTER the static policy gate has passed."""
+    """Import the submitted model.py after the static policy gate has passed."""
     spec = importlib.util.spec_from_file_location("submission_model", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load submission module")
@@ -169,9 +165,23 @@ def evaluate(solution_path: str):
         except Exception as exc:  # noqa: BLE001 - classify, never leak
             return (0.0, 0.0, f"environment_error: modal dispatch failed "
                               f"({type(exc).__name__})", {"config_fingerprint": fp})
+        # Guard rejections travel as a field, not an exception: GuardError is
+        # defined in harness.runner (which imports torch), so this CPU-only
+        # judge could not deserialize the raised form. The message is the
+        # public, classified reason -- same wording as the local path's.
+        if res.get("guard_error"):
+            return 0.0, 0.0, f"guard: {res['guard_error']}", {
+                "config_fingerprint": fp, "role": role,
+                "stack": res.get("stack"),
+            }
         b, c = res["baseline"], res["submission"]
         sr = scoring.score_from_bpb(b["val_bpb"], c["val_bpb"], cfg.bpb_score_scale)
-        note = ["smoke"] if settings.smoke_enabled() else []
+        note = []
+        if role == "agent":
+            # Mirrors the local path's note: says whether this feedback run
+            # paid ~T (cached baseline) or ~2T (fresh pair, cache populated).
+            note.append("iterative(cached-baseline)"
+                        if res.get("baseline_cached") else "iterative")
         message = scoring.format_message(
             b["val_bpb"], c["val_bpb"], sr,
             steps=c["steps"], wall_seconds=c["wall_seconds"],
@@ -180,7 +190,7 @@ def evaluate(solution_path: str):
         return sr.score, sr.score_unbounded, message, {
             "base_val_bpb": b["val_bpb"], "sub_val_bpb": c["val_bpb"],
             "abs_bpb_delta": sr.abs_bpb_delta, "sub_val_ppl": c["val_ppl"],
-            # abs_bpb_delta is the SCORED quantity; rel_improvement is kept
+            # abs_bpb_delta is the scored quantity; rel_improvement is kept
             # alongside it so an operator never has to recompute it.
             "rel_improvement": sr.rel_improvement,
             "bpb_score_scale": cfg.bpb_score_scale,
@@ -193,7 +203,7 @@ def evaluate(solution_path: str):
             "config_fingerprint": fp, "stack": res.get("stack"),
         }
 
-    # LOCAL backend: torch + a directly-attached GPU.
+    # Local backend: torch + a directly-attached GPU.
     try:
         device = _select_device()
     except RuntimeError as exc:
@@ -248,7 +258,7 @@ def evaluate(solution_path: str):
         )
 
     sr = scoring.score_from_bpb(base_bpb, sub.val_bpb, cfg.bpb_score_scale)
-    note = ["smoke"] if settings.smoke_enabled() else []
+    note = []
     if role == "agent":
         note.append("iterative(cached-baseline)" if base_steps is None else "iterative")
     message = scoring.format_message(
@@ -270,7 +280,7 @@ def evaluate(solution_path: str):
         "base_steps": base_steps,
         "sub_params": sub.n_params,
         "sub_wall_seconds": sub.wall_seconds,
-        # Agent-controlled TRAINING context vs the FIXED scoring window, both
+        # Agent-controlled training context vs the fixed scoring window, both
         # reported so a submission can see the steps-vs-extrapolation trade it
         # actually made rather than inferring it.
         "sub_train_block_size": sub.train_block_size,
@@ -313,13 +323,29 @@ def prepare() -> dict:
 # --------------------------------------------------------------------------- #
 # Torch-free self-test: exercises policy + scoring + fingerprint without a GPU.
 # --------------------------------------------------------------------------- #
+def _write_selftest_bin(dirpath: str, name: str, vocab_size: int, n: int, seed: int) -> str:
+    """Write a tiny real uint32 token stream for the self-test.
+
+    The harness has no synthetic fallback, so the self-test manufactures its own
+    small real corpus (in-range ids, on disk) rather than relying on the loader
+    to fabricate one -- the same load path the judge uses, just tiny.
+    """
+    import numpy as _np
+
+    rng = _np.random.default_rng(seed)
+    arr = rng.integers(0, vocab_size, size=n).astype(_np.uint32)
+    path = os.path.join(dirpath, name)
+    arr.tofile(path)
+    return path
+
+
 def _selftest() -> int:
     ok = True
 
     def check(name, cond):
         nonlocal ok
         ok = ok and bool(cond)
-        print(f"[{'PASS' if cond else 'FAIL'}] {name}", file=sys.stderr)
+        print(f"[{'pass' if cond else 'fail'}] {name}", file=sys.stderr)
 
     # --- policy: accept reference + baseline, reject malicious variants ---
     ref_src = (_HERE / "reference.py").read_text()
@@ -338,6 +364,24 @@ def _selftest() -> int:
     for name, src in malicious.items():
         check(f"policy rejects {name}", not policy.check_source(src).ok)
 
+    # AST layer: substring evasions that motivated the strict allowlist. None
+    # of these contain a denied substring; all must die on the AST rules.
+    evasive = {
+        "import os (allowlist)": "import os\nclass NanoSLM: pass\n",
+        "bare getattr": "import torch\ng = getattr\nclass NanoSLM: pass\n",
+        "bare eval": "class NanoSLM: pass\ndef build_model(c):\n return eval('1')\n",
+        "dunder walk": "class NanoSLM: pass\ndef build_model(c):\n return ().__class__\n",
+        "aliased fromfile": "import numpy as q\nclass NanoSLM: pass\ndef build_model(c):\n return q.fromfile('x')\n",
+        "from-import load": "from torch import load\nclass NanoSLM: pass\n",
+        "wildcard import": "from torch import *\nclass NanoSLM: pass\n",
+        "relative import": "from . import secrets\nclass NanoSLM: pass\n",
+        "banned import segment (torch.hub)": "import torch.hub as h\nclass NanoSLM: pass\n",
+        "operator (attrgetter-by-string)": "import operator\nclass NanoSLM: pass\n",
+        "unparseable source": "def build_model(:\n",
+    }
+    for name, src in evasive.items():
+        check(f"policy rejects {name}", not policy.check_source(src).ok)
+
     # legitimate idioms must survive
     check(
         "policy allows model.eval()/torch.compile()",
@@ -345,9 +389,19 @@ def _selftest() -> int:
             "class NanoSLM:\n def forward(self,x):\n  self.eval(); return x\n"
         ).ok,
     )
+    check(
+        "policy allows super().__init__ / torch.__version__ / triton",
+        policy.check_source(
+            "import torch\nimport triton\nimport triton.language as tl\n"
+            "class NanoSLM(torch.nn.Module):\n"
+            " def __init__(self):\n"
+            "  super().__init__()\n"
+            "  self.v = torch.__version__\n"
+        ).ok,
+    )
 
-    # --- scoring: ABSOLUTE bpb gain. baseline->0, worse->0, scale->100 ---
-    # Cases are constructed by SUBTRACTING bits per byte, not by scaling
+    # --- scoring: Absolute bpb gain. baseline->0, worse->0, scale->100 ---
+    # Cases are constructed by subtracting bits per byte, not by scaling
     # base_bpb: the scored quantity is now `base_bpb - sub_bpb`, so a relative
     # construction would no longer test what it claims to.
     scale = 0.05          # bpb gain that saturates the bounded score
@@ -365,22 +419,27 @@ def _selftest() -> int:
     check("unbounded keeps rewarding past 100", s_over.score_unbounded > 100.0)
     check("unbounded is exactly the un-clipped ratio",
           abs(s_over.score_unbounded - 200.0) < 1e-9)
-    # The score must depend on the ABSOLUTE gain only -- the same 0.05 bpb gain
+    # The score must depend on the absolute gain only -- the same 0.05 bpb gain
     # scores the same at any operating point. (This is the property the old
-    # relative form did NOT have, and the reason the operating point now
-    # matters: see DESIGN.md 8.)
+    # relative form did not have, and the reason the operating point now
+    # matters.)
     s_lowbase = scoring.score_from_bpb(1.5, 1.5 - scale, scale)
     check("score depends on absolute gain, not on base_bpb",
           abs(s_lowbase.score - s_sat.score) < 1e-9)
-    # ... while BOTH figures are still reported.
+    # ... while both figures are still reported.
     check("relative improvement still reported",
           abs(s_sat.rel_improvement - (scale / base_bpb)) < 1e-12
           and abs(s_sat.abs_bpb_delta - scale) < 1e-12)
-    # A SCORING constant, not a training knob: changing it must not invalidate
+    # A scoring constant, not a training knob: changing it must not invalidate
     # a cached baseline, so it must stay out of the fingerprint.
-    check("bpb_score_scale is NOT fingerprinted",
+    check("bpb_score_scale is not fingerprinted",
           "bpb_score_scale" not in settings._FINGERPRINT_KEYS
           and "r_target" not in settings._FINGERPRINT_KEYS)
+    # Same for the plausibility floor (a guard constant), which must exist and
+    # sit far below any honest result at this scale.
+    check("min_plausible_bpb set, sane, and not fingerprinted",
+          0.0 < settings.DEFAULT.min_plausible_bpb <= 0.5
+          and "min_plausible_bpb" not in settings._FINGERPRINT_KEYS)
 
     # --- fingerprint: stable, and changes iff a locked knob changes ---
     from dataclasses import replace
@@ -391,7 +450,7 @@ def _selftest() -> int:
     check("fingerprint stable", fp0 == fp_same)
     check("fingerprint changes on locked-knob change", fp0 != fp_diff)
 
-    # The EVAL window is fingerprinted (changing it changes what val_bpb means,
+    # The eval window is fingerprinted (changing it changes what val_bpb means,
     # so a cached baseline must not be reused) ...
     check(
         "fingerprint changes on eval_block_size change",
@@ -399,11 +458,11 @@ def _selftest() -> int:
             replace(settings.DEFAULT, eval_block_size=4096)
         ),
     )
-    # ... while the TRAINING context is NOT. It varies per submission now, so
+    # ... while the training context is not. It varies per submission now, so
     # fingerprinting it would give every submission a unique key and the cached
     # baseline would never hit -- doubling the cost of the agent-role path.
     check(
-        "fingerprint IGNORES the default training block_size",
+        "fingerprint ignores the default training block_size",
         fp0 == settings.config_fingerprint(
             replace(settings.DEFAULT, block_size=2048)
         ),
@@ -450,10 +509,10 @@ def _selftest() -> int:
                 rejected = True
             check(f"BLOCK_SIZE={bad!r} rejected", rejected)
 
-        # A model that sizes a positional table off the TRAINING context trains
+        # A model that sizes a positional table off the training context trains
         # fine and then fails at the 8192 eval -- the characteristic new failure
         # mode of the split contexts. It must come back as a GuardError naming
-        # BOTH contexts, not as a bare RuntimeError/IndexError. (torch raises
+        # Both contexts, not as a bare RuntimeError/IndexError. (torch raises
         # IndexError here, which an earlier `except RuntimeError` missed.)
         import torch
         import torch.nn as nn
@@ -464,7 +523,7 @@ def _selftest() -> int:
             def __init__(self, config):
                 super().__init__()
                 self.emb = nn.Embedding(config.vocab_size, 8)
-                # WRONG on purpose: should be config.eval_block_size.
+                # Wrong on purpose: should be config.eval_block_size.
                 self.pos = nn.Embedding(config.block_size, 8)
                 self.lin = nn.Linear(8, config.vocab_size)
 
@@ -472,25 +531,72 @@ def _selftest() -> int:
                 p = self.pos(torch.arange(idx.shape[1], device=idx.device))
                 return self.lin(self.emb(idx) + p)
 
-        tiny = replace(
-            settings.DEFAULT, vocab_size=256, eval_block_size=512, batch_size=2,
-            train_seconds=0.5, max_train_seconds=10.0, val_tokens=1024,
-            train_tokens_path="", val_tokens_path="", manifest_path="",
-        )
-        try:
-            _runner.run_arm(
-                _runner.load_factory(_mod(build_model=_BadPos)),
-                _TD(tiny), tiny, "cpu", 256,
+        import tempfile as _tempfile
+
+        with _tempfile.TemporaryDirectory() as _cdir:
+            _tp = _write_selftest_bin(_cdir, "train.bin", 256, 16384, 1)
+            _vp = _write_selftest_bin(_cdir, "val.bin", 256, 16384, 2)
+            tiny = replace(
+                settings.DEFAULT, vocab_size=256, eval_block_size=512, batch_size=2,
+                train_seconds=0.5, max_train_seconds=10.0, val_tokens=1024,
+                train_tokens_path=_tp, val_tokens_path=_vp, manifest_path="",
+                val_bytes=1024 * 4,
             )
-            got = "no error"
-        except _runner.GuardError as exc:
-            got = str(exc)
+            try:
+                _runner.run_arm(
+                    _runner.load_factory(_mod(build_model=_BadPos)),
+                    _TD(tiny), tiny, "cpu", 256,
+                )
+                got = "no error"
+            except _runner.GuardError as exc:
+                got = str(exc)
         check(
             "eval-context failure -> GuardError naming both contexts",
             "evaluation failed at context 512" in got and "trained at 256" in got,
         )
 
-    # --- THE CRUX: eval windows are 8192 whatever the training context is ---
+        # --- plausibility floor: a too-good bpb is rejected as leakage. The
+        # eval is stubbed to return an impossibly low bpb; run_arm must refuse
+        # it rather than score it. (Backstop for the static gate -- see
+        # settings.min_plausible_bpb.) ---
+        from harness.eval_ppl import EvalOutput as _EO
+
+        class _TinyOK(nn.Module):
+            def __init__(self, config):
+                super().__init__()
+                self.emb = nn.Embedding(config.vocab_size, 8)
+                self.lin = nn.Linear(8, config.vocab_size)
+
+            def forward(self, idx):
+                return self.lin(self.emb(idx))
+
+        with _tempfile.TemporaryDirectory() as _cdir:
+            _tp = _write_selftest_bin(_cdir, "train.bin", 256, 16384, 5)
+            _vp = _write_selftest_bin(_cdir, "val.bin", 256, 16384, 6)
+            tiny2 = replace(
+                settings.DEFAULT, vocab_size=256, eval_block_size=512, batch_size=2,
+                train_seconds=0.5, max_train_seconds=10.0, val_tokens=1024,
+                train_tokens_path=_tp, val_tokens_path=_vp, manifest_path="",
+                val_bytes=1024 * 4,
+            )
+            _real_eval = _runner.evaluate_perplexity
+            _runner.evaluate_perplexity = (
+                lambda *a, **k: _EO(0.01, 1.0, 0.01, 1024, 1.0, 4096.0)
+            )
+            try:
+                _runner.run_arm(
+                    _runner.load_factory(_mod(build_model=_TinyOK)),
+                    _TD(tiny2), tiny2, "cpu", 256,
+                )
+                floor_msg = "no error"
+            except _runner.GuardError as exc:
+                floor_msg = str(exc)
+            finally:
+                _runner.evaluate_perplexity = _real_eval
+        check("implausibly low bpb -> GuardError (leakage floor)",
+              "plausibility floor" in floor_msg)
+
+    # --- The crux: eval windows are 8192 whatever the training context is ---
     # Numpy-only, no torch: exercise the window arithmetic val_windows uses.
     try:
         import numpy as np
@@ -501,30 +607,38 @@ def _selftest() -> int:
         TokenData = None
 
     if TokenData is not None:
-        smoke = replace(
-            settings.DEFAULT, val_tokens=32_768, train_tokens_path="",
-            val_tokens_path="", manifest_path="", val_bytes=0,
-        )
-        widths, denoms = set(), set()
-        for train_ctx in (8192, 2048, 256):
-            d = TokenData(replace(smoke, block_size=train_ctx))
-            # val_windows yields torch tensors, so replicate its slicing here
-            # rather than importing torch: same expression, no device.
-            eb = d.cfg.eval_block_size
-            n = min(d.val.size - 1, d.cfg.val_tokens)
-            n_windows = n // eb
-            widths.add((eb, n_windows))
-            denoms.add(round(d.val_bytes_for(n_windows * eb), 6))
-            # ... and the TRAINING batch really does follow the training ctx.
-            x = np.stack([d.train[i: i + train_ctx] for i in (0, 1)])
-            check(f"train batch width == {train_ctx}", x.shape[1] == train_ctx)
-        check("eval window width/count independent of training ctx", len(widths) == 1)
-        check("bpb denominator independent of training ctx", len(denoms) == 1)
-        check("eval window width is 8192", widths.pop() == (8192, 4))
+        import tempfile as _tempfile
 
-    # --- baseline cache HITS across submissions with different train contexts ---
+        with _tempfile.TemporaryDirectory() as _cdir:
+            _vocab = settings.DEFAULT.vocab_size
+            _tp = _write_selftest_bin(_cdir, "train.bin", _vocab, 16384, 3)
+            # val must hold > val_tokens ids so the window count is exercised.
+            _vp = _write_selftest_bin(_cdir, "val.bin", _vocab, 40_000, 4)
+            tiny_cfg = replace(
+                settings.DEFAULT, val_tokens=32_768,
+                train_tokens_path=_tp, val_tokens_path=_vp, manifest_path="",
+                val_bytes=32_768 * 4,
+            )
+            widths, denoms = set(), set()
+            for train_ctx in (8192, 2048, 256):
+                d = TokenData(replace(tiny_cfg, block_size=train_ctx))
+                # val_windows yields torch tensors, so replicate its slicing here
+                # rather than importing torch: same expression, no device.
+                eb = d.cfg.eval_block_size
+                n = min(d.val.size - 1, d.cfg.val_tokens)
+                n_windows = n // eb
+                widths.add((eb, n_windows))
+                denoms.add(round(d.val_bytes_for(n_windows * eb), 6))
+                # ... and the training batch really does follow the training ctx.
+                x = np.stack([d.train[i: i + train_ctx] for i in (0, 1)])
+                check(f"train batch width == {train_ctx}", x.shape[1] == train_ctx)
+            check("eval window width/count independent of training ctx", len(widths) == 1)
+            check("bpb denominator independent of training ctx", len(denoms) == 1)
+            check("eval window width is 8192", widths.pop() == (8192, 4))
+
+    # --- baseline cache hits across submissions with different train contexts ---
     # This is the reason block_size left the fingerprint. The key is derived
-    # from the CONFIG only; a submission's BLOCK_SIZE is resolved per-arm inside
+    # from the config only; a submission's BLOCK_SIZE is resolved per-arm inside
     # run_arm and never reaches the key, so one cached baseline serves both.
     import tempfile
 
@@ -537,7 +651,7 @@ def _selftest() -> int:
             key = settings.config_fingerprint(cfg_c)
             _baseline_cache_put(cfg_c, key, 1.2345)
             # Two submissions, training at 8192 and at 2048, both look the
-            # baseline up under the SAME config -> the same key -> a hit.
+            # baseline up under the same config -> the same key -> a hit.
             hits = [
                 _baseline_cache_get(cfg_c, settings.config_fingerprint(cfg_c))
                 for _ in (8192, 2048)
@@ -545,7 +659,7 @@ def _selftest() -> int:
             check("baseline cache hits for both training contexts",
                   hits == [1.2345, 1.2345])
             check(
-                "cache MISSES when the eval window changes",
+                "cache misses when the eval window changes",
                 _baseline_cache_get(
                     cfg_c,
                     settings.config_fingerprint(
@@ -558,7 +672,7 @@ def _selftest() -> int:
             else:
                 os.environ["FRONTIER_NANOSLM_BASELINE_CACHE"] = prev
 
-    print(("SELFTEST OK" if ok else "SELFTEST FAILED"), file=sys.stderr)
+    print(("selftest OK" if ok else "selftest failed"), file=sys.stderr)
     return 0 if ok else 1
 
 

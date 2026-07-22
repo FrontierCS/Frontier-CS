@@ -1,38 +1,19 @@
 """Held-out bits-per-byte evaluation (torch path).
 
-The harness computes cross-entropy from the model's ``logits`` on the HELD-OUT
+The harness computes cross-entropy from the model's ``logits`` on the held-out
 token stream and returns
 
     val_bpb = total_nll_nats / (total_val_BYTES * ln 2)
 
 Any loss returned by the model is ignored.
 
-WHY bpb IS THE PRIMARY METRIC (not perplexity):
+Why bpb is the primary metric (not perplexity):
   * It is tokenizer-independent, which is what makes it comparable across
-    architectures and ungameable -- see DESIGN.md §2.
+    architectures and ungameable.
   * It needs no ``exp``. ``val_ppl = exp(mean_ce)`` overflows to ``inf`` for a
     sufficiently bad submission (mean_ce > ~709), turning a merely-poor model
     into a non-finite number the guards then have to special-case. bpb is linear
     in the loss and cannot overflow.
-
-WHY THE DENOMINATOR IS BYTES AND NOT TOKENS -- READ BEFORE EDITING
-------------------------------------------------------------------
-While the tokenizer was byte-level, 1 token == 1 byte and dividing the summed
-NLL by the TOKEN count was accidentally identical to dividing by the byte count.
-Under dolma2 BPE the two differ by the compression ratio (~4.4x), and per-token
-CE/ln2 is a tokenizer-dependent number: a tokenizer that packs more text per
-token raises it for the same model quality. Normalizing that way would destroy
-exactly the property bpb was adopted for. So the denominator comes from
-``data.val_bytes_for(...)``, which is backed by a byte count measured at
-corpus-prep time and asserted present (``data.DataError`` otherwise) rather than
-defaulted.
-
-``val_ppl`` is still derived and reported, for human readability only -- it is
-no longer the scored quantity, and it remains a PER-TOKEN perplexity (so
-``val_ppl != 2**val_bpb`` any more; that identity held only at byte level). It
-is computed defensively so a diverged model reports ``inf`` rather than raising.
-Determinism knobs (no TF32, deterministic algorithms) are set on the GPU path so
-a cached/separate baseline is a valid common-random-numbers partner.
 """
 
 from __future__ import annotations
@@ -46,8 +27,8 @@ from .train import _logits_only
 
 @dataclass
 class EvalOutput:
-    val_bpb: float          # SCORED quantity: total_nll_nats / (bytes * ln 2)
-    val_ppl: float          # derived, per-TOKEN, readability only
+    val_bpb: float          # Scored quantity: total_nll_nats / (bytes * ln 2)
+    val_ppl: float          # derived, per-token, readability only
     val_ce_nats: float      # mean per-token CE
     n_tokens: int
     mean_abs_logit_std: float  # degeneracy signal (near-constant logits -> ~0)
@@ -97,7 +78,7 @@ def evaluate_perplexity(model, data: TokenData, cfg: TaskConfig, device: str) ->
     if total_tok == 0:
         return EvalOutput(float("inf"), float("inf"), float("inf"), 0, 0.0, 0.0)
 
-    # BYTES, not tokens -- see the module docstring. `total_ce` is the SUM of
+    # Bytes, not tokens. `total_ce` is the sum of
     # NLL in nats over every scored target token, so this is exactly
     # total_nll / (bytes * ln 2).
     total_bytes = data.val_bytes_for(total_tok)
@@ -109,7 +90,7 @@ def evaluate_perplexity(model, data: TokenData, cfg: TaskConfig, device: str) ->
     val_bpb = total_ce / (total_bytes * math.log(2.0))
 
     mean_ce = total_ce / total_tok
-    # Derived for readability only, and PER TOKEN. Guarded: exp overflows above
+    # Derived for readability only, and per token. Guarded: exp overflows above
     # mean_ce ~709, and a diverged submission can get there.
     try:
         val_ppl = math.exp(mean_ce)

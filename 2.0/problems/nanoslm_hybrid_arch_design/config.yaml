@@ -3,7 +3,7 @@ runtime:
   # Submission is a single Python file, the model definition (/app/model.py).
   # `language: python` keeps the extension/CLI conventions standard.
   language: python
-  timeout_seconds: 21600            # long-horizon: the agent iterates for hours
+  timeout_seconds: 86400
   environment: >-
     Full-freedom PyTorch model.py submitted against a locked
     training harness over a dolma2-BPE-tokenized FineWeb-Edu corpus; a single
@@ -27,39 +27,34 @@ runtime:
   judge_pip_packages:
     - modal
   docker:
-    # Experimental images; build before a local Harbor trial. The agent image
-    # carries the harness + a starter model.py; the judge image additionally
-    # vendors the tokenized training shard, the HELD-OUT validation token stream
-    # and its manifest (which carries val_bytes, the bpb denominator), the
-    # locked baseline architecture, and the cached baseline metric.
     image: frontiercs/nanoslm-hybrid-arch-design-agent:experimental-v0
     judge_image: frontiercs/nanoslm-hybrid-arch-design-judge:experimental-v0
 environment:
   cpus: 8
   memory_mb: 32768
   storage_mb: 32768
-  build_timeout_seconds: 5400
+  build_timeout_seconds: 7200
 evaluation:
-  # GPU served on Modal (one per environment); judge container is CPU-only.
   gpu: H100
-  # dolma2 BPE (the OLMo-3 tokenizer). UNGATED -- no HF token required.
   tokenizer: allenai/dolma2-tokenizer
-  vocab_size: 100278                 # > 65535, so token streams are uint32
+  # 100352 = dolma2's 100278 real ids padded up (Olmo 3 convention; ids on
+  # disk stay < 100278). > 65535, so token streams are uint32.
+  vocab_size: 100352
   dataset: HuggingFaceFW/fineweb-edu:sample-10BT
-  block_size: 8192                   # default training context (agent may override)
-  eval_block_size: 8192              # fixed scoring context
-  train_seconds: 1800                # fixed wall-clock budget T per training run
-  max_train_seconds: 3300            # hard cap (< 1h)
-  val_tokens: 1048576                # held-out TARGET tokens scored
-  # The scored metric is bits per BYTE: nll_nats / (val_bytes * ln2). val_bytes
+  block_size: 8192
+  eval_block_size: 8192
+  train_seconds: 21600                # fixed wall-clock budget T per training run (6 h)
+  max_train_seconds: 43200
+  val_tokens: 1048576
+  # The scored metric is bits per byte: nll_nats / (val_bytes * ln2). val_bytes
   # is measured by docker/prep_assets.py and shipped in the judge image's
-  # manifest.json -- normalizing by the TOKEN count would make the metric
+  # manifest.json -- normalizing by the token count would make the metric
   # tokenizer-dependent.
   metric: val_bpb
-  # Scoring is on the ABSOLUTE val_bpb gain over the locked baseline:
+  # Scoring is on the absolute val_bpb gain over the locked baseline:
   #   score = clip(100 * (base_bpb - sub_bpb) / bpb_score_scale, 0, 100)
-  bpb_score_scale: 0.05              # bpb gain that saturates the bounded score
-  param_cap: 400000000               # trainable-param cap; over-cap -> score 0 (matches harness/settings.py)
+  bpb_score_scale: 0.5
+  param_cap: 400000000
   seed: 1337
 submission:
   kind: file

@@ -10,18 +10,30 @@ training + evaluation harness, trains it for a fixed wall-clock
 `T`, and scores its `val_bpb` against a **locked baseline architecture** trained
 under the identical budget.
 
-The starting point is the 3:1 Gated DeltaNet hybrid from *Olmo Hybrid*
-(arXiv:2604.03444); the question is how much further it can be pushed. The optimizer, learning-rate schedule,
+The starting point is a 3:1 Gated DeltaNet hybrid (`reference.py`, following
+*Olmo Hybrid*, arXiv:2604.03444); the question is how much further it can be
+pushed. The optimizer, learning-rate schedule,
 weight-decay grouping, data, tokenizer, and the wall-clock budget are all
 **fixed by the judge**. You control the architecture — and, as of this revision,
 the **training context length** (see below). A more compute-efficient
 architecture legitimately completes more useful training steps within `T` — that
 is the intended lever.
 
+Why a hybrid, specifically: the baseline is already a tuned modern transformer,
+so the easy block-level wins (RMSNorm, rotary embeddings, QK-norm, SwiGLU) are
+already in it — what is left on the table is the sequence-mixing direction. A
+linear-recurrent mixer is cheaper per token at long context than attention, so
+under a fixed wall-clock budget it can complete more optimizer steps, while a
+few attention layers preserve the global context a pure linear RNN lacks. That
+is the bet the reference hybrid makes; the design space it opens is the mixer
+choice, the recurrence's internals, layer placement, the attention ratio, and
+the training context length.
+
 ## Metric
 
 The tokenizer is fixed by the judge: **dolma2 BPE**
-(`allenai/dolma2-tokenizer`, vocabulary 100278) over a FineWeb-Edu corpus. The
+(`allenai/dolma2-tokenizer`, 100278 real ids padded to a model vocabulary of
+100352, the Olmo 3 convention) over a FineWeb-Edu corpus. The
 scored quantity is held-out **bits per byte**:
 
 ```
@@ -49,7 +61,9 @@ class NanoSLM(torch.nn.Module): ...
 
 `config` is provided by the harness and has:
 
-- `config.vocab_size` — always `100278` (dolma2 BPE; do not change).
+- `config.vocab_size` — always `100352` (dolma2 BPE padded, Olmo 3
+  convention; do not change). Actual token ids are always `< 100278` — the
+  padding rows are never indexed, but your logits must span the full width.
 - `config.block_size` — the context length you will be **trained** at (8192 by
   default; see "Training context length" below).
 - `config.eval_block_size` — the context length you will be **scored** at.
@@ -61,7 +75,8 @@ The returned module must implement:
 
 ```python
 def forward(self, idx):
-    # idx: LongTensor [B, T] of BPE token ids in [0, 100278)
+    # idx: LongTensor [B, T] of BPE token ids in [0, 100278); logits span
+    # the padded vocab_size (100352)
     return logits          # FloatTensor [B, T, vocab_size]
 ```
 
@@ -75,8 +90,8 @@ The vocabulary is large enough that the embedding table is a first-class design
 concern — at `d=768` it is ~77M parameters on its own, so tying, factorizing or
 otherwise reshaping it is a real lever rather than a detail.
 
-The 3:1 Gated DeltaNet hybrid `model.py` (the *Olmo Hybrid* recipe applied to the
-`olmo3_190M` baseline) is provided as a starting point.
+A 3:1 Gated DeltaNet hybrid `model.py` — GDN in most layers, full attention in
+the rest, at the `olmo3_190M` baseline's shape — is provided as a starting point.
 
 ## Training context length — yours to choose, with a catch
 
@@ -123,6 +138,17 @@ point.
 - Train from scratch: no loading pretrained weights, no reading files, no
   network, no environment access, no reading the clock, no timing
   short-circuits. Submissions containing such calls are rejected before running.
+- Imports are restricted to an allowlist: `torch`, `numpy`, `fla`, `einops`,
+  `triton` (custom kernels are a legitimate lever), `math`, and a few
+  pure-computation stdlib modules (`typing`, `dataclasses`, `functools`,
+  `itertools`, `collections`, ...). Wildcard and relative imports, bare
+  `eval`/`exec`/`getattr`/`__import__`/`open`, dunder attributes other than
+  `__init__`/`__version__`, and raw-file-reader attributes (`fromfile`,
+  `memmap`, ...) are rejected statically. `model.eval()` and
+  `torch.compile(...)` remain allowed.
+- A measured bits-per-byte below the plausibility floor (0.4 — far beyond any
+  honest result at this scale and budget) is rejected as presumed held-out
+  leakage, score 0.
 - Trainable parameters must be within the judge's param cap, and the model must
   fit and train within GPU memory. Over-cap or out-of-memory scores 0.
 - The model must actually train (its parameters must change) and must produce a
@@ -167,3 +193,66 @@ bash /app/submit.sh
 
 The best successful iterative submission is kept if a later artifact is worse or
 you time out.
+
+## Problem structure
+
+```
+nanoslm_hybrid_arch_design/
+├── readme                    This file: problem statement, metric, scoring.
+├── config.yaml               Harbor problem config: runtime, images, GPU/eval
+│                             knobs (budget, param cap, bpb_score_scale).
+├── evaluator.py              Judge entrypoint. evaluate(model.py) -> (score,
+│                             score_unbounded, message, metrics): static policy
+│                             gate -> Modal (or local-GPU) dispatch -> scoring.
+│                             `--selftest` runs the torch-free test suite.
+├── evaluate.sh               Local CLI wrapper around evaluator.py.
+├── reference.py              Reference solution: the 3:1 GDN:attention hybrid
+│                             at the baseline's shape (~254M params). Also the
+│                             shipped starter (harbor/app/model.py is a copy).
+├── harness/                  The locked training+evaluation harness.
+│   ├── settings.py           TaskConfig: every locked knob (optimizer, budget,
+│   │                         data paths, caps), config fingerprint (baseline-
+│   │                         cache key), byte-accounting resolution.
+│   ├── model_config.py       ModelConfig: the read-only object handed to the
+│   │                         submission's build_model(config).
+│   ├── policy.py             Static gate: substring denylists + AST scan with
+│   │                         a strict import allowlist. Shipped verbatim to
+│   │                         the agent image so the rules cannot drift.
+│   ├── data.py               TokenData: loads the uint32 token streams, serves
+│   │                         CRN training batches (identical across arms) and
+│   │                         the fixed 8192-wide validation windows; converts
+│   │                         scored tokens to bytes for the bpb denominator.
+│   ├── train.py              Locked training loop: AdamW, step-warmup +
+│   │                         wall-clock cosine LR decay, grad accumulation,
+│   │                         harness-owned cross-entropy, wall-clock cutoff.
+│   ├── eval_ppl.py           Held-out evaluation: val_bpb (scored) + val_ppl
+│   │                         (readability) + degeneracy probe.
+│   ├── runner.py             Orchestration: BLOCK_SIZE resolution, kernel
+│   │                         warmup (incl. eval-shape fast-fail), dynamic
+│   │                         guards (param cap, OOM, trained-from-scratch,
+│   │                         plausibility floor), run_arm / run_pair (CRN).
+│   ├── baseline_model.py     The locked baseline: faithful plain-PyTorch
+│   │                         olmo3_190M (SWA via FlexAttention on CUDA).
+│   └── modal_app.py          Modal GPU app: run_pair_remote (role-aware --
+│   │                         final = fresh CRN pair, agent = cached baseline
+│   │                         from the corpus Volume + submission-only train),
+│   │                         image pins (torch/triton/fla), corpus Volume.
+├── docker/
+│   ├── build_images.sh       Builds agent+judge images; stages the corpus on a
+│   │                         cold cache; leak-greps everything agent-visible.
+│   ├── prep_assets.py        Tokenizes FineWeb-Edu with dolma2 into
+│   │                         train.bin / val.bin / manifest.json (val_bytes,
+│   │                         the bpb denominator, measured here).
+│   ├── agent/Dockerfile      Agent workspace image: CPU-only, no corpus, no
+│   │                         torch; starter model.py + the policy gate.
+│   └── judge/Dockerfile      Judge image: CPU-only, holds the token streams +
+│                             manifest, dispatches GPU work to Modal.
+└── harbor/app/               The agent's workspace (copied into /app).
+    ├── model.py              Starter submission (copy of reference.py).
+    ├── README.md             Agent-facing brief: interface, BLOCK_SIZE trade,
+    │                         static-gate rules.
+    └── public_test.py/.sh    Runs the judge's exact static gate locally.
+```
+
+The held-out `val.bin` and its manifest exist only in the judge image and the
+Modal corpus volume — never in the agent workspace.

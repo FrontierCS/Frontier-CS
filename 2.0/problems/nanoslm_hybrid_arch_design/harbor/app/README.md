@@ -25,14 +25,25 @@ not a target, so simply maximize the gain.
 ## What you submit
 
 `/app/model.py`, defining `build_model(config)` or `class NanoSLM`, whose
-`forward(idx)` returns logits `[B, T, 100278]` for `idx` of BPE token ids.
+`forward(idx)` returns logits `[B, T, 100352]` for `idx` of BPE token ids.
 
-`config` gives you `vocab_size` (always **100278** — the dolma2 BPE tokenizer,
-`allenai/dolma2-tokenizer`), `block_size` (the context you are **trained** at),
+`config` gives you `vocab_size` (always **100352** — the dolma2 BPE tokenizer
+`allenai/dolma2-tokenizer`, whose 100278 real ids are padded up, the Olmo 3
+convention; actual ids stay `< 100278` but your logits must span the padded
+width), `block_size` (the context you are **trained** at),
 `eval_block_size` (the context you are **scored** at — always 8192), and
 read-only hints. You control the architecture **and the training context
 length**; the optimizer, data, tokenizer, evaluation context and the wall-clock
 budget are fixed by the judge.
+
+The static gate (`bash /app/public_test.sh` runs the judge's exact rules) is
+strict: imports are limited to an allowlist — `torch`, `numpy`, `fla`,
+`einops`, `triton` (custom kernels are fair game), `math` and a few
+pure-computation stdlib modules — and dynamic-access primitives (bare
+`eval`/`exec`/`getattr`/`__import__`/`open`, wildcard imports, dunder
+attributes other than `__init__`/`__version__`) are rejected. `model.eval()`
+and `torch.compile(...)` are fine. Run the gate locally before submitting;
+its rejection reasons are exact.
 
 ## Training context length — a real lever, with a real catch
 
@@ -65,25 +76,28 @@ against `eval_block_size`, or build them lazily from the actual `T`.
 
 The baseline always trains at 8192, so you are trading against a fixed point.
 
-Note the vocabulary is large: the embedding table alone is ~70M parameters at
-d=704 (and the model ships it **tied**, one shared table), so how you handle it
+Note the vocabulary is large: the embedding table alone is ~77M parameters at
+d=768 (and the model ships it **tied**, one shared table), so how you handle it
 (tying, factorizing, resizing) is part of the design problem rather than a
 detail.
 
 ## The starting point
 
-`/app/model.py` ships as the **3:1 Gated DeltaNet hybrid** from *Olmo Hybrid*:
-three linear-recurrent layers per full-attention layer (25% attention), which
-already beats the attention-only baseline. Your job is to push further.
+`/app/model.py` ships as a **3:1 Gated DeltaNet hybrid** (following *Olmo Hybrid*,
+arXiv:2604.03444): three linear-recurrent layers per full-attention layer (25%
+attention), which already beats the attention-only baseline. Your job is to push
+further.
 
 The 3:1 ratio is inherited, not tuned — it is the OLMo-3 sliding-window pattern
 `[4096, 4096, 4096, -1]`, and the recipe replaces exactly the sliding-window
 layers with GDN. It was chosen for a sliding window, not for a linear RNN, so
 there is no reason to believe it is optimal here.
 
-The shipped model is also **parameter-matched** against the baseline the way
-upstream does it (`REMOVE_HEADS`: d_model 768 -> 704, heads 12 -> 11, head_dim
-64 preserved), which is why it is narrower than the shape its name suggests.
+The shipped model is **not parameter-matched** to the baseline: it keeps the
+baseline's shape (d=768, 12 heads, 12 layers) and lets the GDN mixer's wide
+recurrent state run at its natural, larger size (~254M vs the baseline's
+~190M). Capacity is bounded by the hard parameter cap, not by an artificial
+per-arm match — how you spend the budget under that cap is yours to decide.
 
 Open questions it does not answer: the ratio (3:1 vs 5:1 vs 7:1), where the
 attention layers belong, recurrent state size, whether every layer should be

@@ -29,7 +29,7 @@ The scored metric is bits per BYTE:
 While the tokenizer was byte-level, 1 token == 1 byte and normalizing by the
 token count was accidentally identical. Under BPE it is not: per-token CE/ln2 is
 a tokenizer-dependent quantity that is no longer comparable across setups, which
-would destroy the reason bpb was chosen (DESIGN.md §2). Nothing at
+would destroy the reason bpb was chosen. Nothing at
 eval time can recover the byte count from a token stream, so it is measured HERE
 -- by decoding the exact span of target tokens the harness scores and taking its
 UTF-8 length -- and recorded in the manifest as `val_bytes` alongside
@@ -49,9 +49,13 @@ SIZING
 `val_tokens` TARGET tokens over non-overlapping windows, and the last target
 needs one more input token behind it.
 
-`train.bin` defaults to 512M tokens (~2 GB on disk at uint32). A 30-minute H100
-run at batch 8 x ctx 8192 touches on the order of 10^7-10^8 tokens, so this
-leaves ample headroom without the sampler ever exhausting the stream.
+`train.bin` defaults to 2B tokens (~8 GB on disk at uint32), sized against the
+6 h budget rather than the original 30-minute one: a 6 h H100 run at effective
+batch 32 x ctx 8192 (262k tokens/step, ~10k steps) samples on the order of
+2.5-5B tokens, so a 512M shard meant every window was drawn from ~5-10x-repeated
+data -- and a fast short-context submission repeated it far more. 2B unique
+tokens keeps the baseline at roughly 1-2 effective epochs. sample-10BT holds
+~10B tokens, so there is headroom to raise this further if budgets grow.
 
 Usage:
     NANOSLM_ARCH_ASSETS=./assets python3 docker/prep_assets.py
@@ -74,11 +78,15 @@ CORPUS = "HuggingFaceFW/fineweb-edu"
 CORPUS_CONFIG = "sample-10BT"
 
 TOKENIZER = "allenai/dolma2-tokenizer"   # matches TaskConfig.tokenizer_name
-VOCAB_SIZE = 100278                      # matches TaskConfig.vocab_size
+# The TOKENIZER's true id space, used to range-check the written streams.
+# Deliberately NOT TaskConfig.vocab_size, which is the model vocabulary padded
+# up to 100352 (Olmo 3 convention): ids on disk must fit the tokenizer, and a
+# stream that needed the padding rows would mean a corrupted corpus.
+VOCAB_SIZE = 100278
 TOKEN_DTYPE = np.uint32                  # matches harness/data.TOKEN_DTYPE
 
 VAL_TOKENS = 1 << 20                     # matches TaskConfig.val_tokens
-TRAIN_TOKENS = 512_000_000
+TRAIN_TOKENS = 2_000_000_000             # see SIZING in the docstring (6 h budget)
 DOC_BATCH = 256                          # docs per tokenizer call
 
 
