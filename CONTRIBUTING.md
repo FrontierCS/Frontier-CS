@@ -373,8 +373,9 @@ release tag; **problem directories are generated from it and are not
 committed** (see the `.gitignore` there). Materialization is automatic: the
 first `frontier list|eval|show` touching these problems initializes the
 submodule and runs the generator (`src/frontier_cs/lazy_problems.py`), stamping
-the submodule commit in `_generator/.generated-ref` so later accesses serve the
-files directly. To materialize manually:
+the submodule commit plus a generator hash in `_generator/.generated-ref` so
+later accesses serve the files directly (and template changes in `generate.py`
+re-materialize automatically). To materialize manually:
 
 ```bash
 git submodule update --init third_party/formal-conjectures
@@ -383,8 +384,17 @@ python3 research/problems/formal_conjectures/_generator/generate.py
 
 - The generator parses the submodule's Lean sources directly (namespaces,
   `@[category ...]` attributes) — no Lean toolchain needed. "Fill-in-the-answer"
-  statements (`answer(sorry)`) are skipped: their elaborated types substitute a
-  placeholder for the unknown answer and would misstate the question.
+  statements (`answer(sorry)`) elaborate with a placeholder (`True` for Props),
+  so the plain "prove this" contract would misstate them. Those of the exact
+  binder-free shape `answer(sorry) ↔ Q` become mode `prove_or_disprove`
+  problems (submit a proof of `Q` or of `¬Q`; the trusted checker extracts `Q`
+  from the compiled `True ↔ Q` type and fails closed on anything else). The
+  rest — value-style answers, statements referencing section `variable`s or
+  sorry-containing defs — are skipped rather than misrepresented. After a
+  submodule bump, validate with
+  `research/problems/formal_conjectures/_generator/shape_check.sh` (requires
+  docker + the eval image): it rechecks every prove-or-disprove target's
+  compiled shape.
 - Solutions are Lean 4 proofs, checked in a Docker image with Lean + Mathlib +
   formal-conjectures prebuilt (`research/problems/formal_conjectures/docker/`).
 - Scoring is binary: 1.0 iff the submitted proof compiles without `sorry`,

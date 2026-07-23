@@ -10,6 +10,7 @@ directories are missing or were generated from a different submodule commit.
 Afterwards everything is served directly from the files.
 """
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -35,10 +36,11 @@ def ensure_formal_conjectures(problems_dir: Path, problem_id: Optional[str] = No
 
     No-op when: this problems tree has no formal_conjectures generator, the
     requested problem id is not a formal_conjectures one, or generation is
-    already up to date with the submodule commit (stamped in
-    _generator/.generated-ref by the generator). Failures are reported on
-    stderr but never raised — the caller then fails naturally with
-    problem-not-found.
+    already up to date with the submodule commit and generator version
+    (stamped as "<submodule-head>+<generator-hash>" in
+    _generator/.generated-ref by the generator; must stay in sync with
+    generation_stamp() there). Failures are reported on stderr but never
+    raised — the caller then fails naturally with problem-not-found.
     """
     if problems_dir in _verified:
         return
@@ -62,9 +64,10 @@ def ensure_formal_conjectures(problems_dir: Path, problem_id: Optional[str] = No
             return
 
     head = _submodule_head(repo_root)
+    ghash = hashlib.sha256(generator.read_bytes()).hexdigest()[:16]
     stamp_file = fc_root / "_generator" / ".generated-ref"
     stamp = stamp_file.read_text(encoding="utf-8").strip() if stamp_file.is_file() else None
-    if head is not None and stamp == head:
+    if head is not None and stamp == f"{head}+{ghash}":
         _verified.add(problems_dir)
         return  # up to date; a missing problem id is genuinely unknown
 

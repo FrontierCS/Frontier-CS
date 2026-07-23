@@ -12,9 +12,12 @@ The evaluator:
   3. Runs the trusted CheckDriver.lean, which loads only compiled .oleans
      (never elaborating submission syntax) and verifies that:
        - `solution`'s type is definitionally equal to the conjecture's
-         statement, and
+         statement (mode "prove", the default) — or, for fill-in-the-answer
+         problems (target.json mode "prove_or_disprove", statement compiled
+         as `True ↔ Q`), to `Q` or `¬Q`, and
        - `solution` depends only on the standard axioms
          (propext, Classical.choice, Quot.sound).
+     The driver fails closed: anything it cannot positively verify scores 0.0.
 
 Score contract (parsed by the framework from the last stdout line):
   1.0  proof accepted
@@ -76,6 +79,10 @@ def main() -> None:
     target = json.loads(Path(args.target).read_text(encoding="utf-8"))
     module = target["module"]      # list of module name components
     theorem = target["theorem"]    # list of declaration name components
+    # "prove": solution's type must match the statement. "prove_or_disprove":
+    # fill-in-the-answer statement `answer(sorry) ↔ Q`; solution must prove Q
+    # or ¬Q. The trusted driver fails closed on anything else.
+    mode = target.get("mode", "prove")
 
     # Infrastructure sanity: the image must match the ref the problem was
     # generated from, else statements could silently differ. Raise (no score
@@ -119,7 +126,8 @@ def main() -> None:
 
     print("[fc] running trusted checker...", file=sys.stderr)
     driver = Path(__file__).resolve().parent / "CheckDriver.lean"
-    driver_args = " ".join(shlex.quote(c) for c in [*module, "/", *theorem])
+    driver_args = " ".join(
+        shlex.quote(c) for c in [*module, "/", *theorem, "/", mode])
     proc = run(
         ["lake", "env", "bash", "-c",
          f'export LEAN_PATH="$LEAN_PATH:{tmp}"; '
