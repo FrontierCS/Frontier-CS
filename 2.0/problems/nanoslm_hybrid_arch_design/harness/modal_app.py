@@ -86,12 +86,19 @@ try:
         # Only and looked healthy; always exercise fwd+bwd when validating a
         # fused kernel.
         .pip_install("flash-linear-attention==0.5.1", "transformers==4.46.3")
+        # Operator-only observability (train._maybe_init_wandb). Inert unless a
+        # call passes FRONTIER_NANOSLM_WANDB=1 via `overrides`, so scored runs
+        # and the baseline cache are unaffected.
+        .pip_install("wandb")
         # Ship the problem directory itself: harness/, evaluator.py,
         # reference.py. The GPU function calls the real evaluator, so what runs
-        # remotely is byte-identical to what Harbor runs.
+        # remotely is byte-identical to what Harbor runs. `.assets` is the
+        # LOCAL dev staging (gigabytes of tokens, and a stale val split) -- the
+        # real corpus mounts from the Volume, so shipping it was pure deploy
+        # bloat plus an unguarded token-stream copy in the container.
         .add_local_dir(
             _PROBLEM_DIR, REMOTE_TASK, copy=True,
-            ignore=["__pycache__", "*.pyc", ".git", "docker"],
+            ignore=["__pycache__", "*.pyc", ".git", "docker", ".assets"],
         )
         .env({
             "PYTHONPATH": REMOTE_TASK,
@@ -108,10 +115,19 @@ try:
             # Reduce allocator fragmentation for the large fp32-logits CE at
             # ctx 8192 (paired with the batch_size=2 fix in settings.py).
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            # Keep wandb's scratch out of the shipped task tree.
+            "WANDB_DIR": "/tmp/wandb",
         })
     )
 
     app = modal.App(APP_NAME)
+
+    # WANDB_API_KEY for the opt-in observability path. The secret must exist
+    # for deploys to resolve (create once:
+    #   modal secret create wandb WANDB_API_KEY=...
+    # ); a placeholder value just means wandb.init fails and logging silently
+    # stays off -- training is untouched either way.
+    WANDB_SECRET = modal.Secret.from_name("wandb")
 
     # Real corpus (FineWeb-Edu, dolma2-tokenized) staged on a Modal Volume and
     # mounted at the data path harness/settings.py expects, so the GPU arms train
@@ -122,7 +138,7 @@ try:
     REMOTE_DATA = "/opt/nanoslm_arch/data"
 
     @app.function(image=image, gpu=GPU, timeout=FN_TIMEOUT_SECONDS,
-                  volumes={REMOTE_DATA: CORPUS_VOL})
+                  volumes={REMOTE_DATA: CORPUS_VOL}, secrets=[WANDB_SECRET])
     def evaluate_remote(solution_source: str,
                         role: str = "final", overrides: dict | None = None) -> dict:
         """Run the judge on `solution_source` and return its full result.
@@ -228,14 +244,15 @@ try:
     BASELINE_CACHE = f"{REMOTE_DATA}/baseline/baseline_arm.json"
 
     @app.function(image=image, gpu=GPU, timeout=FN_TIMEOUT_SECONDS,
-                  volumes={REMOTE_DATA: CORPUS_VOL})
+                  volumes={REMOTE_DATA: CORPUS_VOL}, secrets=[WANDB_SECRET])
     def run_pair_remote(solution_source: str,
-                        role: str = "final") -> dict:
+                        role: str = "final",
+                        overrides: dict | None = None) -> dict:
         """Run the arms on one GPU and return their metrics as plain dicts.
 
         This is the entrypoint the judge uses. It deliberately returns arm
         Metrics, not a score: scoring stays judge-side so the scoring code and
-        the hidden constants (bpb_score_scale) never ship to a GPU worker, and so the
+        no score constant ships to a GPU worker, and so the
         judge cannot be handed a score it did not compute.
 
         Role semantics (this is what makes iteration affordable):
@@ -264,6 +281,10 @@ try:
 
         sys.path.insert(0, REMOTE_TASK)
         os.environ["FRONTIER_NANOSLM_ROLE"] = role
+        # Operator-only env passthrough (e.g. FRONTIER_NANOSLM_WANDB=1). The
+        # judge never passes overrides, so the scored path is unchanged.
+        for k, v in (overrides or {}).items():
+            os.environ[k] = str(v)
 
         import torch  # noqa: F401  (ensures CUDA init before harness import)
 
@@ -358,7 +379,8 @@ try:
                     sub_block = runner.resolve_train_block_size(mod, cfg)
                     data = TokenData(cfg)
                     cand = runner.run_arm(
-                        runner.load_factory(mod), data, cfg, "cuda", sub_block
+                        runner.load_factory(mod), data, cfg, "cuda", sub_block,
+                        run_label="submission",
                     )
             except runner.GuardError as exc:
                 return {

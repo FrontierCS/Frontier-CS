@@ -276,7 +276,8 @@ class _nullctx:
 
 
 def run_arm(factory: Callable, data: TokenData, cfg: TaskConfig, device: str,
-            train_block_size: int | None = None) -> ArmMetrics:
+            train_block_size: int | None = None,
+            run_label: str = "") -> ArmMetrics:
     """Instantiate -> guard params -> train -> eval -> guard training/degeneracy.
 
     ``train_block_size`` is this arm's training context (default: cfg's). It is
@@ -346,7 +347,8 @@ def run_arm(factory: Callable, data: TokenData, cfg: TaskConfig, device: str,
 
     before = _param_snapshot(model)
     try:
-        tout: TrainOutput = train_model(model, data, cfg, device)
+        tout: TrainOutput = train_model(model, data, cfg, device,
+                                        run_label=run_label)
     except (GuardError, DataError):
         raise
     except Exception as exc:
@@ -454,6 +456,8 @@ def run_pair(submission_module, cfg: TaskConfig, device: str):
     # judge nothing.
     sub_block = resolve_train_block_size(submission_module, cfg)
     data = TokenData(cfg)
-    base = run_arm(baseline_factory(), data, cfg, device, baseline_block_size(cfg))
-    sub = run_arm(load_factory(submission_module), data, cfg, device, sub_block)
+    base = run_arm(baseline_factory(), data, cfg, device, baseline_block_size(cfg),
+                   run_label="baseline")
+    sub = run_arm(load_factory(submission_module), data, cfg, device, sub_block,
+                  run_label="submission")
     return base, sub

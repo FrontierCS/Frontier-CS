@@ -16,11 +16,12 @@ bash /app/submit.sh              # 3. enqueue for the judge
 ```
 
 You do **not** train here — this container has no GPU and no torch. The judge
-trains both your architecture and a locked baseline under the identical budget
-and scores your **absolute bpb gain** over it, `base_bpb - sub_bpb`. Bits per
-byte is the unit the literature quotes, so the gain is directly comparable to
-published numbers; the constant that maps it onto 0–100 is a scaling convention,
-not a target, so simply maximize the gain.
+trains your architecture under a fixed wall-clock budget and **your score IS
+your raw held-out bits per byte (`sub_bpb`) — LOWER IS BETTER**, with no
+scaling and no clipping. A locked baseline is trained under the identical
+budget and its bpb and your gain over it are reported for context only. Failed
+or rejected runs score 9999 (worst). Bits per byte is the unit the literature
+quotes, so your score is directly comparable to published numbers.
 
 ## What you submit
 
@@ -53,7 +54,8 @@ Declare it with a module-level integer in `model.py`:
 BLOCK_SIZE = 2048     # power of two in [256, 8192]; omit it to train at 8192
 ```
 
-Out-of-range or non-power-of-two values are rejected before training (score 0).
+Out-of-range or non-power-of-two values are rejected before training
+(failure score 9999 — the score is bits per byte, LOWER is better).
 
 **Evaluation is always at 8192**, whatever you train at. So:
 

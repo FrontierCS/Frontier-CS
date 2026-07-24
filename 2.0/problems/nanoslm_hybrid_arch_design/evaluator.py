@@ -81,9 +81,8 @@ def _backend() -> str:
 def _run_pair_modal(solution_path: str, role: str):
     """Run both arms on a Modal GPU; score judge-side.
 
-    Only arm metrics cross the boundary -- scoring and the hidden constants
-    (bpb_score_scale) stay in the judge, so a GPU worker never sees them and cannot
-    hand back a score the judge did not compute.
+    Only arm metrics cross the boundary -- scoring stays in the judge, so a
+    GPU worker never hands back a score the judge did not compute.
     """
     from harness.modal_app import app, run_pair_remote
 
@@ -154,7 +153,8 @@ def evaluate(solution_path: str):
     # 1) Static policy gate (torch-free, adversarial-safe).
     pol = policy.check_file(solution_path)
     if not pol.ok:
-        return 0.0, 0.0, f"policy_rejected: {pol.reason}", {"config_fingerprint": fp}
+        return (scoring.FAILURE_SCORE, scoring.FAILURE_SCORE,
+                f"policy_rejected: {pol.reason}", {"config_fingerprint": fp})
 
     # 2) Backend. On MODAL the judge never imports torch -- the arms run in a
     #    Modal GPU container and only plain metrics come back.
@@ -163,19 +163,20 @@ def evaluate(solution_path: str):
         try:
             res = _run_pair_modal(solution_path, role)
         except Exception as exc:  # noqa: BLE001 - classify, never leak
-            return (0.0, 0.0, f"environment_error: modal dispatch failed "
-                              f"({type(exc).__name__})", {"config_fingerprint": fp})
+            return (scoring.FAILURE_SCORE, scoring.FAILURE_SCORE,
+                    f"environment_error: modal dispatch failed "
+                    f"({type(exc).__name__})", {"config_fingerprint": fp})
         # Guard rejections travel as a field, not an exception: GuardError is
         # defined in harness.runner (which imports torch), so this CPU-only
         # judge could not deserialize the raised form. The message is the
         # public, classified reason -- same wording as the local path's.
         if res.get("guard_error"):
-            return 0.0, 0.0, f"guard: {res['guard_error']}", {
+            return scoring.FAILURE_SCORE, scoring.FAILURE_SCORE, f"guard: {res['guard_error']}", {
                 "config_fingerprint": fp, "role": role,
                 "stack": res.get("stack"),
             }
         b, c = res["baseline"], res["submission"]
-        sr = scoring.score_from_bpb(b["val_bpb"], c["val_bpb"], cfg.bpb_score_scale)
+        sr = scoring.score_from_bpb(b["val_bpb"], c["val_bpb"])
         note = []
         if role == "agent":
             # Mirrors the local path's note: says whether this feedback run
@@ -193,7 +194,6 @@ def evaluate(solution_path: str):
             # abs_bpb_delta is the scored quantity; rel_improvement is kept
             # alongside it so an operator never has to recompute it.
             "rel_improvement": sr.rel_improvement,
-            "bpb_score_scale": cfg.bpb_score_scale,
             "sub_steps": c["steps"], "base_steps": b["steps"],
             "sub_params": c["n_params"], "sub_wall_seconds": c["wall_seconds"],
             "sub_train_block_size": c.get("train_block_size"),
@@ -208,8 +208,8 @@ def evaluate(solution_path: str):
         device = _select_device()
     except RuntimeError as exc:
         return (
-            0.0,
-            0.0,
+            scoring.FAILURE_SCORE,
+            scoring.FAILURE_SCORE,
             f"environment_error: {exc} (training path requires torch + GPU)",
             {"config_fingerprint": fp},
         )
@@ -248,16 +248,17 @@ def evaluate(solution_path: str):
         from harness.runner import GuardError
 
         if isinstance(exc, GuardError):
-            return 0.0, 0.0, f"guard: {exc}", {"config_fingerprint": fp, "role": role}
+            return (scoring.FAILURE_SCORE, scoring.FAILURE_SCORE,
+                    f"guard: {exc}", {"config_fingerprint": fp, "role": role})
         # Never leak submission tracebacks/stdout (2.0 black-box safety).
         return (
-            0.0,
-            0.0,
+            scoring.FAILURE_SCORE,
+            scoring.FAILURE_SCORE,
             f"submission_error: {type(exc).__name__}",
             {"config_fingerprint": fp, "role": role},
         )
 
-    sr = scoring.score_from_bpb(base_bpb, sub.val_bpb, cfg.bpb_score_scale)
+    sr = scoring.score_from_bpb(base_bpb, sub.val_bpb)
     note = []
     if role == "agent":
         note.append("iterative(cached-baseline)" if base_steps is None else "iterative")
@@ -275,7 +276,6 @@ def evaluate(solution_path: str):
         "abs_bpb_delta": sr.abs_bpb_delta,
         "sub_val_ppl": sub.val_ppl,   # derived, readability only
         "rel_improvement": sr.rel_improvement,
-        "bpb_score_scale": cfg.bpb_score_scale,
         "sub_steps": sub.steps,
         "base_steps": base_steps,
         "sub_params": sub.n_params,
@@ -400,39 +400,29 @@ def _selftest() -> int:
         ).ok,
     )
 
-    # --- scoring: Absolute bpb gain. baseline->0, worse->0, scale->100 ---
-    # Cases are constructed by subtracting bits per byte, not by scaling
-    # base_bpb: the scored quantity is now `base_bpb - sub_bpb`, so a relative
-    # construction would no longer test what it claims to.
-    scale = 0.05          # bpb gain that saturates the bounded score
+    # --- scoring: the score IS the submission's raw val_bpb, lower is better ---
     base_bpb = 4.0
-    s_tie = scoring.score_from_bpb(base_bpb, base_bpb, scale)
-    s_worse = scoring.score_from_bpb(base_bpb, base_bpb + 0.10, scale)
-    s_sat = scoring.score_from_bpb(base_bpb, base_bpb - scale, scale)
-    s_half = scoring.score_from_bpb(base_bpb, base_bpb - scale / 2, scale)
-    s_over = scoring.score_from_bpb(base_bpb, base_bpb - 2 * scale, scale)
-    check("baseline scores 0", abs(s_tie.score) < 1e-9)
-    check("worse-than-baseline scores 0", abs(s_worse.score) < 1e-9)
-    check("a gain of BPB_SCORE_SCALE saturates to 100", abs(s_sat.score - 100.0) < 1e-6)
-    check("half the scale ~= 50", abs(s_half.score - 50.0) < 1e-6)
-    check("bounded score caps at 100", abs(s_over.score - 100.0) < 1e-9)
-    check("unbounded keeps rewarding past 100", s_over.score_unbounded > 100.0)
-    check("unbounded is exactly the un-clipped ratio",
-          abs(s_over.score_unbounded - 200.0) < 1e-9)
-    # The score must depend on the absolute gain only -- the same 0.05 bpb gain
-    # scores the same at any operating point. (This is the property the old
-    # relative form did not have, and the reason the operating point now
-    # matters.)
-    s_lowbase = scoring.score_from_bpb(1.5, 1.5 - scale, scale)
-    check("score depends on absolute gain, not on base_bpb",
-          abs(s_lowbase.score - s_sat.score) < 1e-9)
-    # ... while both figures are still reported.
-    check("relative improvement still reported",
-          abs(s_sat.rel_improvement - (scale / base_bpb)) < 1e-12
-          and abs(s_sat.abs_bpb_delta - scale) < 1e-12)
-    # A scoring constant, not a training knob: changing it must not invalidate
-    # a cached baseline, so it must stay out of the fingerprint.
-    check("bpb_score_scale is not fingerprinted",
+    s_tie = scoring.score_from_bpb(base_bpb, base_bpb)
+    s_worse = scoring.score_from_bpb(base_bpb, base_bpb + 0.10)
+    s_better = scoring.score_from_bpb(base_bpb, base_bpb - 0.05)
+    check("score is exactly the submission's val_bpb",
+          abs(s_better.score - (base_bpb - 0.05)) < 1e-12
+          and abs(s_tie.score - base_bpb) < 1e-12
+          and abs(s_worse.score - (base_bpb + 0.10)) < 1e-12)
+    check("score is unscaled and un-clipped (no [0,100] mapping)",
+          abs(s_worse.score - s_worse.score_unbounded) < 1e-12
+          and 0.0 < s_better.score < 100.0 / 25.0)  # a bpb, not a percentage
+    check("lower is better (worse model -> higher score value)",
+          s_worse.score > s_tie.score > s_better.score)
+    check("degenerate bpb maps to the failure sentinel, never a good score",
+          scoring.score_from_bpb(base_bpb, 0.0).score == scoring.FAILURE_SCORE
+          and scoring.score_from_bpb(base_bpb, float("inf")).score
+          == scoring.FAILURE_SCORE)
+    # The baseline comparison is still reported alongside, for context only.
+    check("gain figures still reported",
+          abs(s_better.abs_bpb_delta - 0.05) < 1e-12
+          and abs(s_better.rel_improvement - (0.05 / base_bpb)) < 1e-12)
+    check("legacy scoring constants stay out of the fingerprint",
           "bpb_score_scale" not in settings._FINGERPRINT_KEYS
           and "r_target" not in settings._FINGERPRINT_KEYS)
     # Same for the plausibility floor (a guard constant), which must exist and

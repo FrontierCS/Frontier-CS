@@ -103,7 +103,8 @@ BLOCK_SIZE = 2048     # power of two in [256, 8192]; omit it to train at 8192
 ```
 
 Omit it and you train at the default **8192**. A value outside `[256, 8192]`, or
-one that is not a power of two, is rejected before training (score 0).
+one that is not a power of two, is rejected before training (failure score
+9999 — the score is bits per byte, so LOWER is better and 9999 is the worst).
 
 **You are always evaluated at 8192.** That is fixed for every submission — it is
 what makes `val_bpb` comparable across submissions — and it is the whole trade:
@@ -126,7 +127,7 @@ Practical warning: anything you size or cache off `config.block_size` — RoPE
 tables, learned positional embeddings, causal or sliding-window mask buffers —
 must still work at `config.eval_block_size`. Build such buffers against
 `config.eval_block_size`, or lazily against the actual `T` you are handed. A
-model that crashes or silently truncates at 8192 scores 0.
+model that crashes or silently truncates at 8192 is rejected (failure score 9999).
 
 The baseline always trains at 8192, so this trade is measured against a fixed
 point.
@@ -148,35 +149,36 @@ point.
   `torch.compile(...)` remain allowed.
 - A measured bits-per-byte below the plausibility floor (0.4 — far beyond any
   honest result at this scale and budget) is rejected as presumed held-out
-  leakage, score 0.
+  leakage, rejected (failure score 9999).
 - Trainable parameters must be within the judge's param cap, and the model must
-  fit and train within GPU memory. Over-cap or out-of-memory scores 0.
+  fit and train within GPU memory. Over-cap or out-of-memory is rejected
+  (failure score 9999).
 - The model must actually train (its parameters must change) and must produce a
-  non-degenerate output distribution. Untrained or constant-output models score 0.
+  non-degenerate output distribution. Untrained or constant-output models are
+  rejected (failure score 9999).
 
 ## Scoring
 
 Let `base_bpb` be the locked baseline architecture's held-out bits-per-byte and
 `sub_bpb` be your submission's, both trained for the same wall-clock `T` on the
 same H100 with the same data order (common random numbers), and both scored on
-the same hidden held-out text at the same fixed 8192-token windows. The scored
-measurement is your **absolute** bits-per-byte gain:
+the same hidden held-out text at the same fixed 8192-token windows. **Your score IS
+`sub_bpb` — your submission's raw held-out bits per byte. LOWER IS BETTER.**
 
 ```
-gain  = base_bpb - sub_bpb                   # bits per byte
-score = clip(100 * gain / BPB_SCORE_SCALE, 0, 100)
+score = sub_bpb          # raw bits per byte; no scaling, no clipping
 ```
 
-- The baseline architecture (tying its `val_bpb`) scores **0**.
-- A submission worse than the baseline scores **0**.
-- `BPB_SCORE_SCALE` is only a **scaling convention** — it exists to map bits per
-  byte onto the 0–100 range the platform expects, not to declare what counts as
-  a full result. Maximize `gain`; `score_unbounded` keeps rewarding improvements
-  past the cap.
+- There is no baseline-relative mapping and no scaling constant: minimize your
+  own `val_bpb`, full stop.
+- The baseline's `base_bpb` and your gain over it (`base_bpb - sub_bpb`,
+  absolute and relative) are still reported in the feedback for context — they
+  do not affect the score.
+- Failed or rejected runs (policy, guards, crashes) receive the failure score
+  **9999** — unambiguously the worst possible value.
 
-Bits per byte is the unit the language-modelling literature quotes, so a gain
-here is directly comparable to published figures. A relative improvement is also
-reported, for readability.
+Bits per byte is the unit the language-modelling literature quotes, so your
+score is directly comparable to published figures.
 
 Public feedback reports `base_val_bpb`, `sub_val_bpb`, the absolute gain and the
 relative improvement, the training context you used, the number of optimizer
@@ -200,7 +202,7 @@ you time out.
 nanoslm_hybrid_arch_design/
 ├── readme                    This file: problem statement, metric, scoring.
 ├── config.yaml               Harbor problem config: runtime, images, GPU/eval
-│                             knobs (budget, param cap, bpb_score_scale).
+│                             knobs (budget, param cap).
 ├── evaluator.py              Judge entrypoint. evaluate(model.py) -> (score,
 │                             score_unbounded, message, metrics): static policy
 │                             gate -> Modal (or local-GPU) dispatch -> scoring.

@@ -64,11 +64,21 @@ class TaskConfig:
     warmup_steps: int = 100
 
     # --- iso-wallclock budget (matches config.yaml) ---
-    train_seconds: float = 21600.0  # wall-clock T per training run (6 h)
+    # 30 min (down from the original 6 h): chosen so an iterating agent sees
+    # signal quickly -- ~35-40 scored submissions fit in the 24 h session
+    # instead of ~4. The 6 h calibration numbers remain on record (baseline
+    # 0.98112 / reference ~0.938) but are NOT comparable to 30-min numbers.
+    train_seconds: float = 1800.0  # wall-clock T per training run (30 min)
+    # Cosine-decay horizon for the LR schedule -- deliberately the FULL 6 h
+    # schedule, decoupled from train_seconds: a 30-min run traverses only the
+    # first 1/12 of the cosine (LR still near peak at cutoff), behaving like
+    # the prefix of a long run instead of compressing the whole anneal into
+    # the short budget. See train._lr_at.
+    lr_schedule_seconds: float = 21600.0
     # Infrastructure backstop, enforced by the Modal function timeout (and the
     # orchestrator), not by the training loop -- a between-step check could
     # never fire before train_seconds and cannot interrupt a hung step.
-    max_train_seconds: float = 43200.0  # hard cap (12 h)
+    max_train_seconds: float = 3600.0  # hard cap (1 h)
 
     # --- data / tokenizer (locked; hidden tokens live in the judge image) ---
     dataset_name: str = "HuggingFaceFW/fineweb-edu:sample-10BT"  # provenance; matches config.yaml
@@ -103,14 +113,13 @@ class TaskConfig:
     baseline_cache_path: str = "/opt/nanoslm_arch/baseline/baseline_ppl.json"
 
     # --- scoring ---
-    # Absolute bits-per-byte gain is the scored measurement:
-    #     gain  = base_bpb - sub_bpb
-    #     score = clip(100 * gain / bpb_score_scale, 0, 100)
-    # `bpb_score_scale` is a display convention that maps the gain into Harbor's
-    # 0-100 reward, not a calibrated "full win" target; its only
-    # real requirement is discrimination, and `score_unbounded` stays un-clipped.
-    # 0.5 comes from a real-corpus run and is due a re-check at the 6 h budget.
-    bpb_score_scale: float = 0.5   # bpb gain that saturates the bounded score
+    # The score IS the submission's held-out bits-per-byte, raw and unscaled --
+    # LOWER IS BETTER (see harness/scoring.py). The old
+    # clip(100*(base-sub)/bpb_score_scale) mapping and its constant were
+    # removed deliberately: the raw measurement is the quantity the literature
+    # quotes, and any rescaling constant attached an arbitrary figure to the
+    # score's meaning. The baseline is still trained and its gain figures
+    # reported for context; they no longer participate in the score.
 
     # --- guards / resource caps ---
     param_cap: int = 400_000_000   # max trainable params (over-cap -> score 0)
@@ -122,8 +131,8 @@ class TaskConfig:
     # strongest published LLMs sit near ~0.55 bpb on web text, and a <=400M
     # model trained 6 h from scratch lands far above that. A measurement below
     # it is therefore treated as held-out leakage, not brilliance -> GuardError
-    # (score 0, public reason). A scoring/guard constant like bpb_score_scale,
-    # so it is deliberately NOT fingerprinted.
+    # (rejected, public reason). A guard constant, not a training knob, so it
+    # is deliberately NOT fingerprinted.
     min_plausible_bpb: float = 0.4
     seed: int = 1337
     # Off by default (see runner.run_arm): compiling the chunkwise mixer measured
@@ -241,6 +250,9 @@ _FINGERPRINT_KEYS = (
     "vocab_size", "eval_block_size", "batch_size", "grad_accum",
     "learning_rate", "min_lr", "weight_decay", "beta1", "beta2",
     "grad_clip", "warmup_steps", "train_seconds", "dataset_name",
+    # The decay horizon changes every arm's effective LR trajectory, hence the
+    # baseline's val_bpb -- a cached baseline from another horizon is invalid.
+    "lr_schedule_seconds",
     # tokenizer_name is fingerprinted alongside vocab_size: changing the
     # tokenizer changes what val_bpb means, so a baseline cached under the old
     # one must not be reused.

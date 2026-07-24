@@ -22,8 +22,9 @@ could not interrupt a hung step anyway.
 from __future__ import annotations
 
 import math
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .data import TokenData
 from .settings import TaskConfig
@@ -37,24 +38,24 @@ class TrainOutput:
 
 
 def _lr_at(step: int, elapsed: float, cfg: TaskConfig) -> float:
-    """Linear step-warmup, then cosine decay over the wall-clock budget.
+    """Linear step-warmup, then cosine decay over the FULL schedule horizon.
 
-    The decay is a function of ``elapsed / train_seconds``, not of a step
-    count. The stop condition is wall-clock, so a step horizon cannot be known
-    in advance, and any fixed guess hands different effective schedules to arms
-    with different throughput: a fast arm (short context, cheap mixer) overruns
-    the guess and trains most of its budget flat at ``min_lr``, while a slow
-    arm never finishes the decay -- which is known to cost real validation
-    loss. That would let the score partly measure schedule luck rather than
-    architecture, the exact confound the locked recipe exists to remove.
-    Time-based decay gives every architecture the identical schedule over the
-    identical budget. Warmup stays step-based: its job is stabilizing early
-    optimizer state, which is a per-step property, and at 100 steps it is a
-    negligible slice of the budget.
+    The decay is a function of ``elapsed / lr_schedule_seconds``, not of a step
+    count (wall-clock, so every architecture sees the identical schedule over
+    identical time) and not of ``train_seconds`` (the stop time). The horizon
+    is deliberately decoupled from the budget: with a short iteration budget
+    (30 min) the run traverses only the first slice of the full-schedule
+    cosine -- i.e. it behaves like the prefix of a long training run, LR still
+    near peak at cutoff -- rather than compressing the entire anneal into the
+    short budget, which would over-weight the anneal and make short-budget
+    rankings unrepresentative of longer training. When
+    ``train_seconds == lr_schedule_seconds`` (the original 6 h config) the two
+    forms are identical. Warmup stays step-based: its job is stabilizing early
+    optimizer state, which is a per-step property.
     """
     if step < cfg.warmup_steps:
         return cfg.learning_rate * (step + 1) / max(1, cfg.warmup_steps)
-    frac = min(1.0, max(0.0, elapsed / max(1e-9, cfg.train_seconds)))
+    frac = min(1.0, max(0.0, elapsed / max(1e-9, cfg.lr_schedule_seconds)))
     coeff = 0.5 * (1.0 + math.cos(math.pi * frac))
     return cfg.min_lr + coeff * (cfg.learning_rate - cfg.min_lr)
 
@@ -82,7 +83,51 @@ def _cross_entropy(logits, targets):
     )
 
 
-def train_model(model, data: TokenData, cfg: TaskConfig, device: str) -> TrainOutput:
+def _maybe_init_wandb(model, cfg: TaskConfig, run_label: str):
+    """Opt-in observability sink; returns a wandb run or ``None``.
+
+    Active only when the operator sets ``FRONTIER_NANOSLM_WANDB=1`` (plus a
+    valid ``WANDB_API_KEY`` in the environment); no scored path sets it, so
+    Harbor runs and the baseline cache are unaffected -- which is why this
+    needs no CODE_VERSION bump. Everything is best-effort: any failure
+    disables logging rather than touching the run. Init happens before the
+    budget timer starts, and the in-loop cost is an async enqueue every
+    ``_WANDB_LOG_EVERY`` steps (~1 min apart at production step times), so the
+    wall-clock training budget is unaffected.
+    """
+    if os.environ.get("FRONTIER_NANOSLM_WANDB", "") != "1":
+        return None
+    try:
+        import wandb
+
+        name = "-".join(
+            p for p in (
+                os.environ.get("FRONTIER_NANOSLM_WANDB_NAME", ""),
+                os.environ.get("FRONTIER_NANOSLM_ROLE", ""),
+                run_label or type(model).__name__,
+            ) if p
+        )
+        return wandb.init(
+            project=os.environ.get(
+                "FRONTIER_NANOSLM_WANDB_PROJECT", "nanoslm-hybrid-arch-design"
+            ),
+            group=os.environ.get("FRONTIER_NANOSLM_WANDB_GROUP") or None,
+            name=name or None,
+            config={
+                **asdict(cfg),
+                "run_label": run_label,
+                "model_class": type(model).__name__,
+            },
+        )
+    except Exception:
+        return None
+
+
+_WANDB_LOG_EVERY = 20
+
+
+def train_model(model, data: TokenData, cfg: TaskConfig, device: str,
+                run_label: str = "") -> TrainOutput:
     import torch
 
     model.to(device)
@@ -99,45 +144,72 @@ def train_model(model, data: TokenData, cfg: TaskConfig, device: str) -> TrainOu
         else _nullcontext()
     )
 
+    wb = _maybe_init_wandb(model, cfg, run_label)
     step = 0
     last_loss = float("nan")
     t0 = time.monotonic()
-    while True:
-        elapsed = time.monotonic() - t0
-        if elapsed >= cfg.train_seconds:
-            break
-        # (max_train_seconds is enforced by the Modal function timeout, not
-        # here: train_seconds always breaks first between steps, and no
-        # between-step check can interrupt a hung step.)
+    try:
+        while True:
+            elapsed = time.monotonic() - t0
+            if elapsed >= cfg.train_seconds:
+                break
+            # (max_train_seconds is enforced by the Modal function timeout, not
+            # here: train_seconds always breaks first between steps, and no
+            # between-step check can interrupt a hung step.)
 
-        lr = _lr_at(step, elapsed, cfg)
-        for pg in opt.param_groups:
-            pg["lr"] = lr
+            lr = _lr_at(step, elapsed, cfg)
+            for pg in opt.param_groups:
+                pg["lr"] = lr
 
-        # Gradient accumulation: grad_accum micro-batches of cfg.batch_size make
-        # one optimizer step (effective batch = batch_size * grad_accum) while
-        # peak activation memory stays at a single micro-batch. cfg.block_size is
-        # this arm's training context (run_arm passes a per-arm cfg); evaluation
-        # is at cfg.eval_block_size regardless -- see data.val_windows.
-        accum = max(1, int(cfg.grad_accum))
-        opt.zero_grad(set_to_none=True)
-        step_ce = 0.0
-        for micro in range(accum):
-            # Distinct deterministic micro-batch, identical across arms (CRN):
-            # keyed by (step * accum + micro) so an optimizer step's micro-batches
-            # never repeat and both arms see the same data. accum == 1 reproduces
-            # the pre-accumulation key exactly.
-            x, y = data.batch(step * accum + micro, device, cfg.block_size)
-            with autocast:
-                logits = _logits_only(model(x))
-                loss = _cross_entropy(logits, y) / accum  # harness-owned loss
-            loss.backward()
-            step_ce += float(loss.detach().float().item())
-        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-        opt.step()
+            # Gradient accumulation: grad_accum micro-batches of cfg.batch_size make
+            # one optimizer step (effective batch = batch_size * grad_accum) while
+            # peak activation memory stays at a single micro-batch. cfg.block_size is
+            # this arm's training context (run_arm passes a per-arm cfg); evaluation
+            # is at cfg.eval_block_size regardless -- see data.val_windows.
+            accum = max(1, int(cfg.grad_accum))
+            opt.zero_grad(set_to_none=True)
+            step_ce = 0.0
+            for micro in range(accum):
+                # Distinct deterministic micro-batch, identical across arms (CRN):
+                # keyed by (step * accum + micro) so an optimizer step's micro-batches
+                # never repeat and both arms see the same data. accum == 1 reproduces
+                # the pre-accumulation key exactly.
+                x, y = data.batch(step * accum + micro, device, cfg.block_size)
+                with autocast:
+                    logits = _logits_only(model(x))
+                    loss = _cross_entropy(logits, y) / accum  # harness-owned loss
+                loss.backward()
+                step_ce += float(loss.detach().float().item())
+            # clip_grad_norm_ returns the pre-clip total norm; kept as a GPU
+            # tensor and only converted if the wandb branch logs it.
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), cfg.grad_clip)
+            opt.step()
 
-        last_loss = step_ce  # sum of per-micro (already /accum) losses = mean CE
-        step += 1
+            last_loss = step_ce  # sum of per-micro (already /accum) losses = mean CE
+            step += 1
+
+            if wb is not None and (step <= 5 or step % _WANDB_LOG_EVERY == 0):
+                try:
+                    wb.log(
+                        {
+                            "train/loss": last_loss,
+                            "train/lr": lr,
+                            "train/grad_norm": float(grad_norm),
+                            "train/elapsed_s": elapsed,
+                            "train/tokens": step * accum * cfg.batch_size
+                            * cfg.block_size,
+                        },
+                        step=step,
+                    )
+                except Exception:
+                    wb = None  # a sick sink must never touch the run
+    finally:
+        if wb is not None:
+            try:
+                wb.finish()
+            except Exception:
+                pass
 
     if device.startswith("cuda"):
         import torch as _t
