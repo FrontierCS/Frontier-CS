@@ -47,6 +47,14 @@ applies the submitted patch to a clean skeleton, runs a hidden arena against
 multiple baseline bot families, and scores by mean baseline win rate with a
 small faster-win tiebreak. The online generals.io service is not used.
 
+## RocksDB Native Compaction Policy
+
+This systems problem asks agents to patch the leveled compaction picker in a
+pinned RocksDB checkout. Its problem ID is `rocksdb_native_compaction_policy`.
+The judge runs native RocksDB workloads, checks snapshots and full database
+contents, and scores paired improvements in write/read/space amplification and
+compaction debt against unmodified RocksDB.
+
 ## vLLM LLM-Serving Optimization
 
 This systems problem asks agents to patch a clean upstream vLLM checkout to
@@ -121,24 +129,23 @@ substantially is the open challenge.
 
 ## NanoSLM Hybrid Architecture Design
 
-Architecture design as a scored task, framed on *Olmo Hybrid: From Theory to
-Practice and Back* (arXiv:2604.03444). Its problem ID is
-`nanoslm_hybrid_arch_design`.
+This task formulates the hybrid language model architecture design as a scored task
+at 200M scale (capped at 400M parameters), framed on *Olmo Hybrid: From Theory to
+Practice and Back* (arXiv:2604.03444). Its problem ID is `nanoslm_hybrid_arch_design`.
 Agents submit a single `/app/model.py` defining `build_model(config)` (or a
 `class NanoSLM`), with full freedom over the model definition. The judge trains
-it from scratch under a fixed wall-clock budget `T` on one H100 — dolma2-BPE
-FineWeb-Edu, gradient accumulation to an effective batch of 32 — and scores the
+it from scratch under a fixed wall-clock budget `T` on one H100 and scores the
 **absolute** reduction in held-out **bits-per-byte** (`val_bpb`, normalized by
-bytes so it is tokenizer-independent) against a CRN-paired, locked pure-attention
-`olmo3_190M` baseline. Both arms tie their embeddings and sit under a hard
-parameter cap; there is no iso-parameter guardrail, so the lever is efficiency
-under the clock — a cheaper mixer completes more optimizer steps within `T`.
-Evaluation is always at an 8192-token context, but the agent may lower its
-*training* context via a module-level `BLOCK_SIZE`, trading steps against length
-extrapolation. The 3:1 Gated-DeltaNet/attention hybrid (the Olmo Hybrid recipe at
-190M) is the reference floor; beating it is the open challenge.
+bytes so it is tokenizer-independent) against a baseline pure-attention
+`olmo3_190M` baseline. 
 
-Note: the open questions are the ones the paper settles at scale but leaves open
-at 190M under a tight, parameter-matched budget — the recurrent mixer (GDN vs.
-Mamba2), the placement of attention layers, and the attention-to-recurrence
-ratio.
+## Structured-LWE Public Witness Recovery
+
+This cryptanalysis task publishes 200 structured-LWE instances spanning ten
+balanced matrix/secret structure families.  Its problem ID is
+`lwe_structured_recovery`.  Agents recover any public-valid secret for as many
+instances as possible and submit an immediately updated cumulative JSON ledger;
+each solved instance contributes one point.  The evaluator holds no planted
+secret or private checking key: it deterministically reconstructs the public
+matrix and checks the submitted vector's public secret and centered-error
+predicates.
