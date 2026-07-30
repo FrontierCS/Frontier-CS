@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
     // Read n and T (T may exceed 64-bit, read as token then parse u128)
     long long n_ll = inf.readLong(1LL, 1000LL, "n");
     size_t n = (size_t)n_ll;
-    string Ttok = inf.readToken("T");
+    string Ttok = inf.readToken();
     u128 T;
     if (!parse_u128_str(Ttok, T)) {
         quitf(_fail, "Invalid T token: '%s'", Ttok.c_str());
@@ -110,9 +110,9 @@ int main(int argc, char* argv[]) {
 
     // Report partial score with details
     quitp((double)ratio,
-          "error=%s, sum=%s, T=%s, score=%.6Lf/100, RatioUnbounded=%.6Lf",
+          "error=%s, sum=%s, T=%s, score=%.6Lf/100, Ratio: %.6Lf, RatioUnbounded: %.6Lf",
           to_string_u128(err).c_str(),
           to_string_u128(sum).c_str(),
           to_string_u128(T).c_str(),
-          score100, unbounded_ratio);
+          score100, ratio, unbounded_ratio);
 }
