@@ -27,7 +27,9 @@ int main(int argc, char *argv[]) {
 	}
 	vector<pair<int, int>> requirements(q);
 	for(int i = 0; i < q; i++){
-	requirements[i] = make_pair(inf.readInt(), inf.readInt());
+		int l = inf.readInt();
+		int r = inf.readInt();
+		requirements[i] = make_pair(l, r);
 	}
 
   int cnt_e = ouf.readInt(n, 2200000);
