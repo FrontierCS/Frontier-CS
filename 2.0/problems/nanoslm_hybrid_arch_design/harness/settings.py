@@ -64,21 +64,24 @@ class TaskConfig:
     warmup_steps: int = 100
 
     # --- iso-wallclock budget (matches config.yaml) ---
-    # 30 min (down from the original 6 h): chosen so an iterating agent sees
-    # signal quickly -- ~35-40 scored submissions fit in the 24 h session
-    # instead of ~4. The 6 h calibration numbers remain on record (baseline
-    # 0.98112 / reference ~0.938) but are NOT comparable to 30-min numbers.
-    train_seconds: float = 1800.0  # wall-clock T per training run (30 min)
+    # 15 min (30 min before 2026-08-09, 6 h originally): chosen so an
+    # iterating agent sees signal quickly -- a scored submission costs ~20 min
+    # wall including warmup+eval. Earlier-budget calibrations remain on record
+    # (6 h: baseline 0.98112 / reference 0.93795; 30 min: 1.33325 / 1.31208)
+    # but are NOT comparable across budgets.
+    train_seconds: float = 900.0   # wall-clock T per training run (15 min)
     # Cosine-decay horizon for the LR schedule -- deliberately the FULL 6 h
-    # schedule, decoupled from train_seconds: a 30-min run traverses only the
-    # first 1/12 of the cosine (LR still near peak at cutoff), behaving like
+    # schedule, decoupled from train_seconds: a 15-min run traverses only the
+    # first 1/24 of the cosine (LR still near peak at cutoff), behaving like
     # the prefix of a long run instead of compressing the whole anneal into
     # the short budget. See train._lr_at.
     lr_schedule_seconds: float = 21600.0
-    # Infrastructure backstop, enforced by the Modal function timeout (and the
-    # orchestrator), not by the training loop -- a between-step check could
-    # never fire before train_seconds and cannot interrupt a hung step.
-    max_train_seconds: float = 3600.0  # hard cap (1 h)
+    # Infrastructure backstop for orchestrators, not a loop condition -- a
+    # between-step check could never fire before train_seconds and cannot
+    # interrupt a hung step. (The Modal function timeout is far looser -- 24 h,
+    # sized for operator curve experiments -- so a hung step is bounded by
+    # that, not by this value.)
+    max_train_seconds: float = 1800.0  # soft backstop (orchestrator-enforced only)
 
     # --- data / tokenizer (locked; hidden tokens live in the judge image) ---
     dataset_name: str = "HuggingFaceFW/fineweb-edu:sample-10BT"  # provenance; matches config.yaml
@@ -113,13 +116,14 @@ class TaskConfig:
     baseline_cache_path: str = "/opt/nanoslm_arch/baseline/baseline_ppl.json"
 
     # --- scoring ---
-    # The score IS the submission's held-out bits-per-byte, raw and unscaled --
-    # LOWER IS BETTER (see harness/scoring.py). The old
-    # clip(100*(base-sub)/bpb_score_scale) mapping and its constant were
-    # removed deliberately: the raw measurement is the quantity the literature
-    # quotes, and any rescaling constant attached an arbitrary figure to the
-    # score's meaning. The baseline is still trained and its gain figures
-    # reported for context; they no longer participate in the score.
+    # score = 100 * 2**(-GAMMA * val_bpb) -- a smooth tempered per-byte
+    # likelihood: a perfect fit (0 bpb) scores exactly 100, the measured
+    # reference solution scores exactly 70, no interior clipping (see
+    # harness/scoring.py; HIGHER IS BETTER, failures score 0). The anchor
+    # constants live in scoring.py and are deliberately NOT fingerprinted:
+    # recalibrating the display map must never invalidate a cached baseline.
+    # The baseline is still trained and its gain figures reported for
+    # context; it does not participate in the score.
 
     # --- guards / resource caps ---
     param_cap: int = 400_000_000   # max trainable params (over-cap -> score 0)

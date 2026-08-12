@@ -49,13 +49,13 @@ SIZING
 `val_tokens` TARGET tokens over non-overlapping windows, and the last target
 needs one more input token behind it.
 
-`train.bin` defaults to 2B tokens (~8 GB on disk at uint32), sized against the
-6 h budget rather than the original 30-minute one: a 6 h H100 run at effective
-batch 32 x ctx 8192 (262k tokens/step, ~10k steps) samples on the order of
-2.5-5B tokens, so a 512M shard meant every window was drawn from ~5-10x-repeated
-data -- and a fast short-context submission repeated it far more. 2B unique
-tokens keeps the baseline at roughly 1-2 effective epochs. sample-10BT holds
-~10B tokens, so there is headroom to raise this further if budgets grow.
+`train.bin` defaults to 2B tokens (~8 GB on disk at uint32), sized for the
+LARGEST budget this task has run (6-8 h): an 8 h H100 run at effective batch
+32 x ctx 8192 (262k tokens/step, ~10k steps) samples ~2.7B tokens, so 2B
+unique tokens keeps even the longest runs at roughly one effective epoch --
+and the current short iteration budgets (15-30 min) sample only a small
+fraction of it. sample-10BT holds ~10B tokens, so there is headroom to raise
+this further if budgets grow.
 
 Usage:
     NANOSLM_ARCH_ASSETS=./assets python3 docker/prep_assets.py

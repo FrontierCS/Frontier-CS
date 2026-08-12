@@ -35,10 +35,11 @@ GPU = os.environ.get("LMARCH_MODAL_GPU", "H100")
 APP_NAME = os.environ.get("LMARCH_MODAL_APP", "nanoslm-hybrid-arch-design")
 REMOTE_TASK = "/opt/nanoslm_arch/task"
 
-# Function timeout must clear a full final-role pair: two arms trained back-to-
-# back (~6 h each = 12 h normally, up to the 12 h hard cap each in the worst
-# case), plus warmup and both evals. Set to Modal's 24 h maximum for the widest
-# margin. (The old 6 h could not finish even one 6 h arm.)
+# Modal's 24 h maximum. Far above what a scored pair needs at the current
+# 15-min budget (~2x20 min), but deliberately generous: curve_run_remote
+# operator experiments train a single arm for many hours (8 h + periodic
+# evals fit comfortably), and history shows budgets change -- a too-tight
+# function timeout has already killed runs once in this task's life.
 FN_TIMEOUT_SECONDS = 24 * 60 * 60
 
 _PROBLEM_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -122,6 +123,23 @@ try:
 
     app = modal.App(APP_NAME)
 
+    # Operator-override env keys. Warm containers REUSE the process env, so
+    # every remote function must reset these before applying its own call's
+    # overrides -- otherwise an operator run's FRONTIER_NANOSLM_WANDB=1 (or a
+    # debug flag) silently leaks into a later scored call landing in the same
+    # container.
+    def _apply_overrides(overrides: dict | None) -> None:
+        """Purge EVERY operator knob a warm container may have inherited, then
+        apply this call's overrides. Prefix-based, not a fixed list: any
+        FRONTIER_NANOSLM_* variable (e.g. a VAL_BYTES override) left over from
+        an earlier call could silently alter a later scored run in the same
+        container. Callers set FRONTIER_NANOSLM_ROLE explicitly AFTER this."""
+        for k in list(os.environ):
+            if k.startswith("FRONTIER_NANOSLM_") or k == "DEBUG_TRACEBACK":
+                os.environ.pop(k, None)
+        for k, v in (overrides or {}).items():
+            os.environ[k] = str(v)
+
     # WANDB_API_KEY for the opt-in observability path. The secret must exist
     # for deploys to resolve (create once:
     #   modal secret create wandb WANDB_API_KEY=...
@@ -153,9 +171,8 @@ try:
 
         sys.path.insert(0, REMOTE_TASK)
 
+        _apply_overrides(overrides)
         os.environ["FRONTIER_NANOSLM_ROLE"] = role
-        for k, v in (overrides or {}).items():
-            os.environ[k] = str(v)
 
         import torch
 
@@ -224,6 +241,92 @@ try:
             "stack": stack,
         }
 
+    @app.function(image=image, gpu=GPU, timeout=FN_TIMEOUT_SECONDS,
+                  volumes={REMOTE_DATA: CORPUS_VOL}, secrets=[WANDB_SECRET])
+    def curve_run_remote(solution_source: str = "",
+                         arm: str = "baseline",
+                         train_seconds: float = 28800.0,
+                         eval_every: float = 900.0,
+                         overrides: dict | None = None) -> dict:
+        """OPERATOR EXPERIMENT: train one arm with periodic held-out eval.
+
+        Trains the baseline (arm="baseline") or the given submission source
+        (arm="submission") for `train_seconds`, evaluating the full held-out
+        stream every `eval_every` seconds of TRAINING time (eval wall-clock is
+        excluded from the budget -- see train_model). Returns the val_bpb
+        curve plus the final arm metrics. Never called by any scored path and
+        writes nothing to the baseline cache.
+        """
+        import dataclasses
+        import json
+        import sys
+        import tempfile
+
+        sys.path.insert(0, REMOTE_TASK)
+        _apply_overrides(overrides)
+
+        import torch  # noqa: F401
+
+        import evaluator
+        from harness import runner, settings as _s
+        from harness.data import TokenData
+        from harness.eval_ppl import evaluate_perplexity
+
+        if arm not in ("baseline", "submission"):
+            return {"guard_error": f"unknown arm {arm!r}", "curve": [],
+                    "code_version": CODE_VERSION}
+
+        cfg = dataclasses.replace(
+            _s.active_config(),
+            train_seconds=float(train_seconds),
+            max_train_seconds=float(train_seconds) * 2.0,
+        )
+        data = TokenData(cfg)
+
+        curve = []
+
+        def hook(model, step, elapsed):
+            out = evaluate_perplexity(model, data, cfg, "cuda")
+            curve.append({"t": round(elapsed, 1), "step": int(step),
+                          "val_bpb": float(out.val_bpb)})
+
+        # The tempdir stays open through training (matching run_pair_remote):
+        # torch.compile submissions read their own source via inspect at first
+        # forward, so deleting model.py before run_arm breaks policy-legal
+        # models. Load/resolve sit inside the GuardError handler so a bad
+        # submission comes back as the structured field, never a raised
+        # torch-defined exception a torch-free client cannot deserialize.
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                if arm == "baseline":
+                    factory = runner.baseline_factory()
+                    block = runner.baseline_block_size(cfg)
+                else:
+                    sub = pathlib.Path(td) / "model.py"
+                    sub.write_text(solution_source)
+                    mod = evaluator._load_submission_module(str(sub))
+                    factory = runner.load_factory(mod)
+                    block = runner.resolve_train_block_size(mod, cfg)
+                m = runner.run_arm(factory, data, cfg, "cuda", block,
+                                   run_label=arm,
+                                   eval_every=float(eval_every), eval_fn=hook)
+        except runner.GuardError as exc:
+            return {"guard_error": str(exc), "curve": curve,
+                    "code_version": CODE_VERSION}
+
+        curve.append({"t": float(train_seconds), "step": int(m.steps),
+                      "val_bpb": float(m.val_bpb)})
+        return json.loads(json.dumps({
+            "arm": arm, "curve": curve,
+            "final": {"val_bpb": float(m.val_bpb), "steps": int(m.steps),
+                      "n_params": int(m.n_params),
+                      "train_block_size": int(m.train_block_size),
+                      "warmup_seconds": float(m.warmup_seconds)},
+            "train_seconds": float(train_seconds),
+            "eval_every": float(eval_every),
+            "code_version": CODE_VERSION,
+        }, default=str))
+
     # Bump on every behavioral change to this file OR to the harness it ships
     # (add_local_dir above). Two reasons, both learned the hard way:
     #   * A deploy does not evict warm containers, so the first call after
@@ -236,7 +339,7 @@ try:
     #     baseline's val_bpb without changing the fingerprint. Keying the cache
     #     by fingerprint alone would then pair fresh submissions against a
     #     stale baseline.
-    CODE_VERSION = "final-6h-agentcache-v8"
+    CODE_VERSION = "15min-likelihood-v9"
 
     # Baseline cache for the agent role, on the corpus Volume so it survives
     # containers (the container FS is ephemeral; settings.baseline_cache_path
@@ -280,11 +383,11 @@ try:
         import tempfile
 
         sys.path.insert(0, REMOTE_TASK)
-        os.environ["FRONTIER_NANOSLM_ROLE"] = role
         # Operator-only env passthrough (e.g. FRONTIER_NANOSLM_WANDB=1). The
-        # judge never passes overrides, so the scored path is unchanged.
-        for k, v in (overrides or {}).items():
-            os.environ[k] = str(v)
+        # judge never passes overrides, so the scored path is unchanged; the
+        # helper also RESETS leftover operator keys from a warm container.
+        _apply_overrides(overrides)
+        os.environ["FRONTIER_NANOSLM_ROLE"] = role
 
         import torch  # noqa: F401  (ensures CUDA init before harness import)
 
@@ -386,6 +489,9 @@ try:
                 return {
                     "guard_error": str(exc),
                     "code_version": CODE_VERSION,
+                    # Deploy-staleness detection: the judge asserts this equals
+                    # its LOCAL fingerprint before trusting the result.
+                    "config_fingerprint": _s.config_fingerprint(cfg),
                     "stack": {"torch": str(torch.__version__),
                               "triton": _ver("triton"), "fla": _ver("fla")},
                 }
@@ -394,6 +500,11 @@ try:
             "baseline": base_info,
             "submission": _arm(cand),
             "baseline_cached": baseline_cached,
+            # Deploy-staleness detection: computed REMOTELY from the deployed
+            # settings, asserted judge-side against the local fingerprint -- a
+            # stale deploy (e.g. an old budget) can otherwise train the wrong
+            # config while the judge stamps its own.
+            "config_fingerprint": _s.config_fingerprint(cfg),
             # Fixed scoring window, reported so a result is self-describing:
             # both arms' val_bpb come from windows of exactly this width.
             "eval_block_size": int(cfg.eval_block_size),

@@ -44,7 +44,7 @@ def _lr_at(step: int, elapsed: float, cfg: TaskConfig) -> float:
     count (wall-clock, so every architecture sees the identical schedule over
     identical time) and not of ``train_seconds`` (the stop time). The horizon
     is deliberately decoupled from the budget: with a short iteration budget
-    (30 min) the run traverses only the first slice of the full-schedule
+    (e.g. 15 min) the run traverses only the first slice of the full-schedule
     cosine -- i.e. it behaves like the prefix of a long training run, LR still
     near peak at cutoff -- rather than compressing the entire anneal into the
     short budget, which would over-weight the anneal and make short-budget
@@ -127,7 +127,15 @@ _WANDB_LOG_EVERY = 20
 
 
 def train_model(model, data: TokenData, cfg: TaskConfig, device: str,
-                run_label: str = "") -> TrainOutput:
+                run_label: str = "",
+                eval_every: float = 0.0, eval_fn=None) -> TrainOutput:
+    """``eval_every``/``eval_fn`` (operator experiments only; no scored path
+    sets them): call ``eval_fn(model, step, train_elapsed)`` every
+    ``eval_every`` seconds of TRAINING time. Time spent inside the hook is
+    excluded from the wall-clock budget, so a curve run trains exactly as many
+    seconds as a plain run; the hook must leave the model usable (train mode
+    is restored here). A raising hook disables itself rather than killing the
+    run."""
     import torch
 
     model.to(device)
@@ -147,12 +155,23 @@ def train_model(model, data: TokenData, cfg: TaskConfig, device: str,
     wb = _maybe_init_wandb(model, cfg, run_label)
     step = 0
     last_loss = float("nan")
+    next_eval = eval_every if (eval_every > 0 and eval_fn is not None) else float("inf")
+    eval_debt = 0.0   # seconds spent in eval_fn, excluded from the budget
     t0 = time.monotonic()
     try:
         while True:
-            elapsed = time.monotonic() - t0
+            elapsed = time.monotonic() - t0 - eval_debt
             if elapsed >= cfg.train_seconds:
                 break
+            if elapsed >= next_eval:
+                _te = time.monotonic()
+                try:
+                    eval_fn(model, step, elapsed)
+                    next_eval += eval_every
+                except Exception:
+                    next_eval = float("inf")  # sick hook: stop evaluating
+                model.train()
+                eval_debt += time.monotonic() - _te
             # (max_train_seconds is enforced by the Modal function timeout, not
             # here: train_seconds always breaks first between steps, and no
             # between-step check can interrupt a hung step.)

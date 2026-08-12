@@ -241,8 +241,19 @@ def _warmup(model, data: TokenData, cfg: TaskConfig, device: str):
             if first is not None:
                 for _ in range(2):
                     out = model(first[0])
-                    _ = out[0] if isinstance(out, tuple) else out
-                del out
+                    logits = out[0] if isinstance(out, tuple) else out
+                # The documented interface requires logits over the FULL
+                # padded vocabulary. Enforced here (fast-fail, before the
+                # training budget is spent) rather than inferred silently: a
+                # narrower head would still train and eval -- ids stay below
+                # 100278 -- but would quietly break the published contract
+                # and shave embedding parameters.
+                if int(logits.shape[-1]) != int(cfg.vocab_size):
+                    raise GuardError(
+                        f"model logits cover {int(logits.shape[-1])} ids but "
+                        f"the interface requires the full padded vocabulary "
+                        f"({int(cfg.vocab_size)})")
+                del out, logits
             del first
         model.train()
 
@@ -277,7 +288,8 @@ class _nullctx:
 
 def run_arm(factory: Callable, data: TokenData, cfg: TaskConfig, device: str,
             train_block_size: int | None = None,
-            run_label: str = "") -> ArmMetrics:
+            run_label: str = "",
+            eval_every: float = 0.0, eval_fn=None) -> ArmMetrics:
     """Instantiate -> guard params -> train -> eval -> guard training/degeneracy.
 
     ``train_block_size`` is this arm's training context (default: cfg's). It is
@@ -345,10 +357,36 @@ def run_arm(factory: Callable, data: TokenData, cfg: TaskConfig, device: str,
     # the timer.
     warmup_seconds, warmup_error = _warmup(model, data, cfg, device)
 
+    # The eval-shape warm enforces the logits-width contract, but it is
+    # skipped whenever the TRAINING-shape warm fails -- so a model that
+    # errors on its first call (deliberately or not) would dodge the width
+    # check entirely and could train+score with a narrow head. Re-check here
+    # in that case; a forward failure is left for the real loop to classify.
+    if warmup_error:
+        try:
+            import torch as _t
+            model.eval()
+            with _t.no_grad():
+                first = next(iter(data.val_windows(device)), None)
+                if first is not None:
+                    out = model(first[0])
+                    logits = out[0] if isinstance(out, (tuple, list)) else out
+                    if int(logits.shape[-1]) != int(cfg.vocab_size):
+                        raise GuardError(
+                            f"model logits cover {int(logits.shape[-1])} ids "
+                            f"but the interface requires the full padded "
+                            f"vocabulary ({int(cfg.vocab_size)})")
+            model.train()
+        except GuardError:
+            raise
+        except Exception:
+            model.train()
+
     before = _param_snapshot(model)
     try:
         tout: TrainOutput = train_model(model, data, cfg, device,
-                                        run_label=run_label)
+                                        run_label=run_label,
+                                        eval_every=eval_every, eval_fn=eval_fn)
     except (GuardError, DataError):
         raise
     except Exception as exc:

@@ -43,20 +43,21 @@ evaluation:
   dataset: HuggingFaceFW/fineweb-edu:sample-10BT
   block_size: 8192
   eval_block_size: 8192
-  train_seconds: 1800                 # fixed wall-clock budget T per training run (30 min)
-  # LR cosine horizon: the FULL 6h schedule. A 30-min run traverses only its
-  # first 1/12 (prefix-of-a-long-run behavior), not a compressed anneal.
+  train_seconds: 900                  # fixed wall-clock budget T per training run (15 min)
+  # LR cosine horizon: the FULL 6h schedule. A 15-min run traverses only its
+  # first 1/24 (prefix-of-a-long-run behavior), not a compressed anneal.
   lr_schedule_seconds: 21600
-  max_train_seconds: 3600
+  max_train_seconds: 1800
   val_tokens: 1048576
   # The scored metric is bits per byte: nll_nats / (val_bytes * ln2). val_bytes
   # is measured by docker/prep_assets.py and shipped in the judge image's
   # manifest.json -- normalizing by the token count would make the metric
   # tokenizer-dependent.
   metric: val_bpb
-  # The score IS the submission's held-out val_bpb, raw and unscaled -- LOWER
-  # IS BETTER. No clipping, no baseline-relative mapping (bpb_score_scale was
-  # removed); the baseline's bpb and the gain are reported for context only.
+  # score = 100 * 2**(-GAMMA * val_bpb): smooth tempered per-byte likelihood.
+  # Perfect fit (0 bpb) = 100 exactly; reference solution = 70; no interior
+  # clipping; HIGHER is better; failures score 0. Anchors in
+  # harness/scoring.py (not fingerprinted).
   param_cap: 400000000
   seed: 1337
 submission:

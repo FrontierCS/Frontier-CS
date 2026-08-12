@@ -12,16 +12,32 @@ it does not depend on how many bytes a token happens to cover.
 ```bash
 vim /app/model.py                # 1. edit your architecture
 bash /app/public_test.sh         # 2. static gate (seconds, no GPU)
-bash /app/submit.sh              # 3. enqueue for the judge
+bash /app/submit.sh              # 3. enqueue for the judge (returns immediately)
 ```
 
+Submissions are **asynchronous**: `submit.sh` returns a UUID at once and a
+scored result takes ~20 minutes of wall-clock (queue slot + warmup + the
+15-minute training run + eval). Submit an initial plausible design early, then
+**keep designing your next candidate while the judge works** — check results
+with `bash /app/submissions.sh` / `bash /app/wait_submission.sh <uuid>`, and
+`bash /app/cancel_submission.sh <uuid>` a queued or running submission you have
+already superseded. The queue holds 2 submissions; don't flood it.
+
 You do **not** train here — this container has no GPU and no torch. The judge
-trains your architecture under a fixed wall-clock budget and **your score IS
-your raw held-out bits per byte (`sub_bpb`) — LOWER IS BETTER**, with no
-scaling and no clipping. A locked baseline is trained under the identical
-budget and its bpb and your gain over it are reported for context only. Failed
-or rejected runs score 9999 (worst). Bits per byte is the unit the literature
-quotes, so your score is directly comparable to published numbers.
+trains your architecture for a fixed wall-clock budget of **15 minutes (900 s)**
+on one H100 — the LR cosine spans a 6-hour horizon (your run is the prefix of a
+long schedule) and **kernel** warmup (Triton autotune) is outside the budget
+(the 100-step LR warmup is inside); expect ~260-330 optimizer steps for
+reference-class models at ctx 8192 — and scores it as
+**`100 * 2**(-GAMMA * sub_bpb)` — a smooth tempered per-byte likelihood: the
+curve reaches 100 exactly at 0 bpb (a perfect fit; measurements at or below
+the 0.4 leakage floor are rejected instead), the reference solution scores
+exactly 70, and there is no interior clipping (the [0, 100] clamp never binds
+for a real measurement). HIGHER IS BETTER** (the score halves
+every ~3.0 bpb). A locked baseline is trained under the identical budget and
+its bpb and your gain over it are reported for context only. Failed or
+rejected runs score 0. `val_bpb` is always reported alongside, comparable to
+published numbers.
 
 ## What you submit
 
@@ -42,7 +58,7 @@ strict: imports are limited to an allowlist — `torch`, `numpy`, `fla`,
 `einops`, `triton` (custom kernels are fair game), `math` and a few
 pure-computation stdlib modules — and dynamic-access primitives (bare
 `eval`/`exec`/`getattr`/`__import__`/`open`, wildcard imports, dunder
-attributes other than `__init__`/`__version__`) are rejected. `model.eval()`
+attributes other than `__init__`/`__version__`/`__name__`) are rejected. `model.eval()`
 and `torch.compile(...)` are fine. Run the gate locally before submitting;
 its rejection reasons are exact.
 
@@ -54,14 +70,15 @@ Declare it with a module-level integer in `model.py`:
 BLOCK_SIZE = 2048     # power of two in [256, 8192]; omit it to train at 8192
 ```
 
-Out-of-range or non-power-of-two values are rejected before training
-(failure score 9999 — the score is bits per byte, LOWER is better).
+Out-of-range or non-power-of-two values are rejected before training (score 0).
 
 **Evaluation is always at 8192**, whatever you train at. So:
 
 - shorter training context → cheaper steps → **more optimizer steps** in the
   same fixed wall-clock budget (at 8192, attention is ~78–84% of layer FLOPs, so
-  this is a big effect);
+  this is a big effect) — but at the fixed 2×16 micro-batching, halving context
+  also halves tokens/step, and context-independent per-step costs mean steps do
+  NOT rise proportionally: measure the trade, don't assume it;
 - but you are still scored on 8192-token windows, so a model trained at 1024 has
   to produce sensible logits **8x past** any position it ever saw.
 

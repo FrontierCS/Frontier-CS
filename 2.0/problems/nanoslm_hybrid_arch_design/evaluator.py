@@ -3,8 +3,9 @@
 Contract: ``evaluate(solution_path) -> (score, score_unbounded, message, metrics)``.
 The submission is a single ``model.py`` (full architecture freedom). The judge
 trains it from scratch for a fixed wall-clock budget on a single H100 and scores
-held-out validation perplexity against a locked baseline architecture trained
-under the identical budget.
+its held-out bits-per-byte through the reference-anchored likelihood map in
+harness/scoring.py; a locked baseline trained identically is reported for
+comparison.
 
 Top-level imports are torch-free so this module loads (and self-tests) without a
 GPU; the training/eval path is lazy-imported inside :func:`evaluate`.
@@ -79,17 +80,56 @@ def _backend() -> str:
 
 
 def _run_pair_modal(solution_path: str, role: str):
-    """Run both arms on a Modal GPU; score judge-side.
+    """Run both arms on the DEPLOYED Modal app; score judge-side.
 
     Only arm metrics cross the boundary -- scoring stays in the judge, so a
     GPU worker never hands back a score the judge did not compute.
+
+    spawn + poll against the deployed app, NOT an ephemeral ``app.run()``
+    holding one connection open. An ephemeral app is canceled the moment its
+    client connection dies, and the judge can sit behind NAT (Docker Desktop)
+    that silently drops connections held open for the length of a training
+    run -- observed as every Harbor submission dying with a RemoteError ~20
+    minutes in, mid-training. A FunctionCall on the deployed app survives
+    client disconnects, and polling with fresh handles tolerates any number
+    of transport drops. Requires `modal deploy harness/modal_app.py` to have
+    been run for the current harness (true in production; the deployed code's
+    CODE_VERSION is part of the baseline-cache key either way).
     """
-    from harness.modal_app import app, run_pair_remote
+    import time
+
+    import modal
+
+    from harness.modal_app import APP_NAME
 
     source = Path(solution_path).read_text(encoding="utf-8", errors="replace")
-    with app.run():
-        res = run_pair_remote.remote(solution_source=source, role=role)
-    return res
+    fn = modal.Function.from_name(APP_NAME, "run_pair_remote")
+    call = fn.spawn(solution_source=source, role=role)
+    call_id = call.object_id
+
+    consec = 0
+    while True:
+        try:
+            return call.get(timeout=120)
+        except TimeoutError:
+            # Still running. Verified against modal 1.5.x: a PENDING poll
+            # raises the BUILTIN TimeoutError, while remote failures
+            # (FunctionTimeoutError, OutputExpiredError, RemoteError) subclass
+            # modal.exception.Error, NOT the builtin -- so this branch cannot
+            # loop on a dead call. Re-verify if the modal client is upgraded.
+            consec = 0
+        except modal.exception.Error:
+            # Deterministic remote-side failure: identical on every retry, so
+            # surface it immediately instead of sleeping through the cap.
+            raise
+        except Exception:
+            # Transport hiccup: give up only when it persists across several
+            # fresh handles a sleep apart.
+            consec += 1
+            if consec >= 10:
+                raise
+            time.sleep(30)
+            call = modal.FunctionCall.from_id(call_id)
 
 
 def _select_device() -> str:
@@ -166,6 +206,24 @@ def evaluate(solution_path: str):
             return (scoring.FAILURE_SCORE, scoring.FAILURE_SCORE,
                     f"environment_error: modal dispatch failed "
                     f"({type(exc).__name__})", {"config_fingerprint": fp})
+        # Deploy-staleness gate: the deployed harness echoes the fingerprint
+        # of the config it ACTUALLY ran. The spawn+poll dispatch trusts the
+        # deployed app, so without this check a stale deploy (an old budget,
+        # say) would silently train the wrong config while this judge stamps
+        # its local fingerprint on the result. A missing echo means a deploy
+        # from before this check -- also stale, also refused.
+        from harness.modal_app import CODE_VERSION as _expected_ver
+        if (res.get("config_fingerprint") != fp
+                or res.get("code_version") != _expected_ver):
+            return (scoring.FAILURE_SCORE, scoring.FAILURE_SCORE,
+                    "environment_error: deployed harness mismatch (remote "
+                    f"fingerprint/version "
+                    f"{res.get('config_fingerprint') or 'absent'!s}/"
+                    f"{res.get('code_version') or 'absent'!s} != local "
+                    f"{fp}/{_expected_ver}; redeploy harness/modal_app.py)",
+                    {"config_fingerprint": fp, "role": role,
+                     "stack": res.get("stack")})
+
         # Guard rejections travel as a field, not an exception: GuardError is
         # defined in harness.runner (which imports torch), so this CPU-only
         # judge could not deserialize the raised form. The message is the
@@ -186,13 +244,14 @@ def evaluate(solution_path: str):
         message = scoring.format_message(
             b["val_bpb"], c["val_bpb"], sr,
             steps=c["steps"], wall_seconds=c["wall_seconds"],
+            train_block_size=int(c.get("train_block_size") or 0),
             extra=",".join(note),
         )
         return sr.score, sr.score_unbounded, message, {
             "base_val_bpb": b["val_bpb"], "sub_val_bpb": c["val_bpb"],
             "abs_bpb_delta": sr.abs_bpb_delta, "sub_val_ppl": c["val_ppl"],
-            # abs_bpb_delta is the scored quantity; rel_improvement is kept
-            # alongside it so an operator never has to recompute it.
+            # gain figures are contextual reporting only; the score depends
+            # solely on sub_val_bpb through the anchored likelihood map.
             "rel_improvement": sr.rel_improvement,
             "sub_steps": c["steps"], "base_steps": b["steps"],
             "sub_params": c["n_params"], "sub_wall_seconds": c["wall_seconds"],
@@ -268,6 +327,7 @@ def evaluate(solution_path: str):
         sr,
         steps=sub.steps,
         wall_seconds=sub.wall_seconds,
+        train_block_size=int(sub.train_block_size),
         extra=",".join(note),
     )
     metrics = {
@@ -400,31 +460,41 @@ def _selftest() -> int:
         ).ok,
     )
 
-    # --- scoring: the score IS the submission's raw val_bpb, lower is better ---
-    base_bpb = 4.0
-    s_tie = scoring.score_from_bpb(base_bpb, base_bpb)
-    s_worse = scoring.score_from_bpb(base_bpb, base_bpb + 0.10)
-    s_better = scoring.score_from_bpb(base_bpb, base_bpb - 0.05)
-    check("score is exactly the submission's val_bpb",
-          abs(s_better.score - (base_bpb - 0.05)) < 1e-12
-          and abs(s_tie.score - base_bpb) < 1e-12
-          and abs(s_worse.score - (base_bpb + 0.10)) < 1e-12)
-    check("score is unscaled and un-clipped (no [0,100] mapping)",
-          abs(s_worse.score - s_worse.score_unbounded) < 1e-12
-          and 0.0 < s_better.score < 100.0 / 25.0)  # a bpb, not a percentage
-    check("lower is better (worse model -> higher score value)",
-          s_worse.score > s_tie.score > s_better.score)
-    check("degenerate bpb maps to the failure sentinel, never a good score",
-          scoring.score_from_bpb(base_bpb, 0.0).score == scoring.FAILURE_SCORE
-          and scoring.score_from_bpb(base_bpb, float("inf")).score
-          == scoring.FAILURE_SCORE)
+    # --- scoring: smooth tempered likelihood; perfect=100, reference=70 ---
+    import math as _math
+    base_bpb = 1.5
+    s_ref = scoring.score_from_bpb(base_bpb, scoring.REF_ANCHOR_BPB)
+    check("reference anchor scores exactly REF_ANCHOR_SCORE",
+          abs(s_ref.score - scoring.REF_ANCHOR_SCORE) < 1e-9)
+    s_better = scoring.score_from_bpb(base_bpb, scoring.REF_ANCHOR_BPB - 0.05)
+    s_worse = scoring.score_from_bpb(base_bpb, scoring.REF_ANCHOR_BPB + 0.05)
+    check("higher is better and monotone",
+          s_better.score > s_ref.score > s_worse.score)
+    check("perfect fit (bpb -> 0) scores exactly 100, and only there",
+          abs(scoring.score_from_bpb(base_bpb, 1e-12).score - 100.0) < 1e-6
+          and scoring.score_from_bpb(base_bpb, 0.01).score < 100.0)
+    check("smooth: no interior clipping anywhere on the domain",
+          all(abs(scoring.score_from_bpb(base_bpb, b).score
+                  - scoring.score_from_bpb(base_bpb, b).score_unbounded) < 1e-12
+              for b in (0.01, 0.5, scoring.REF_ANCHOR_BPB, 3.0, 10.0)))
+    check("log-score is linear in bpb (tempered likelihood)",
+          abs(_math.log2(s_worse.score / 100.0)
+              - (-scoring.GAMMA * (scoring.REF_ANCHOR_BPB + 0.05))) < 1e-9)
+    check("failures and degenerate bpb score 0",
+          scoring.FAILURE_SCORE == 0.0
+          and scoring.score_from_bpb(base_bpb, 0.0).score == 0.0
+          and scoring.score_from_bpb(base_bpb, float("inf")).score == 0.0
+          and scoring.score_from_bpb(base_bpb, 9999.0).score < 1e-9)
     # The baseline comparison is still reported alongside, for context only.
+    s_gain = scoring.score_from_bpb(base_bpb, base_bpb - 0.05)
     check("gain figures still reported",
-          abs(s_better.abs_bpb_delta - 0.05) < 1e-12
-          and abs(s_better.rel_improvement - (0.05 / base_bpb)) < 1e-12)
-    check("legacy scoring constants stay out of the fingerprint",
+          abs(s_gain.abs_bpb_delta - 0.05) < 1e-12
+          and abs(s_gain.rel_improvement - (0.05 / base_bpb)) < 1e-12)
+    check("scoring anchors stay out of the fingerprint",
           "bpb_score_scale" not in settings._FINGERPRINT_KEYS
-          and "r_target" not in settings._FINGERPRINT_KEYS)
+          and "r_target" not in settings._FINGERPRINT_KEYS
+          and not any("anchor" in k.lower()
+                      for k in settings._FINGERPRINT_KEYS))
     # Same for the plausibility floor (a guard constant), which must exist and
     # sit far below any honest result at this scale.
     check("min_plausible_bpb set, sane, and not fingerprinted",
