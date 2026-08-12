@@ -1,0 +1,42 @@
+<Project>
+  <PropertyGroup>  
+    <NoWarn />
+    <Features>strict</Features>
+    <Nullable>disable</Nullable>
+    <WarningLevel>9999</WarningLevel>
+    <LangVersion>preview</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnforceCodeStyleInBuild>True</EnforceCodeStyleInBuild>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>  
+
+    <!-- We must use an explicit platform due to the way Gurobi is packaged, so auto-detect it -->
+    <PlatformTarget>x64</PlatformTarget>
+    
+    <Company>Microsoft</Company>
+    <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
+  </PropertyGroup>
+
+  <!-- Central Package Version Management -->
+  <ItemGroup>
+    <PackageVersion Include="QuikGraph" Version="2.3.0" />
+    <PackageVersion Include="ZenLib" Version="3.1.6" />
+    <PackageVersion Include="Google.OrTools" Version="9.12.4544" />
+    <PackageVersion Include="CommandLineParser" Version="2.8.0" />    
+    <PackageVersion Include="Gurobi.Optimizer" Version="11.0.3" />
+    <PackageVersion Include="Microsoft.CSharp" Version="4.7.0" />
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageVersion Include="NLog" Version="5.2.8" />
+    <PackageVersion Include="StyleCop" Version="6.2.0" />
+    <PackageVersion Include="StyleCop.MSBuild" Version="6.2.0" />
+    <PackageVersion Include="StyleCop.Analyzers" Version="1.1.118" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.6.3" />
+    <PackageVersion Include="MSTest.TestAdapter" Version="3.1.1" />
+    <PackageVersion Include="MSTest.TestFramework" Version="3.1.1" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.0" />
+    <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />
+    <PackageVersion Include="Meta.Numerics" Version="4.1.4" />
+    <PackageVersion Include="CsvHelper" Version="30.0.1" />
+    <PackageVersion Include="System.Numerics.Tensors" Version="0.1.0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+    <ItemGroup Condition="'$(DisableStyleCop)' != 'true'">
+        <AdditionalFiles Include="..\.stylecop\stylecop.json">
+          <Visible>False</Visible>
+        </AdditionalFiles>
+        <PackageReference Include="StyleCop.Analyzers">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+
+        <!-- Dictionary of words to exclude from being marked as typos. -->
+        <CodeAnalysisDictionary Include="AnalysisDictionary.xml">
+            <Visible>False</Visible>
+        </CodeAnalysisDictionary>
+    </ItemGroup>
+
+    <PropertyGroup Condition="'$(DisableStyleCop)' != 'true'">
+        <CodeAnalysisRuleSet>..\.stylecop\stylecop.ruleset</CodeAnalysisRuleSet>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <WarningsAsErrors />
+        <!--
+            Enable xmldoc output by default. If $(OutputPath) is not set, (if building in VS or CLI w/o explicitly defining it)
+            then a default path will be used.
+        -->
+        <DocumentationFile Condition="'$(OutputPath)' != ''">$(OutputPath)\$(AssemblyName).xml</DocumentationFile>
+        <DocumentationFile Condition="'$(OutputPath)' == ''" >bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
+    </PropertyGroup>
+</Project>

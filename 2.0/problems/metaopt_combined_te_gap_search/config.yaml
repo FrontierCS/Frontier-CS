@@ -1,0 +1,44 @@
+tag: systems
+runtime:
+  language: csharp
+  timeout_seconds: 10800
+  environment: >-
+    .NET 8/x64 project with Google OR-Tools; CPU-only bounded adversarial
+    traffic-engineering search; Python/SciPy exact replay and a private
+    restricted-size Gurobi 13 paper reference
+  apt_packages:
+    - bash
+    - python3
+  judge_apt_packages:
+    - bash
+    - python3
+    - python3-pip
+    - python3-numpy
+    - python3-scipy
+  judge_pip_packages:
+    - gurobipy==13.0.0
+  docker:
+    image: mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim
+environment:
+  cpus: 4
+  memory_mb: 8192
+  storage_mb: 8192
+  build_timeout_seconds: 600
+evaluation:
+  max_dev_submissions: 30
+  solution_timeout_seconds_per_instance: 30
+  solution_build_timeout_seconds: 240
+  oracle_query_budget_per_instance: 256
+  max_submission_bytes: 2000000
+  max_submission_files: 96
+  suite_revision: 3
+  development_instance_count: 15
+  final_instance_count: 15
+submission:
+  kind: directory
+  path: /app
+  exclude:
+    - .git
+    - bin
+    - obj
+    - __pycache__

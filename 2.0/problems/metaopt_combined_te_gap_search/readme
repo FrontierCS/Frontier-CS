@@ -1,0 +1,155 @@
+# MetaOpt Combined-TE Gap Search
+
+## Problem
+
+Find sparse, bounded traffic matrices that expose a large throughput gap between
+optimal path-form traffic engineering and a combined production heuristic. The
+combined heuristic runs both POP and demand pinning and keeps the better
+throughput, so a useful matrix must hurt both mechanisms at once.
+
+You are given a pruned, buildable C# subtree of Microsoft MetaOpt. Implement a
+budgeted search in the real `MetaOptimize/TrafficEngineering` module. The judge
+replays every returned matrix independently with exact linear programs; claimed
+objective values are ignored.
+
+## What you submit
+
+Submit the project directory at `/app`. Edit:
+
+```text
+MetaOptimize/TrafficEngineering/BudgetedDemandSearch.cs
+```
+
+You may add C# helpers under
+`MetaOptimize/TrafficEngineering/Candidate/`. All supplied project files other
+than `BudgetedDemandSearch.cs` are locked by digest. Harbor-owned root workflow
+files such as `AGENT.md`, `readme`, and the submission scripts are excluded from
+the project digest and from the judge's build copy; editing them cannot affect
+the score. Symlinks, more than 96 files, or more than 2,000,000 submitted bytes
+are rejected. Build products, `.git`, and Python bytecode are excluded from
+submission.
+
+Your entry point is:
+
+```csharp
+public static int[] Find(AdversarialSearchInstance instance, IGapOracle oracle)
+```
+
+Return one integer level index for each `instance.Pairs` entry, in the same
+order. The runner calls `Find` once in a fresh process per instance. Diagnostic
+stdout and stderr are discarded. Challenge constants (not from materials): the
+project build has 240 seconds, each instance process has 30 seconds, and the
+environment provides 4 CPUs, 8 GiB of memory, and 8 GiB of storage.
+
+The project builds with:
+
+```bash
+dotnet build MetaOptimize.Challenge/MetaOptimize.Challenge.csproj -c Release
+```
+
+## Instance and oracle interface
+
+Each instance discloses its directed edges and capacities, eligible ordered
+source-destination pairs, fixed POP partition for each pair, and up to four
+paths per pair. A path is an array of edge indices. `Levels` is the demand
+quantization list. `SearchBlocks` partitions the eligible pair indices into
+disclosed three-pair blocks; using these blocks is optional.
+
+Call:
+
+```csharp
+GapEvaluation result = oracle.Evaluate(levelIndices);
+```
+
+`GapEvaluation` contains `Gap`, `OptimalThroughput`, `PopThroughput`, and
+`DemandPinningThroughput`. At most `instance.QueryBudget` successful calls are
+allowed. Invalid matrices throw an argument exception and do not consume a
+query. Repeated matrices consume repeated queries. The returned final matrix is
+replayed by the judge without consuming your query budget.
+
+The 256-call budget limits only this provided oracle. You may implement your own
+LP evaluator or other model from the fully disclosed instance; such local work
+is limited by the same 30-second process deadline, not counted as oracle calls.
+The global reference uses this same capability and receives no additional
+instance information.
+
+## Validity
+
+Challenge constants (not from materials): every instance has 27 eligible pairs,
+levels `[0, 6, 18]`, nine disclosed search blocks, a density limit of nine
+nonzero demands, four paths per pair at most, three POP partitions, and a
+256-call oracle budget. A returned array must have exactly 27 JSON/C# integer
+indices in `[0, 2]`, with at most nine indices selecting a nonzero level.
+
+Demand pinning sends every positive demand of at most 6 on its first (shortest)
+path. The aggregate pinned load on every edge must be at most that edge's
+capacity, within `1e-7`; a matrix violating this condition is invalid. All
+numbers must be finite. A missing, invalid, crashing, timing-out, or
+non-building submission scores zero.
+
+## Exact replay
+
+For a demand vector `d`, the judge solves a path-form fractional
+multicommodity-flow LP. Each pair's total path flow is at most its demand and
+the sum of path flows using an edge is at most edge capacity.
+
+- `OPT(d)` is maximum total flow using the full capacity on every edge.
+- `POP(d)` assigns each pair to its disclosed partition. Each of the three
+  partitions independently optimizes its assigned demands on a copy with one
+  third of every edge capacity; the three throughputs are summed. This is the
+  capacity-splitting and fixed demand-partition behavior of MetaOpt's
+  `PopEncoder`.
+- `DP(d)` first carries every demand at most 6 in full on its shortest path,
+  subtracts that load from capacity, and then optimizes demands above 6 over
+  their path catalogs. This is the direct replay behavior of
+  `DirectDemandPinningEncoder`.
+- `COMBINED(d) = max(POP(d), DP(d))`, matching the maximum selected by
+  `TECombineHeuristicsEncoder`.
+
+The raw adversarial gap is:
+
+```text
+gap(d) = OPT(d) - COMBINED(d)
+```
+
+Suite revision 3 has two disjoint sets of fifteen instances, each with five
+capacity perturbations of each exact directed edge skeleton in
+`Topologies/swan.json`, `abilene.json`, and `b4-teavar.json`. Iterative
+submissions receive aggregate feedback on the development set. The final
+verifier evaluates once on the held-out set, which is not used for development
+feedback. Challenge constants (not from materials): capacities are integer
+values from 24 through 36; eligible pair selection, balanced search blocks,
+capacity perturbations, POP partitions, the private frozen suite-key material,
+the 30-second per-instance limit, and the `1e-7` tolerance are benchmark design
+choices. Every call receives its complete generated instance; no topology,
+capacity, pair, or path is withheld from `Find`.
+
+## Scoring and success criterion
+
+Let `G` be the arithmetic mean of the fifteen independently replayed gaps in
+the applicable development or final suite. The
+reported bounded score is:
+
+```text
+score = 100 * (1 - exp(-G / 40))
+```
+
+clipped to `[0, 100]`. `score_unbounded` is `G`. The scale 40 is a challenge
+constant (not from materials). This monotone asymptotic mapping leaves headroom
+above the reference and does not normalize to a known optimum.
+
+The reference follows MetaOpt's unclustered `MaximizeOptimalityGap`: it keeps all
+demand variables jointly mutable and applies the paper's primal-dual rewrite to
+`OPT - max(POP, DP)`. The reference runs only that joint MILP with the paper's
+Gurobi backend, pinned to a deterministic six-work-unit budget and four threads;
+it makes one supplied-oracle call to validate the returned matrix and performs
+no random, annealing, swap, or repair post-search. This is below the same
+30-second case deadline and uses only the fully disclosed instance capability
+available to candidates. The old ten-start, one-pass clustered-V2 procedure is
+retained only as a reported baseline. Neither implementation is present in
+`/app`. Your success criterion is to match or beat the global reference on the
+applicable fifteen instances. The judge reports `beats_reference`,
+`reference_score`, and `margin`; equality counts as success
+(`candidate_score >= reference_score`).
+
+The judge enforces a development-submission budget of 30 submissions.

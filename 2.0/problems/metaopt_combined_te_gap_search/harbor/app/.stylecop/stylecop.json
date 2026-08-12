@@ -1,0 +1,9 @@
+{
+    "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
+    "description": "Configuration file for StyleCop Analyzers",
+    "settings": {
+      "documentationRules": {
+        "companyName": "Microsoft"
+      }
+    }
+  }
