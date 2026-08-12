@@ -27,8 +27,8 @@ runtime:
   judge_pip_packages:
     - modal
   docker:
-    image: frontiercs/nanoslm-hybrid-arch-design-agent:experimental-v0
-    judge_image: frontiercs/nanoslm-hybrid-arch-design-judge:experimental-v0
+    image: ghcr.io/frontiercs/nanoslm-hybrid-arch-design-agent:experimental-v0
+    judge_image: ghcr.io/frontiercs/nanoslm-hybrid-arch-design-judge:experimental-v0
 environment:
   cpus: 8
   memory_mb: 32768

@@ -21,8 +21,14 @@ TAG="${1:-experimental-v0}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROB="$(cd "$HERE/.." && pwd)"
 ASSETS="${NANOSLM_ARCH_ASSETS:-$PROB/.assets}"
-AGENT_IMG="frontiercs/nanoslm-hybrid-arch-design-agent:$TAG"
-JUDGE_IMG="frontiercs/nanoslm-hybrid-arch-design-judge:$TAG"
+# Publishing (manual, after a successful build):
+#   docker login ghcr.io -u <github-user>   # token needs write:packages on the org
+#   docker push "$AGENT_IMG" && docker push "$JUDGE_IMG"
+# Visibility: the AGENT package may be public; the JUDGE package must stay
+# PRIVATE -- it embeds the held-out val.bin -- so pullers (Harbor infra,
+# --force-build) need a token with read:packages instead.
+AGENT_IMG="ghcr.io/frontiercs/nanoslm-hybrid-arch-design-agent:$TAG"
+JUDGE_IMG="ghcr.io/frontiercs/nanoslm-hybrid-arch-design-judge:$TAG"
 
 # --- assets -------------------------------------------------------------------
 if [ ! -s "$ASSETS/train.bin" ] || [ ! -s "$ASSETS/val.bin" ] \
