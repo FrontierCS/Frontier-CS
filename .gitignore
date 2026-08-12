@@ -2,6 +2,8 @@ build
 dist
 *.egg-info
 **/__pycache__/
+# Baked corpus / large local assets (staged on Modal volumes, never committed)
+**/.assets/
 *.log
 **/*.lic
 .vscode

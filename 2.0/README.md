@@ -127,6 +127,18 @@ guardrail (so drift can't be bought with more compute). A history-stabilization
 reference reliably beats baseline (validated t≈2.5/22 clips); beating it
 substantially is the open challenge.
 
+## NanoSLM Hybrid Architecture Design
+
+This task formulates the hybrid language model architecture design as a scored task
+at 200M scale (capped at 400M parameters), framed on *Olmo Hybrid: From Theory to
+Practice and Back* (arXiv:2604.03444). Its problem ID is `nanoslm_hybrid_arch_design`.
+Agents submit a single `/app/model.py` defining `build_model(config)` (or a
+`class NanoSLM`), with full freedom over the model definition. The judge trains
+it from scratch under a fixed wall-clock budget `T` on one H100 and scores the
+**absolute** reduction in held-out **bits-per-byte** (`val_bpb`, normalized by
+bytes so it is tokenizer-independent) against a baseline pure-attention
+`olmo3_190M` baseline. 
+
 ## Structured-LWE Public Witness Recovery
 
 This cryptanalysis task publishes 200 structured-LWE instances spanning ten

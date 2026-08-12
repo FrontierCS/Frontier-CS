@@ -23,5 +23,5 @@ build_timeout_sec = {environment_build_timeout_sec}
 cpus = {cpus}
 memory_mb = {memory_mb}
 storage_mb = {storage_mb}
-gpus = 0
+gpus = {gpus}
 allow_internet = true

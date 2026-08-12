@@ -1,0 +1,66 @@
+tag: systems
+runtime:
+  # Submission is a single Python file, the model definition (/app/model.py).
+  # `language: python` keeps the extension/CLI conventions standard.
+  language: python
+  timeout_seconds: 86400
+  environment: >-
+    Full-freedom PyTorch model.py submitted against a locked
+    training harness over a dolma2-BPE-tokenized FineWeb-Edu corpus; a single
+    Modal H100 trains the model from scratch for a fixed wall-clock budget; the
+    judge scores held-out validation bits-per-byte vs a locked baseline
+    architecture trained under the same budget.
+  apt_packages:
+    - bash
+    - ca-certificates
+    - curl
+    - git
+    - python3
+    - python3-pip
+  judge_apt_packages:
+    - bash
+    - ca-certificates
+    - curl
+    - git
+    - python3
+    - python3-pip
+  judge_pip_packages:
+    - modal
+  docker:
+    image: ghcr.io/frontiercs/nanoslm-hybrid-arch-design-agent:experimental-v0
+    judge_image: ghcr.io/frontiercs/nanoslm-hybrid-arch-design-judge:experimental-v0
+environment:
+  cpus: 8
+  memory_mb: 32768
+  storage_mb: 32768
+  build_timeout_seconds: 7200
+evaluation:
+  gpu: H100
+  tokenizer: allenai/dolma2-tokenizer
+  # 100352 = dolma2's 100278 real ids padded up (Olmo 3 convention; ids on
+  # disk stay < 100278). > 65535, so token streams are uint32.
+  vocab_size: 100352
+  dataset: HuggingFaceFW/fineweb-edu:sample-10BT
+  block_size: 8192
+  eval_block_size: 8192
+  train_seconds: 900                  # fixed wall-clock budget T per training run (15 min)
+  # LR cosine horizon: the FULL 6h schedule. A 15-min run traverses only its
+  # first 1/24 (prefix-of-a-long-run behavior), not a compressed anneal.
+  lr_schedule_seconds: 21600
+  max_train_seconds: 1800
+  val_tokens: 1048576
+  # The scored metric is bits per byte: nll_nats / (val_bytes * ln2). val_bytes
+  # is measured by docker/prep_assets.py and shipped in the judge image's
+  # manifest.json -- normalizing by the token count would make the metric
+  # tokenizer-dependent.
+  metric: val_bpb
+  # score = 100 * 2**(-GAMMA * val_bpb): smooth tempered per-byte likelihood.
+  # Perfect fit (0 bpb) = 100 exactly; reference solution = 70; no interior
+  # clipping; HIGHER is better; failures score 0. Anchors in
+  # harness/scoring.py (not fingerprinted).
+  param_cap: 400000000
+  seed: 1337
+submission:
+  kind: file
+  path: /app/model.py
+  max_queue_size: 2

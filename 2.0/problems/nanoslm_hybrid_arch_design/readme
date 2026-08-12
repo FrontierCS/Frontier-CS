@@ -1,0 +1,290 @@
+# NanoSLM Hybrid Architecture Design (fixed-wall-clock, held-out bits-per-byte)
+
+## Problem
+
+Design a language-model **architecture** that reaches the lowest possible
+held-out **bits-per-byte** (`val_bpb`) when trained **from scratch** under a
+**fixed wall-clock budget on a single H100**. You submit one file — `model.py`,
+the model definition — and nothing else. The hidden judge plugs it into a locked
+training + evaluation harness, trains it for a fixed wall-clock budget of
+**`T` = 15 minutes (900 s)**, and scores its held-out `val_bpb`; a **locked
+baseline architecture** trained under the identical budget is reported for
+comparison.
+
+What 15 minutes buys, concretely: the LR cosine spans a **6-hour horizon**, so
+your run is the *prefix* of a long schedule (LR still near peak at cutoff), and
+**kernel** warmup (Triton autotune / compilation) happens **outside** the
+budget — the optimizer's 100-step LR warmup, by contrast, runs inside it. At ctx 8192 the
+baseline completes ~330 optimizer steps and the reference hybrid ~260 — the
+regime is severely step-starved by design, and run-to-run variance across GPU
+nodes is a few hundredths of a bpb, so chase real architectural effects, not
+third-decimal noise.
+
+The starting point is a 3:1 Gated DeltaNet hybrid (`reference.py`, following
+*Olmo Hybrid*, arXiv:2604.03444); the question is how much further it can be
+pushed. The optimizer, learning-rate schedule,
+weight-decay grouping, data, tokenizer, and the wall-clock budget are all
+**fixed by the judge**. You control the architecture — and, as of this revision,
+the **training context length** (see below). A more compute-efficient
+architecture legitimately completes more useful training steps within `T` — that
+is the intended lever.
+
+Why a hybrid, specifically: the baseline is already a tuned modern transformer,
+so the easy block-level wins (RMSNorm, rotary embeddings, QK-norm, SwiGLU) are
+already in it — what is left on the table is the sequence-mixing direction. A
+linear-recurrent mixer is cheaper per token at long context than attention, so
+under a fixed wall-clock budget it can complete more optimizer steps, while a
+few attention layers preserve the global context a pure linear RNN lacks. That
+is the bet the reference hybrid makes; the design space it opens is the mixer
+choice, the recurrence's internals, layer placement, the attention ratio, and
+the training context length.
+
+## Metric
+
+The tokenizer is fixed by the judge: **dolma2 BPE**
+(`allenai/dolma2-tokenizer`, 100278 real ids padded to a model vocabulary of
+100352, the Olmo 3 convention) over a FineWeb-Edu corpus. The
+scored quantity is held-out **bits per byte**:
+
+```
+val_bpb = total_cross_entropy_nats / (val_bytes * ln 2)
+```
+
+where `val_bytes` is the byte length of the hidden held-out **text** — not the
+number of tokens it was split into. Normalizing by bytes is what makes the
+number independent of the tokenizer, so it is comparable across architectures
+and cannot be gamed by changing tokenization. **Lower is better.**
+
+A per-token validation perplexity is also reported, for readability only. It is
+not the scored quantity, and because the tokenizer is not byte-level it is *not*
+equal to `2**val_bpb`.
+
+## Program interface
+
+Submit a single Python file `model.py` that defines a factory the harness calls:
+
+```python
+def build_model(config) -> torch.nn.Module: ...
+# or, equivalently, a class usable as NanoSLM(config):
+class NanoSLM(torch.nn.Module): ...
+```
+
+`config` is provided by the harness and has:
+
+- `config.vocab_size` — always `100352` (dolma2 BPE padded, Olmo 3
+  convention; do not change). Actual token ids are always `< 100278` — the
+  padding rows are never indexed, but your logits must span the full width.
+- `config.block_size` — the context length you will be **trained** at (8192 by
+  default; see "Training context length" below).
+- `config.eval_block_size` — the context length you will be **scored** at.
+  Always `8192`, whatever you train at.
+- `config.train_seconds_hint`, `config.param_cap_hint`, `config.device_hint` —
+  read-only informational hints (no guarantees).
+
+The returned module must implement:
+
+```python
+def forward(self, idx):
+    # idx: LongTensor [B, T] of BPE token ids in [0, 100278); logits span
+    # the padded vocab_size (100352)
+    return logits          # FloatTensor [B, T, vocab_size]
+```
+
+Returning `(logits, loss)` is accepted, but the judge **ignores any returned
+loss** and computes cross-entropy itself, from your `logits`, for both training
+and validation. You choose everything inside the model: width, depth, attention
+mechanism, normalization, positional scheme, embedding sharing, initialization,
+and so on. You do **not** control the optimizer or training loop.
+
+The vocabulary is large enough that the embedding table is a first-class design
+concern — at `d=768` it is ~77M parameters on its own, so tying, factorizing or
+otherwise reshaping it is a real lever rather than a detail.
+
+A 3:1 Gated DeltaNet hybrid `model.py` — GDN in most layers, full attention in
+the rest, at the `olmo3_190M` baseline's shape — is provided as a starting point.
+
+## Training context length — yours to choose, with a catch
+
+You may declare the context length you are **trained** at by defining a
+module-level integer in `model.py`:
+
+```python
+BLOCK_SIZE = 2048     # power of two in [256, 8192]; omit it to train at 8192
+```
+
+Omit it and you train at the default **8192**. A value outside `[256, 8192]`, or
+one that is not a power of two, is rejected before training (score 0).
+
+**You are always evaluated at 8192.** That is fixed for every submission — it is
+what makes `val_bpb` comparable across submissions — and it is the whole trade:
+
+- A shorter training context makes each optimizer step cheaper, so you complete
+  **more steps** inside the same fixed wall-clock budget `T`. At 8192,
+  attention dominates the sequence-mixer sublayer (~73–84% of its FLOPs; about
+  half of a full block once the MLP is counted), so this is a large effect.
+- Mind the arithmetic, though: at the recipe's fixed micro-batching (2 seqs ×
+  16 accum), halving the context also **halves the tokens seen per step**, and
+  per-step costs that don't scale with context (the optimizer update over all
+  parameters, kernel launches) mean the step count does NOT rise
+  proportionally — a deeper model at half context has been measured to see
+  *half the training tokens* in the same wall-clock. Measure the trade, don't
+  assume it.
+- But your model is still scored on 8192-token windows. Train at 1024 and you
+  are asked for logits at positions **8x beyond anything you saw in training**.
+
+How well a model survives that depends heavily on its **position encoding**,
+which is not the same thing as architectural quality under a compute budget.
+Plain RoPE degrades sharply past its training length; NTK-aware / YaRN-style
+scaling, position interpolation and ALiBi extrapolate considerably better. So if
+you shorten the training context, treat the position encoding as part of the
+decision rather than an afterthought — and be aware that some of what you would
+then be measuring is extrapolation behaviour, not mixer efficiency.
+
+Practical warning: anything you size or cache off `config.block_size` — RoPE
+tables, learned positional embeddings, causal or sliding-window mask buffers —
+must still work at `config.eval_block_size`. Build such buffers against
+`config.eval_block_size`, or lazily against the actual `T` you are handed. A
+model that crashes or silently truncates at 8192 is rejected (score 0).
+
+The baseline always trains at 8192, so this trade is measured against a fixed
+point.
+
+## Validity constraints
+
+- Submission is `model.py` only, `.py`, at most 256 KB.
+- The file must define `build_model(config)` or `class NanoSLM`.
+- Train from scratch: no loading pretrained weights, no reading files, no
+  network, no environment access, no reading the clock, no timing
+  short-circuits. Submissions containing such calls are rejected before running.
+- Imports are restricted to an allowlist: `torch`, `numpy`, `fla`, `einops`,
+  `triton` (custom kernels are a legitimate lever), `math`, and a few
+  pure-computation stdlib modules (`typing`, `dataclasses`, `functools`,
+  `itertools`, `collections`, ...). Wildcard and relative imports, bare
+  `eval`/`exec`/`getattr`/`__import__`/`open`, dunder attributes other than
+  `__init__`/`__version__`/`__name__`, and raw-file-reader attributes (`fromfile`,
+  `memmap`, ...) are rejected statically. `model.eval()` and
+  `torch.compile(...)` remain allowed.
+- A measured bits-per-byte below the plausibility floor (0.4 — far beyond any
+  honest result at this scale and budget) is rejected as presumed held-out
+  leakage (score 0).
+- Trainable parameters must be within the judge's param cap, and the model must
+  fit and train within GPU memory. Over-cap or out-of-memory is rejected
+  (score 0).
+- The model must actually train (its parameters must change) and must produce a
+  non-degenerate output distribution. Untrained or constant-output models are
+  rejected (score 0).
+
+## Scoring
+
+Let `base_bpb` be the locked baseline architecture's held-out bits-per-byte and
+`sub_bpb` be your submission's, both trained for the same wall-clock `T` on the
+same H100 with the same data order (common random numbers), and both scored on
+the same hidden held-out text at the same fixed 8192-token windows. (Iterative
+feedback runs reuse a cached baseline measurement — flagged
+`iterative(cached-baseline)` in the message; the final verification always
+trains a fresh pair.) Your score is
+a **smooth, tempered function of the per-byte likelihood your model assigns to
+the held-out text**: the curve reaches 100 exactly at 0 bits per byte (a
+perfect fit; measurements at or below the 0.4 leakage floor are rejected
+instead), and the shipped reference solution scores exactly 70. HIGHER IS
+BETTER.
+
+```
+score = 100 * 2**(-GAMMA * sub_bpb)        # GAMMA = log2(100/70) / ref_bpb
+      # = 100 * (2**-sub_bpb)**GAMMA: a fixed power of likelihood p = 2**-bpb
+```
+
+- Minimize your `val_bpb`. The curve is strictly decreasing with no interior
+  clipping (a [0, 100] numerical clamp exists but never binds for a real
+  measurement): every bpb improvement raises your score; it halves every
+  1/GAMMA (~3.0) bits per byte.
+- The baseline's `base_bpb` and your gain over it (absolute and relative) are
+  still reported in the feedback for context — they do not affect the score.
+- Failed or rejected runs (policy, guards, crashes) score **0**.
+
+`val_bpb` itself is always reported alongside, so results stay directly
+comparable to published figures.
+
+Submissions are asynchronous: `submit.sh` returns immediately and a scored
+result takes ~20 minutes of wall-clock, so submit an early plausible design and
+keep improving your next candidate while the judge works (the queue holds 2;
+cancel superseded submissions rather than flooding it).
+
+Public feedback reports `base_val_bpb`, `sub_val_bpb`, the absolute gain and the
+relative improvement, the training context you used, the number of optimizer
+steps completed, and the training wall-clock. Hidden data, evaluator internals,
+and the baseline definition are not exposed.
+
+## Iterating
+
+During a trial you can package and score the current `model.py`:
+
+```bash
+bash /app/submit.sh
+```
+
+The best successful iterative submission is kept if a later artifact is worse or
+you time out.
+
+## Problem structure
+
+```
+nanoslm_hybrid_arch_design/
+├── readme                    This file: problem statement, metric, scoring.
+├── config.yaml               Harbor problem config: runtime, images, GPU/eval
+│                             knobs (budget, param cap).
+├── evaluator.py              Judge entrypoint. evaluate(model.py) -> (score,
+│                             score_unbounded, message, metrics): static policy
+│                             gate -> Modal (or local-GPU) dispatch -> scoring.
+│                             `--selftest` runs the torch-free test suite.
+├── evaluate.sh               Local CLI wrapper around evaluator.py.
+├── reference.py              Reference solution: the 3:1 GDN:attention hybrid
+│                             at the baseline's shape (~254M params). Also the
+│                             shipped starter (harbor/app/model.py is a copy).
+├── harness/                  The locked training+evaluation harness.
+│   ├── settings.py           TaskConfig: every locked knob (optimizer, budget,
+│   │                         data paths, caps), config fingerprint (baseline-
+│   │                         cache key), byte-accounting resolution.
+│   ├── model_config.py       ModelConfig: the read-only object handed to the
+│   │                         submission's build_model(config).
+│   ├── policy.py             Static gate: substring denylists + AST scan with
+│   │                         a strict import allowlist. Shipped verbatim to
+│   │                         the agent image so the rules cannot drift.
+│   ├── data.py               TokenData: loads the uint32 token streams, serves
+│   │                         CRN training batches (identical across arms) and
+│   │                         the fixed 8192-wide validation windows; converts
+│   │                         scored tokens to bytes for the bpb denominator.
+│   ├── train.py              Locked training loop: AdamW, step-warmup +
+│   │                         wall-clock cosine LR decay, grad accumulation,
+│   │                         harness-owned cross-entropy, wall-clock cutoff.
+│   ├── eval_ppl.py           Held-out evaluation: val_bpb (scored) + val_ppl
+│   │                         (readability) + degeneracy probe.
+│   ├── runner.py             Orchestration: BLOCK_SIZE resolution, kernel
+│   │                         warmup (incl. eval-shape fast-fail), dynamic
+│   │                         guards (param cap, OOM, trained-from-scratch,
+│   │                         plausibility floor), run_arm / run_pair (CRN).
+│   ├── baseline_model.py     The locked baseline: faithful plain-PyTorch
+│   │                         olmo3_190M (SWA via FlexAttention on CUDA).
+│   └── modal_app.py          Modal GPU app: run_pair_remote (role-aware --
+│   │                         final = fresh CRN pair, agent = cached baseline
+│   │                         from the corpus Volume + submission-only train),
+│   │                         image pins (torch/triton/fla), corpus Volume.
+├── docker/
+│   ├── build_images.sh       Builds agent+judge images; stages the corpus on a
+│   │                         cold cache; leak-greps everything agent-visible.
+│   ├── prep_assets.py        Tokenizes FineWeb-Edu with dolma2 into
+│   │                         train.bin / val.bin / manifest.json (val_bytes,
+│   │                         the bpb denominator, measured here).
+│   ├── agent/Dockerfile      Agent workspace image: CPU-only, no corpus, no
+│   │                         torch; starter model.py + the policy gate.
+│   └── judge/Dockerfile      Judge image: CPU-only, holds the token streams +
+│                             manifest, dispatches GPU work to Modal.
+└── harbor/app/               The agent's workspace (copied into /app).
+    ├── model.py              Starter submission (copy of reference.py).
+    ├── README.md             Agent-facing brief: interface, BLOCK_SIZE trade,
+    │                         static-gate rules.
+    └── public_test.py/.sh    Runs the judge's exact static gate locally.
+```
+
+The held-out `val.bin` and its manifest exist only in the judge image and the
+Modal corpus volume — never in the agent workspace.

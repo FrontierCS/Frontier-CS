@@ -422,6 +422,12 @@ class FrontierCS20Adapter:
             cpus=int(environment.get("cpus", 2)),
             memory_mb=int(environment.get("memory_mb", 4096)),
             storage_mb=int(environment.get("storage_mb", 4096)),
+            # Defaults to 0, so every existing problem still generates a
+            # byte-identical task.toml. Only a problem that explicitly sets
+            # `environment.gpus` in its config.yaml gets a GPU in the AGENT
+            # container -- needed when the task IS to run training, rather than
+            # to patch code the judge runs elsewhere.
+            gpus=int(environment.get("gpus", 0)),
         )
         try:
             from harbor.models.task.config import TaskConfig
