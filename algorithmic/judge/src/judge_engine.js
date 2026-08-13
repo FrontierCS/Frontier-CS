@@ -4,6 +4,39 @@ import { toNs, toBytes, fileExists } from './utils.js';
 import { GoJudgeClient } from './gojudge.js';
 import { ProblemManager } from './problem_manager.js';
 
+// testlib exit codes meaning "the checker/interactor deliberately reported a
+// (possibly partial) score": quitf(_ok, ...) and quitp(points, ...).
+const TESTLIB_OK_EXIT_CODE = 0;
+const TESTLIB_POINTS_EXIT_CODE = 7;
+
+// True when a checker/interactor run finished on its own with a scoring verdict,
+// i.e. its output is a trustworthy source for a `Ratio:` value. A killed run
+// (TLE/MLE/signal) or a non-scoring verdict (_wa, _pe, _fail) reports no score.
+function isScoringVerdict(res) {
+    if (res.status !== 'Accepted' && res.status !== 'Nonzero Exit Status') return false;
+    return res.exitStatus === TESTLIB_OK_EXIT_CODE || res.exitStatus === TESTLIB_POINTS_EXIT_CODE;
+}
+
+function parseRatio(match) {
+    if (!match) return null;
+    const value = parseFloat(match[1]);
+    return Number.isFinite(value) ? value : null;
+}
+
+// Compute the score ratio for one case. Only `judgeMsg` - output produced by the
+// checker or interactor - may be parsed. A case result's `msg` can be the
+// contestant's own stderr (when the run fails the checker never runs at all), so
+// scoring from it would let a submission print its own `Ratio:` and pick its score.
+function applyScoreRatio(r) {
+    const judgeMsg = r.judgeMsg || '';
+    const bounded = parseRatio(judgeMsg.match(/Ratio: ([\d.]+)/));
+    const unbounded = parseRatio(judgeMsg.match(/RatioUnbounded: ([\d.]+)/));
+
+    r.scoreRatio = bounded !== null ? bounded : (r.ok ? 1.0 : 0);
+    r.scoreRatioUnbounded = unbounded !== null ? unbounded : r.scoreRatio;
+    return r;
+}
+
 export class JudgeEngine {
     constructor(config) {
         this.problemManager = new ProblemManager({
@@ -192,12 +225,15 @@ export class JudgeEngine {
         }
 
         if (runRes.status !== 'Accepted') {
-            return { 
-                ok: false, 
-                status: runRes.status, 
-                time: runRes.runTime, 
-                memory: runRes.memory, 
-                msg: (runRes.files?.stderr || '' ) + extra
+            // The checker never ran, so there is no judge verdict for this case.
+            // `msg` is the contestant's own stderr: diagnostics only, never scored.
+            return {
+                ok: false,
+                status: runRes.status,
+                time: runRes.runTime,
+                memory: runRes.memory,
+                msg: (runRes.files?.stderr || '' ) + extra,
+                judgeMsg: ''
             };
         }
 
@@ -222,12 +258,14 @@ export class JudgeEngine {
         });
 
         const ok = chkRes.status === 'Accepted' && chkRes.exitStatus === 0;
+        const chkMsg = chkRes.files?.stdout || chkRes.files?.stderr || '';
         return {
             ok,
             status: ok ? 'Accepted' : 'Wrong Answer',
             time: runRes.runTime,
             memory: runRes.memory,
-            msg: chkRes.files?.stdout || chkRes.files?.stderr || '',
+            msg: chkMsg,
+            judgeMsg: isScoringVerdict(chkRes) ? chkMsg : '',
             output: out
         };
     }
@@ -282,24 +320,31 @@ export class JudgeEngine {
         const submissionRes = interactRes[0];
         const interactorRes = interactRes[1];
 
+        // Only the interactor's own output may be scored; the contestant's stderr
+        // is diagnostics. `judgeMsg` therefore never carries submission output.
+        const interactorMsg = (interactorRes.files?.stdout || '') + (interactorRes.files?.stderr || '');
+        const interactorJudgeMsg = isScoringVerdict(interactorRes) ? interactorMsg : '';
+
         if (submissionRes.status === 'Accepted' && interactorRes.status === 'Accepted' && interactorRes.exitStatus === 0 && submissionRes.exitStatus === 0 ) {
             return {
                 ok: true,
                 status: 'Accepted',
                 time: submissionRes.runTime,
                 memory: Math.max(submissionRes.memory, interactorRes.memory),
-                msg: (interactorRes.files?.stdout || '') + (interactorRes.files?.stderr || '')
+                msg: interactorMsg,
+                judgeMsg: interactorJudgeMsg
             };
         }
         if (submissionRes.status !== 'Accepted') {
             let extra = (submissionRes.status === 'Signalled') ? ` (signal=${submissionRes.error || 'unknown'})` : '';
-            return { ok: false, status: submissionRes.status, time: submissionRes.runTime, memory: submissionRes.memory, msg: (submissionRes.files?.stderr || '') + extra };
+            // The run itself failed (TLE/MLE/RE): no credit, whatever either side printed.
+            return { ok: false, status: submissionRes.status, time: submissionRes.runTime, memory: submissionRes.memory, msg: (submissionRes.files?.stderr || '') + extra, judgeMsg: '' };
         }
         if (interactorRes.status !== 'Accepted') {
-            return { ok: false, status: interactorRes.status, time: submissionRes.runTime, memory: submissionRes.memory, msg: (interactorRes.files?.stderr || '') };
+            return { ok: false, status: interactorRes.status, time: submissionRes.runTime, memory: submissionRes.memory, msg: (interactorRes.files?.stderr || ''), judgeMsg: interactorJudgeMsg };
         }
         // Default to WA if interactor exits non-zero
-        return { ok: false, status: 'Wrong Answer', time: submissionRes.runTime, memory: submissionRes.memory, msg: (interactorRes.files?.stderr || '') };
+        return { ok: false, status: 'Wrong Answer', time: submissionRes.runTime, memory: submissionRes.memory, msg: (interactorRes.files?.stderr || ''), judgeMsg: interactorJudgeMsg };
     }
 
     // Start worker threads
@@ -324,29 +369,15 @@ export class JudgeEngine {
             // let totalScoreUnbounded = 0;
             // const caseResults = [];
             // for (const c of problem.cases) {
-            //     const r = await this.judgeCase({ runSpec, caseItem: c, problem, checkerId });
-                
-            //     const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
-            //     const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-                
-            //     r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
-            //     r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-                
+            //     const r = applyScoreRatio(await this.judgeCase({ runSpec, caseItem: c, problem, checkerId }));
+
             //     totalScore += r.scoreRatio;
             //     totalScoreUnbounded += r.scoreRatioUnbounded;
             //     caseResults.push(r);
             // }
             
             const casePromises = problem.cases.map(async (c) => {
-                const r = await this.judgeCase({ runSpec, caseItem: c, problem, checkerId });
-
-                const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
-                const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-
-                r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
-                r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-
-                return r;
+                return applyScoreRatio(await this.judgeCase({ runSpec, caseItem: c, problem, checkerId }));
             });
 
             const caseResults = await Promise.all(casePromises);
@@ -368,7 +399,8 @@ export class JudgeEngine {
             const finalScoreUnbounded = problem.cases.length > 0 ? (totalScoreUnbounded / problem.cases.length) * 100 : 0;
 
             // Remap individual case statuses based on scoreRatio
-            const finalCases = caseResults.map(caseResult => ({
+            // (judgeMsg is dropped: it is already reported through msg)
+            const finalCases = caseResults.map(({ judgeMsg, ...caseResult }) => ({
                 ...caseResult,
                 status: caseResult.scoreRatio === 1.0 ? 'Correct' : 'Wrong Answer'
             }));
@@ -417,30 +449,16 @@ export class JudgeEngine {
             // let totalScoreUnbounded = 0;
             // const caseResults = [];
             // for (const c of problem.cases) {
-            //     const r = await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId });
-                
-            //     // Parse score ratio from interactor message
-            //     const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
-            //     const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-                
-            //     r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
-            //     r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-                
+            //     // Score ratio comes from the interactor's message only
+            //     const r = applyScoreRatio(await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId }));
+
             //     totalScore += r.scoreRatio;
             //     totalScoreUnbounded += r.scoreRatioUnbounded;
             //     caseResults.push(r);
             // }
 
             const casePromises = problem.cases.map(async (c) => {
-                const r = await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId });
-
-                const matchBounded = r.msg.match(/Ratio: ([\d.]+)/);
-                const matchUnbounded = r.msg.match(/RatioUnbounded: ([\d.]+)/);
-
-                r.scoreRatio = matchBounded ? parseFloat(matchBounded[1]) : (r.ok ? 1.0 : 0);
-                r.scoreRatioUnbounded = matchUnbounded ? parseFloat(matchUnbounded[1]) : r.scoreRatio;
-
-                return r;
+                return applyScoreRatio(await this.judgeInteractiveCase({ runSpec, caseItem: c, problem, interactorId }));
             });
 
             const caseResults = await Promise.all(casePromises);
@@ -458,7 +476,8 @@ export class JudgeEngine {
             const finalScoreUnbounded = problem.cases.length > 0 ? (totalScoreUnbounded / problem.cases.length) * 100 : 0;
 
             // Remap individual case statuses for clarity
-            const finalCases = caseResults.map(caseResult => ({
+            // (judgeMsg is dropped: it is already reported through msg)
+            const finalCases = caseResults.map(({ judgeMsg, ...caseResult }) => ({
                 ...caseResult,
                 status: caseResult.scoreRatio === 1.0 ? 'Correct' : 'Wrong Answer'
             }));
