@@ -1,0 +1,5 @@
+---
+source: src/to_execution_plan.rs
+description: "Plan {\n    execution_time: None,\n    root: SequentialScan(\n        SequentialScanNode {\n            base: BaseNode {\n                execution_time: None,\n                actual_rows: None,\n                children: [],\n                output: [\n                    Field {\n                        table_name: Some(\n                            \"r1\",\n                        ),\n                        field_name: \"a\",\n                    },\n                ],\n            },\n            relation: \"r\",\n            opt_filter: None,\n        },\n    ),\n    aliases: {\n        \"r1\": \"r\",\n    },\n}"
+---
+MemoryExec: partitions=1, partition_sizes=[1]

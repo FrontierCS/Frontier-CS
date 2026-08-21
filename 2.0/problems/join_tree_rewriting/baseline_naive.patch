@@ -1,0 +1,10 @@
+diff --git a/2phase_nsa/binary_plan/rewrite_policy.py b/2phase_nsa/binary_plan/rewrite_policy.py
+index fb78afd..7b6de55 100644
+--- a/2phase_nsa/binary_plan/rewrite_policy.py
++++ b/2phase_nsa/binary_plan/rewrite_policy.py
+@@ -11,4 +11,5 @@ def rewrite_plan(plan: Plan) -> Plan:
+     The optimization policy has been removed for the benchmark. This identity
+     implementation preserves the binary-plan-in/binary-plan-out interface.
+     """
++    # Naive policy: retain the optimizer's original tree unchanged.
+     return plan

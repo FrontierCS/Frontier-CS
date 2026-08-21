@@ -1,0 +1,107 @@
+{
+  "schema": "frontiersmith/metadata@1",
+  "task_id": "join_tree_rewriting",
+  "domain": "databases",
+  "promotion": {
+    "round": 3,
+    "band": "very_hard",
+    "scores": {
+      "paper_alignment": 72,
+      "difficulty": 88,
+      "stability": 99,
+      "statement_quality": 90
+    },
+    "gate": {
+      "difficulty": 20,
+      "paper_alignment": 70,
+      "stability": 70,
+      "statement_quality": 70
+    },
+    "reviewer_verdict": "accept"
+  },
+  "generated_at": "2026-08-17T09:20:25.073333+00:00",
+  "generator": {
+    "pipeline": "frontiersmith",
+    "commit": null,
+    "run_id": "r_top17_78569b6083",
+    "candidate_id": "cand_001",
+    "config_sha256": "c9e37051dfc7ae828e976adaaaf1c7e1eff508417074bdb16ea6e2efb8a590e5"
+  },
+  "paper": {
+    "paper_id": "vldb-2025-instance-optimal-acyclic-join-processing-without-regret-engineering-the-yannakakis-algorithm-in-78569b6083",
+    "title": "Instance-Optimal Acyclic Join Processing Without Regret: Engineering the Yannakakis Algorithm in Column Stores",
+    "authors": [
+      "Liese Bekkers",
+      "Frank Neven",
+      "Stijn Vansummeren",
+      "Remy Wang"
+    ],
+    "year": 2025,
+    "venue": "PVLDB 18",
+    "pdf_url": "https://www.vldb.org/pvldb/vol18/p2413-vansummeren.pdf",
+    "doi": null
+  },
+  "rank": {
+    "rank": 17,
+    "overall_score": 78.0,
+    "recommendation": "candidate",
+    "scores": {
+      "agent_task_fit": 4.6,
+      "artifact_readiness": 2.8,
+      "evaluation_quality": 3.8,
+      "frontier_potential": 4.4
+    },
+    "risks": [
+      "The inspect-only probe did not execute the build or benchmark, so dependency stability, end-to-end runtime, and reproducibility are not yet established.",
+      "A GPU requirement was detected and may raise hardware cost or reduce reproducibility unless a CPU-only evaluation path is confirmed.",
+      "The repository appears to include a sizable DuckDB-derived codebase, which may make builds, instrumentation, and sandboxing heavier than a focused benchmark module.",
+      "Full reproduction across 1,849 queries may exceed a practical evaluation budget and should be reduced to bounded sampled workloads.",
+      "The paper is too recent to show citation or external adoption, and the repository currently has no reported stars."
+    ]
+  },
+  "artifact": {
+    "repo_url": "https://github.com/UHasselt-DSI-Data-Systems-Lab/code-reproducability-yannakakis-vldb2025",
+    "commit": "2d75c9670cd693378dc5f4fc72edc359dd4bb6d1",
+    "cloned_at": "2026-08-15T07:55:05.686357+00:00",
+    "census": {
+      ".sh": 59,
+      ".py": 423,
+      ".sql": 4290,
+      ".r": 2,
+      ".cpp": 2221,
+      ".hpp": 1327,
+      ".h": 1077,
+      ".cc": 38,
+      ".hh": 13,
+      ".c": 7,
+      ".swift": 44,
+      ".jl": 43,
+      ".rs": 42
+    }
+  },
+  "contribution": {
+    "title": "Cardinality-aware join-tree rewriting for Yannakakis plans",
+    "summary": "Rewrite a cardinality-annotated binary join tree into an equivalent, cost-aware shape before lowering it to a two-phase NSA/Yannakakis semijoin plan. The chosen rooting, orientation, and reassociation affect semijoin scheduling, final join order, and intermediate-result costs.",
+    "paper_location": "Section 4, in the plan-generation and cost-based rewriting discussion for two-phase NSA/Yannakakis execution.",
+    "code_location": [
+      "2phase_nsa/binary_plan/rewrite_costbased.py",
+      "2phase_nsa/generate_semijoin_plans.py",
+      "2phase_nsa/binary_plan/to_semijoin_plan.py",
+      "2phase_nsa/binary_plan/binary_plan.py",
+      "2phase_nsa/binary_plan/tests/test_rewrite_costbased.py"
+    ],
+    "metric": "End-to-end query latency and regret or speedup relative to the original binary plan, measured with binaryjoin_vs_yannakakis and its timings CSV. Require equal query outputs for correctness. A fixed, small Stats-CEB subset can be evaluated in minutes on the reproduced CPU-only environment."
+  },
+  "host": {
+    "cpu_count": 8,
+    "ram_gb": 33,
+    "free_disk_gb": 512,
+    "gpus": [],
+    "docker": {
+      "limit_source": "host",
+      "daemon_mem_total_gb": 33
+    },
+    "platform": "Linux-6.17.0-1019-aws-x86_64-with-glibc2.39",
+    "measured_at": "2026-08-17T03:15:38.553470+00:00"
+  }
+}

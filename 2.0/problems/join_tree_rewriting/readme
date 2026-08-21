@@ -1,0 +1,189 @@
+# Join-Tree Rewriting
+
+## Problem
+
+This task is built from a research artifact for instance-optimal processing of acyclic joins in column stores. The artifact takes binary equijoin trees produced by a query optimizer, translates them into a two-phase nested-semijoin representation, and executes the resulting physical plans in a single-threaded columnar engine. A binary tree identifies the participating relation aliases and the equivalence classes of columns used by each join.
+
+The program reads one optimizer-produced JSON plan at a time. The evaluated plans are drawn from three benchmarks — Stats-CEB (derived from Stack Overflow data), the Join Order Benchmark over IMDB, and a cardinality-estimation graph benchmark — and each plan joins five to fourteen aliases over the 95 Parquet relations the judge ships. It presents the topmost binary join subtree to Python as `BinaryJoinNode` and `LeafNode` objects. The program returns an in-memory binary tree, which the fixed pipeline validates and lowers to a physical nested-semijoin plan. A correct return value contains the same annotated relation leaves and equijoin predicates as the input, satisfies the lowerability invariant specified below, and produces exactly the same query result as the original binary plan. Maximise the score by maximising the geometric mean of the evaluator's calibrated per-query execution gains.
+
+The `rewrite_plan` policy that supplies the returned tree has been removed and must be implemented.
+
+## Your workspace
+
+`/app` is a Git checkout containing the relevant Python planner modules from the source artifact. The only file that may change is:
+
+```
+2phase_nsa/binary_plan/rewrite_policy.py
+```
+
+That file contains the `rewrite_plan` entry point and an identity stub in place of the removed policy. The adjacent modules define the binary-tree representation, parsing, validity predicate, and lowering interface. They are fixed. Changes to any other path are rejected, and the submitted patch is applied to a pristine copy before evaluation.
+
+## Design space
+
+The editable scope is the in-memory transformation performed by `rewrite_plan`. A submission may replace the stub's body and may add private functions, classes, type aliases, and constants in the same module. It may return any tree composed of the shipped `BinaryJoinNode` and `LeafNode` types that meets the output contract; the judge does not require the returned objects to preserve the input objects' identities. Standard output and standard error from the call are discarded, and neither is an output channel.
+
+The function receives one complete join tree at a time. There is no task API for changing scans, filters, projections, equivalence-class construction, physical-plan lowering, or execution. Input parsing, the public node classes, workload JSON, Parquet relations, conversion programs, execution engine, correctness comparison, timing collection, and score calculation are fixed. The source-policy rules in Validity also constrain the module's imports and operations. Only the literal file listed under Your workspace is included in the submitted change.
+
+## Workload
+
+Three benchmarks supply the plans, and they differ in how much a two-phase rewrite
+is worth on them. The judge ships all of their relations as Zstandard-compressed
+Parquet — 95 files, 468 MiB in total.
+
+| benchmark | feedback plans | graded plans | relation leaves |
+| --- | ---: | ---: | ---: |
+| Stats-CEB | 6 | 6 | 5–6 |
+| Join Order Benchmark (IMDB) | 5 | 4 | 9–14 |
+| Cardinality-estimation graph benchmark | 9 | 9 | 6–8 |
+
+Every plan is an acyclic equijoin of uniquely aliased relation leaves and
+initially violates the lowering invariant. Plans retain the scan projections,
+filters, aliases, and estimated cardinalities produced by the artifact's
+optimizer-to-IR pipeline. The two suites are stratified by join size so they
+carry the same distribution, and they share no query. Cyclic joins, Cartesian
+products, non-equality joins, and engine changes are outside this workload.
+Suite membership, case count, data scale, and repetition count are fixed rather
+than varied by the graded run.
+
+Every query first runs once with the original binary plan and both lowered plans as an output-correctness gate. A separate timing pass places each lowered plan in both ordering positions and executes five repetitions, producing ten observations per lowered method and query.
+
+## Interface
+
+The input files are JSON physical-plan trees, one file per query, with a top-level `execution_time` number, `root` operator record, and `aliases` object mapping query-local aliases to base relations. The loader starts at `root`, follows any unary operators to the topmost `HASHJOIN`, constructs attribute equivalence classes from every join `condition`, and converts that join subtree into `BinaryJoinNode` and `LeafNode` objects. This complete two-input join record occurs inside a graded workload file:
+
+```json
+{
+  "name": "HASHJOIN",
+  "execution_time": 0.002087,
+  "actual_rows": 41569,
+  "estimated_cardinality": null,
+  "children": [
+    {
+      "name": "SEQUENTIALSCAN",
+      "execution_time": 0.000058,
+      "actual_rows": 40324,
+      "estimated_cardinality": 40325,
+      "children": [],
+      "relation": "users",
+      "opt_filter": "Id<=55746 AND Id IS NOT NULL",
+      "projection": [
+        {"table_name": "u", "field_name": "Id"}
+      ]
+    },
+    {
+      "name": "SEQUENTIALSCAN",
+      "execution_time": 0.000751,
+      "actual_rows": 42291,
+      "estimated_cardinality": 18396,
+      "children": [],
+      "relation": "posts",
+      "opt_filter": "PostTypeId=1 AND PostTypeId IS NOT NULL AND Score>=-1 AND Score IS NOT NULL AND CommentCount>=0 AND CommentCount<=11 AND CommentCount IS NOT NULL",
+      "projection": [
+        {"table_name": "p", "field_name": "Id"},
+        {"table_name": "p", "field_name": "OwnerUserId"}
+      ]
+    }
+  ],
+  "condition": [
+    [
+      {"table_name": "u", "field_name": "Id"},
+      {"table_name": "p", "field_name": "OwnerUserId"}
+    ]
+  ]
+}
+```
+
+Here `name` identifies the operator. A scan's `relation` names the Parquet relation, `projection` gives its output fields and their query-local aliases, `opt_filter` is its predicate or `null`, and its `children` list is empty. `actual_rows` records the measured row count, while `estimated_cardinality` supplies the estimate retained in a leaf; a join may have a null estimate. A join's two `children` are full nested operator records, and every two-field entry in `condition` equates one field from each side. Equivalence classes receive integer IDs; a scan becomes `LeafNode(relation_name, attributes, ec)`, where `relation_name` is its alias, `attributes` is the set of equivalence-class IDs present in its projected schema, and `ec` is its estimated cardinality. A join becomes `BinaryJoinNode(left_child, right_child, join_attributes)`.
+
+The judge imports exactly one entry point and calls it once for each query:
+
+```python
+def rewrite_plan(plan: BinaryJoinNode | LeafNode) -> BinaryJoinNode | LeafNode
+```
+
+The function returns the rewritten tree in memory to the unchanged lowerer; it does not write a file or print a result. A leaf stores `relation_name: str`, `attributes: set[int]`, and `ec: int`. An interior node stores `left_child`, `right_child`, and `join_attributes: set[int]`; its output schema is the union of its children's attributes. For example:
+
+```python
+U = LeafNode("u", {1}, 40325)
+P = LeafNode("p", {0, 1}, 18396)
+plan = BinaryJoinNode(U, P, {1})
+
+out = rewrite_plan(plan)
+# One contract-valid result for this one-join input:
+out == BinaryJoinNode(U, P, {1})
+```
+
+In this example, `u` and `p` are aliases, `{0, 1}` is the set of equivalence classes present in `p`, class 1 is the join predicate, and `40325` and `18396` are estimated cardinalities. After validation, the fixed lowerer writes one `<query-id>.json` physical plan into an evaluator-created output directory. That JSON replaces the original topmost `HASHJOIN` subtree with a `YANNAKAKIS` record whose `root` is a nested `MULTISEMIJOIN`; each such record contains `guard`, `children`, and `equijoin_keys`, and each child is a `GROUPBY` record containing `group_on` and `child`. These files are internal evaluator outputs, not submission artifacts.
+
+For every interior node `P = BinaryJoinNode(P1, P2, J)`, let `LA(Pi)` be the attribute set of the left-most leaf below `Pi`. The required lowerability invariant is:
+
+```
+J ⊆ LA(P1)  and  J ⊆ LA(P2)
+```
+
+The return value must contain each original relation alias exactly once with exactly the same attribute set and estimated cardinality. It must contain exactly `number_of_leaves - 1` joins, and each returned join's attributes must equal the intersection of the attributes below its left and right children. These requirements preserve the original equijoin predicates and all scan annotations used by lowering. The engine must produce the same query result for the rewritten plan, the comparison plan, and the original binary plan.
+
+Internally, plan construction is invoked with every flag shown here (angle-bracketed values are evaluator-created paths):
+
+```text
+<evaluator-Python-interpreter> -I <plan-builder> --app <patched-app> --workloads <suite-directory> --output <plan-output-directory> --upstream <upstream-tools-directory>
+```
+
+The execution engine is invoked as:
+
+```text
+join_runner --configs <correctness-config-directory> --data <parquet-directory> --timings-outfile <correctness.csv> --repetitions 1
+join_runner --configs <timing-config-directory> --data <parquet-directory> --timings-outfile <timings.csv> --repetitions 7
+```
+
+## Validity
+
+The patch must be a text diff of at most 65,536 bytes, change at most one file, and touch only the listed editable file. An empty patch is accepted by the patch parser. The editable module must be valid Python, define `rewrite_plan`, and contain imports only from `typing` and the shipped `binary_plan` package. Calls to `open`, `exec`, `eval`, `compile`, `input`, `breakpoint`, `__import__`, `globals`, `locals`, `vars`, `getattr`, `setattr`, or `delattr` are forbidden, as is access to any attribute whose name begins with `__`. The source text must not contain `/proc`, `/sys`, `frontier_submission`, `plan_builder`, or `evaluator.py`.
+
+For every case, the returned tree must satisfy every output invariant above, the unchanged conversion pipeline must accept it, and all executed plans must have equal query results. Patch failures, source-policy violations, import or planning failures, exceptions, malformed trees, unequal results, planning timeouts, engine timeouts, and crashes score zero before performance is considered. The plan-building process has 30 seconds total, each of its two conversion subprocesses has 20 seconds, and each engine invocation has 120 seconds.
+
+## Scoring
+
+Maximise the score by maximising the geometric mean of calibrated per-query execution gains.
+
+Let `Q` be the twelve-query suite. Let the fixed comparison be the judge's calibrated two-phase plan for each query. For each `q ∈ Q`, define:
+
+```
+A_q = median(recorded BinaryJoin duration for q)
+      / median(recorded two-phase duration for q)
+
+R_q = 1,                                           if candidate and comparison JSON are byte-identical
+      median(live comparison durations for q)
+      / median(live candidate durations for q),    otherwise
+
+G = exp((1 / |Q|) * Σ[q ∈ Q] log(max(10^-12, A_q * R_q)))
+
+case_score_q = min(100, max(0, 100 * log10(A_q * R_q)))     for each rewritten q
+score        = (1 / |Q|) * sum over q in Q of case_score_q
+score_unbounded = score
+```
+
+The recorded durations are the artifact's measured timing records for the same suite queries. Each live median contains the fourteen observations described under Workload. Each query is rewritten, lowered and timed on its own, with its own plan-rewriting budget, and scores on its own. A query the policy cannot rewrite inside that budget, or whose tree the pipeline rejects, scores `0` for itself and leaves the rest of the suite untouched; the divisor is always the whole suite, so declining the queries you are bad at cannot raise the mean. The score is reported unrounded. Byte-identical JSON receives `R_q = 1` exactly. The original binary execution is used for result checking and is not part of the live ratio. An aggregate gain of `1` — a rewrite no faster than the binary plan it was handed — scores `0`, and every further `10x` is the whole scale. The `10^-12` floor, byte-identity rule, transform to `[0, 100]`, whole-point rounding, suite composition, and repetition count are challenge constants, not values from the paper or artifact.
+
+## Calibration
+
+The shipped identity stub is the obvious baseline and scores zero. Untouched, it first fails the import policy because it retains a `__future__` import; independently, its returned identity tree violates the required lowerability invariant on every evaluated case. Invalid trees and unequal query results also score zero, independently of latency. Byte-identical lowered JSON has no timing variation in `R_q`; different JSON is timed in both order positions with fourteen-sample medians. Reported scores are whole points, so a one-point change is the smallest visible improvement and measurements near a rounding boundary may move between adjacent integers.
+
+## Feedback and grading
+
+The judge returns a score after every submission. At most 25 development submissions are allowed; this is a challenge constant, not a value from the source artifact. **The graded suite is not the suite you receive feedback on**, and neither its membership nor its execution order is disclosed through feedback.
+
+## Submission
+
+Submit `/app/solution.patch`. From the workspace, run exactly:
+
+```bash
+bash /app/make_submission.sh
+bash /app/submit.sh
+```
+
+`make_submission.sh` writes the Git binary diff for the editable file and rejects tracked changes or untracked files outside the editable surface rather than silently omitting them. It ignores the output patch itself and the provided `submit.sh`. An empty patch is accepted as a submission artifact, leaves the shipped stub unchanged, and therefore scores zero for the reasons under Calibration.
+
+## Resources
+
+The container provides 2 vCPUs, 8 GiB of memory, 1 GiB of storage, Python 3.11, Git, the reproduced join executor, and the fixed Stats-CEB Parquet data. The overall evaluation timeout is 240 seconds and the build timeout is 120 seconds. Each plan-construction process has a 30-second timeout; its two conversion subprocesses each have a 20-second timeout. Each engine process has a 120-second timeout. These limits apply to the complete submitted workload, including validation and timing. The resource and timeout values are challenge constants, not values from the source artifact.

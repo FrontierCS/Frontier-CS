@@ -1,0 +1,197 @@
+{
+ "dev/1": {
+  "bench": "stats",
+  "query": "48",
+  "leaves": 5
+ },
+ "dev/2": {
+  "bench": "stats",
+  "query": "47",
+  "leaves": 5
+ },
+ "dev/3": {
+  "bench": "stats",
+  "query": "54",
+  "leaves": 5
+ },
+ "dev/4": {
+  "bench": "stats",
+  "query": "78",
+  "leaves": 6
+ },
+ "dev/5": {
+  "bench": "stats",
+  "query": "145",
+  "leaves": 6
+ },
+ "dev/6": {
+  "bench": "stats",
+  "query": "61",
+  "leaves": 6
+ },
+ "dev/7": {
+  "bench": "job",
+  "query": "15d",
+  "leaves": 9
+ },
+ "dev/8": {
+  "bench": "job",
+  "query": "13b",
+  "leaves": 9
+ },
+ "dev/9": {
+  "bench": "job",
+  "query": "27a",
+  "leaves": 12
+ },
+ "dev/10": {
+  "bench": "job",
+  "query": "33c",
+  "leaves": 14
+ },
+ "dev/11": {
+  "bench": "job",
+  "query": "33b",
+  "leaves": 14
+ },
+ "dev/12": {
+  "bench": "ce",
+  "query": "epinions_acyclic_204_10",
+  "leaves": 6
+ },
+ "dev/13": {
+  "bench": "ce",
+  "query": "epinions_acyclic_203_07",
+  "leaves": 6
+ },
+ "dev/14": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_204_18",
+  "leaves": 6
+ },
+ "dev/15": {
+  "bench": "ce",
+  "query": "epinions_acyclic_210_17",
+  "leaves": 7
+ },
+ "dev/16": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_209_00",
+  "leaves": 7
+ },
+ "dev/17": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_208_15",
+  "leaves": 7
+ },
+ "dev/18": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_218_06",
+  "leaves": 8
+ },
+ "dev/19": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_215_16",
+  "leaves": 8
+ },
+ "dev/20": {
+  "bench": "ce",
+  "query": "epinions_acyclic_218_00",
+  "leaves": 8
+ },
+ "final/1": {
+  "bench": "stats",
+  "query": "57",
+  "leaves": 5
+ },
+ "final/2": {
+  "bench": "stats",
+  "query": "51",
+  "leaves": 5
+ },
+ "final/3": {
+  "bench": "stats",
+  "query": "132",
+  "leaves": 5
+ },
+ "final/4": {
+  "bench": "stats",
+  "query": "72",
+  "leaves": 6
+ },
+ "final/5": {
+  "bench": "stats",
+  "query": "64",
+  "leaves": 6
+ },
+ "final/6": {
+  "bench": "stats",
+  "query": "146",
+  "leaves": 6
+ },
+ "final/7": {
+  "bench": "job",
+  "query": "21b",
+  "leaves": 9
+ },
+ "final/8": {
+  "bench": "job",
+  "query": "13d",
+  "leaves": 9
+ },
+ "final/9": {
+  "bench": "job",
+  "query": "27b",
+  "leaves": 12
+ },
+ "final/10": {
+  "bench": "job",
+  "query": "33a",
+  "leaves": 14
+ },
+ "final/11": {
+  "bench": "ce",
+  "query": "epinions_acyclic_204_04",
+  "leaves": 6
+ },
+ "final/12": {
+  "bench": "ce",
+  "query": "epinions_acyclic_204_00",
+  "leaves": 6
+ },
+ "final/13": {
+  "bench": "ce",
+  "query": "epinions_acyclic_205_10",
+  "leaves": 6
+ },
+ "final/14": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_208_05",
+  "leaves": 7
+ },
+ "final/15": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_209_18",
+  "leaves": 7
+ },
+ "final/16": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_211_09",
+  "leaves": 7
+ },
+ "final/17": {
+  "bench": "ce",
+  "query": "epinions_acyclic_218_18",
+  "leaves": 8
+ },
+ "final/18": {
+  "bench": "ce",
+  "query": "epinions_acyclic_217_15",
+  "leaves": 8
+ },
+ "final/19": {
+  "bench": "ce",
+  "query": "watdiv_acyclic_214_16",
+  "leaves": 8
+ }
+}

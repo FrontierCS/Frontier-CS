@@ -1,0 +1,30 @@
+tag: databases
+runtime:
+  language: python
+  timeout_seconds: 240
+  environment: "Python 3.11; reproduced columnar join runner; fixed Stats-CEB, JOB and CE parquet workloads"
+  apt_packages:
+    - git
+  docker:
+    image: python:3.11-slim-bookworm
+environment:
+  cpus: 2
+  memory_mb: 8192
+  storage_mb: 1024
+  build_timeout_seconds: 120
+submission:
+  kind: patch
+  path: /app/solution.patch
+  repo_root: /app
+  allow_paths:
+    - 2phase_nsa/binary_plan/rewrite_policy.py
+  allow_empty: true
+  max_changed_files: 1
+  max_patch_bytes: 65536
+evaluation:
+  max_dev_submissions: 25
+  feedback_queries: 20
+  final_queries: 19
+  repetitions: 5
+  plan_timeout_seconds: 30
+  engine_timeout_seconds: 120

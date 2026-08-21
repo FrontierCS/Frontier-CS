@@ -1,0 +1,1 @@
+A rust binary crate that can be used for running binary & 2NSA query plans in Datafusion. It depends on [yannakakis-join-implementation](../yannakakis-join-implementation/) specificially for running 2NSA plans. [Here](../experiments/imdb/run.sh) you can find an example of how to use this crate. 

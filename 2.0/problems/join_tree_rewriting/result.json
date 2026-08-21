@@ -1,0 +1,220 @@
+{
+  "schema": "frontiersmith/result@1",
+  "task_id": "join_tree_rewriting",
+  "run_id": "r_top17_78569b6083",
+  "candidate_id": "cand_001",
+  "final": {
+    "round": 3,
+    "reference": {
+      "ok": true,
+      "samples": 5,
+      "scores": [
+        62.0,
+        62.0,
+        62.0,
+        62.0,
+        62.0
+      ],
+      "dev_scores": [
+        65.0,
+        65.0,
+        65.0,
+        65.0,
+        65.0
+      ],
+      "spread": {
+        "n": 5,
+        "spread": 0.0,
+        "mean": 62.0,
+        "rel": 0.0
+      },
+      "reasons": [],
+      "round": 3
+    },
+    "trials": [
+      {
+        "round": 3,
+        "idx": 0,
+        "agent": "codex",
+        "model": "gpt-5.6-sol",
+        "reward": 0.0,
+        "score": 0.0,
+        "beats_reference": 0,
+        "reference_score": 62.0,
+        "margin": -62.0,
+        "submissions": 21,
+        "cost": 10.422376249999996,
+        "wall_s": 1950.073284,
+        "status": "scored"
+      },
+      {
+        "round": 3,
+        "idx": 1,
+        "agent": "codex",
+        "model": "gpt-5.6-sol",
+        "reward": 0.0,
+        "score": 0.0,
+        "beats_reference": 0,
+        "reference_score": 62.0,
+        "margin": -62.0,
+        "submissions": 17,
+        "cost": 11.321213499999997,
+        "wall_s": 1427.262444,
+        "status": "scored"
+      },
+      {
+        "round": 3,
+        "idx": 2,
+        "agent": "codex",
+        "model": "gpt-5.6-sol",
+        "reward": 0.0,
+        "score": 0.0,
+        "beats_reference": 0,
+        "reference_score": 62.0,
+        "margin": -62.0,
+        "submissions": 15,
+        "cost": 12.816726499999993,
+        "wall_s": 1340.679784,
+        "status": "scored"
+      }
+    ],
+    "best_reward": 0.0,
+    "n_beating_reference": 0
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "verdict": "revise",
+      "scores": {
+        "paper_alignment": 60,
+        "difficulty": 58,
+        "stability": 99,
+        "statement_quality": 38
+      },
+      "trials": 1,
+      "best_reward": 0.537327503467438
+    },
+    {
+      "round": 2,
+      "verdict": "accept",
+      "scores": {
+        "paper_alignment": 70,
+        "difficulty": 90,
+        "stability": 99,
+        "statement_quality": 92
+      },
+      "trials": 3,
+      "best_reward": 0.0
+    },
+    {
+      "round": 3,
+      "verdict": "accept",
+      "scores": {
+        "paper_alignment": 72,
+        "difficulty": 88,
+        "stability": 99,
+        "statement_quality": 90
+      },
+      "trials": 3,
+      "best_reward": 0.0
+    }
+  ],
+  "judge_pre_execution": {
+    "cand_id": "cand_001",
+    "paper_alignment": 70.0,
+    "difficulty": 67.0,
+    "stability": 99.0,
+    "statement_quality": 42.0,
+    "total": 69.41666666666667,
+    "bands": {
+      "paper_alignment": "good",
+      "difficulty": "good",
+      "stability": "excellent",
+      "statement_quality": "mixed"
+    },
+    "comments": "This is based on the authors' planner code, exact upstream reference policy, reproduced execution binary, real Stats-CEB data, and distinct hidden grading queries, so it has strong scientific relevance. Its public substrate is nevertheless a nine-file slice rather than the intact repository/build system, which keeps alignment out of the top band. The conceptual problem is a credible moderate-to-hard small-tree optimizer challenge with a real latency objective and meaningful headroom. Repeatability is excellent because the reference's byte-identical-plan path removes wall-clock noise. The fatal flaw is packaging: the solver-visible tree lacks the Git metadata and submit script required by the documented workflow, and preflight directly demonstrates that even the reference scores zero through that path; the readme also contains a false import-policy claim. The generator should make the solver image an actual checkout, inject or ship `submit.sh`, rerun preflight only through the exact solver workflow, and update calibration text from the final packaged files. Verdict: scientifically grounded and well specified, but unusable until the submission path is repaired.",
+    "evidence": {
+      "paper_alignment": "`find upstream -type f | wc -l`, the same command on `solver_view`, and a `comm`/`cmp` check reported 63,982 upstream files, 9 solver files, 6 shared paths, and only `2phase_nsa/binary_plan/rewrite_costbased.py` changed among them. `diff -u` showed that this file alone was reduced from the upstream 167-line implementation to a 14-line identity stub, and `rg -n 'WellBehavedPlans|get_well_behaved_plans|try_attach' solver_view` found no implementation trace. `cmp` showed the other five retained planner files are byte-identical upstream files, while `reference/reference.patch` is the direct reverse diff restoring the authors' policy; `authoring/evaluator.py` actually invokes the reproduced `binaryjoin_vs_yannakakis` on fixed Stats-CEB Parquet data and upstream conversion/lowering code. This is therefore a genuine but extremely pruned repository slice, not an intact upstream tree and not a synthetic substitute.",
+      "difficulty": "Scored before the fact: no solver has tried this task yet. The solver must invent a valid re-rooting/reassociation policy for hidden 4-6-relation acyclic trees, preserve exact structural invariants, and optimize real execution latency; the upstream reference performs a nontrivial candidate search with cardinality-based build penalties and scores 53.2732, leaving substantial numerical headroom. The search instances are small and the statement makes the validity invariant explicit, so a careful exhaustive or dynamic-programming solution is discernible rather than open-ended. `authoring/evaluator.py` selects `dev` unless `FRONTIER_SUBMISSION_ROLE=final`, and preflight confirms different feedback (58.2824) and graded (53.2732) suites, so the answer must generalize rather than memorize feedback scores.",
+      "stability": "`evidence/preflight.md` reports final reference scores of 53.2732 on all five runs, mean 53.273238, absolute spread 0.000000, and relative spread 0.000%, with all metrics reported. Although the general candidate metric includes wall-clock medians, the reference produces byte-identical comparison JSON, so its live ratio is explicitly short-circuited to 1 and its score is pure deterministic arithmetic over stored author timings; exact repetition is expected and shows no seeded-arithmetic defect.",
+      "statement_quality": "The statement is substantively complete: `solver_view/readme` lines 5-7 orient the task, lines 25-40 characterize the real workload, lines 44-77 give concrete scan and join records, lines 79-104 define the return contract and invariants, and lines 124-144 give the exact objective. However, lines 11 and 156-163 promise a Git checkout and commands using `/app/submit.sh`, while `find solver_view -maxdepth 1` plus direct tests show neither `solver_view/.git` nor `solver_view/submit.sh` exists; preflight confirms the authors' reference consequently scores zero through the solver path, making the task unanswerable as shipped. Line 148 is also stale: it claims the shipped stub has a forbidden `__future__` import, but the actual 14-line stub has no such import. The operational contract is therefore task-breakingly false despite excellent technical exposition and otherwise matching constants at lines 106-120 and 165-167."
+    },
+    "judge_model": "gpt-5.6-sol"
+  },
+  "cost_usd": {
+    "total": 111.22,
+    "by_stage": {
+      "reproduce": 0.76,
+      "contribs": 0.27,
+      "generate": 5.89,
+      "judge": 0.68,
+      "refine": 7.73,
+      "trials": 84.46,
+      "review": 0.68,
+      "re-refine": 10.7,
+      "finalise": 0.04
+    }
+  },
+  "remeasured": {
+    "at": "2026-08-20T08:16:38.413819+00:00",
+    "why": "Every graded submission in `final` scored 0.0 while the reference scored 62. The cause was the judge container being OOM-killed at the then-declared memory_mb: 2048; config.yaml now declares 4096. These three trials are the same task and the same evaluator under the corrected limit.",
+    "how": "Three harbor trials run directly against the task, outside the pipeline: `scripts/run_kimi_trial.sh`. Agent kimi-cli on kimi-k2.7-code, since codex cannot reach a chat-only provider.",
+    "reference_score": 62.0,
+    "trials": [
+      {
+        "idx": 0,
+        "agent": "kimi-cli",
+        "model": "openrouter/kimi-k2.7-code",
+        "reward": 0.62,
+        "score": 62.0,
+        "beats_reference": 1,
+        "reference_score": 62.0,
+        "margin": 0.0,
+        "aggregate_speedup": 1.602,
+        "reference_aggregate_speedup": 1.606,
+        "case_count": 12,
+        "submissions": 65,
+        "scored_submissions": 15,
+        "best_dev_score": 65.0,
+        "status": "done"
+      },
+      {
+        "idx": 1,
+        "agent": "kimi-cli",
+        "model": "openrouter/kimi-k2.7-code",
+        "reward": 0.64,
+        "score": 64.0,
+        "beats_reference": 1,
+        "reference_score": 62.0,
+        "margin": 2.0,
+        "aggregate_speedup": 1.77,
+        "reference_aggregate_speedup": 1.606,
+        "case_count": 12,
+        "submissions": 16,
+        "scored_submissions": 4,
+        "best_dev_score": 67.0,
+        "status": "done"
+      },
+      {
+        "idx": 2,
+        "agent": "kimi-cli",
+        "model": "openrouter/kimi-k2.7-code",
+        "reward": 0.64,
+        "score": 64.0,
+        "beats_reference": 1,
+        "reference_score": 62.0,
+        "margin": 2.0,
+        "aggregate_speedup": 1.753,
+        "reference_aggregate_speedup": 1.606,
+        "case_count": 12,
+        "submissions": 87,
+        "scored_submissions": 19,
+        "best_dev_score": 66.0,
+        "status": "done"
+      }
+    ],
+    "n_beating_reference": 3,
+    "oom_signatures_found": 0,
+    "supersedes": "`final` \u2014 its three zeros are an artefact of the memory limit, not a measurement of this task. They are kept because they are what the run produced, and because the difficulty score of 88 that promoted this task as very_hard was derived from them."
+  }
+}

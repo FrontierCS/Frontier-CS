@@ -1,0 +1,4 @@
+# Large judge assets: fixed parquet workloads and the reproduced join runner
+# binary. Staged out of band (see readme), never committed.
+judge/data/
+judge/bin/
