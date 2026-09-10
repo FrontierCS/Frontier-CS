@@ -59,7 +59,7 @@ int main(int argc,char* argv[])
 		root=merge(root,newnode(b[i]));
 	while(tot--){
 		int u,v,x1,x2,x3,x4,x5;
-		x=ouf.readInt(); y=x+m-1; z=ouf.readInt();
+		x=ouf.readInt(); y=ouf.readInt(); z=ouf.readInt();
 		if(x>y) swap(x,y);
 		if(y-x+1!=m || x<=0 || y>n || (z!=0 && z!=1))
 			quitf(_wa,"Your answer is not legal");
