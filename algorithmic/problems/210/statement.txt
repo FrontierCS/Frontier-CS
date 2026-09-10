@@ -93,6 +93,7 @@ Constraints (from released datasets):
 
 - `1 ≤ G ≤ 1000`
 - `1 ≤ C ≤ 1000`
+- For bases: `0 ≤ g ≤ 1000`, `0 ≤ c ≤ 2000`, `0 ≤ d ≤ 10`, `0 ≤ v ≤ 250`
 
 ---
 

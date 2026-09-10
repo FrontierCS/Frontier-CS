@@ -77,7 +77,7 @@ int main(int argc, char **argv){
 			pnt = max(pnt, 0.0);
 			unbounded_pnt = pnt;
 		}
-		char mes[30];
+		char mes[128];
 		sprintf(mes, "Ratio: %lf, RatioUnbounded: %lf", pnt, unbounded_pnt);
 		quitp(pnt, "%s", mes);
 	}
