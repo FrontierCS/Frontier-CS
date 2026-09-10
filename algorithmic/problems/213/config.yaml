@@ -5,7 +5,7 @@ type: default
 checker: chk.cc
 
 # Time and memory limits (for submit answer problems, these may not be strictly enforced)
-time: 2s
+time: 5s
 memory: 512m
 
 # The subtasks section

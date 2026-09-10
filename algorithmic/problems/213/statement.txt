@@ -13,9 +13,11 @@ The first line contains a single integer $n$.
 The second line contains $n$ integers, representing the sequence $a$.
 
 Output Format:
-The first line contains two integers $x$ and $m$, where $m$ represents the number of operations.
+The first line contains a single integer $x$, the chosen segment length.
 
-The next $m$ lines each contain three integers: the first two represent the shift interval, and the last one represents the direction, where $0$ means left and $1$ means right.
+The second line contains a single integer $m$, the number of operations.
+
+The next $m$ lines each contain three integers $l$, $r$, $d$: the first two represent the shift interval (it must satisfy $r - l + 1 = x$, $1 \le l \le r \le n$), and the last one represents the direction, where $0$ means left and $1$ means right.
 
 Example:
 Input:
