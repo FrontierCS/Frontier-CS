@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
 
 	double ratio = max(0.0, min(1.0, 1.0 * (5 * N - K) / 2 * N));
     double unbounded_ratio = max(0.0, 1.0 * (5 * N - K) / 2 * N);
-	char mes[30];
+	char mes[128];
 	sprintf(mes, "Ratio: %lf, RatioUnbounded: %lf", ratio, unbounded_ratio);
 	quitp(ratio, "%s", mes);
 }
