@@ -75,6 +75,13 @@ def detect_changed_problems(track: str, base_ref: str = "origin/main") -> list[s
                 is_problem = (problem_dir / "evaluator.py").exists()
 
             if is_problem:
+                # Problem families marked with a `.skip-validation` file (in the
+                # problem dir or any ancestor) are excluded from CI validation.
+                # Used by research/problems/formal_conjectures/: open conjectures
+                # cannot have a reference solution scoring > 0 by design.
+                ancestors = [Path(prefix + "/".join(parts[:j])) for j in range(i + 1)]
+                if any((d / ".skip-validation").exists() for d in ancestors):
+                    break
                 problems.add(candidate)
                 break
 

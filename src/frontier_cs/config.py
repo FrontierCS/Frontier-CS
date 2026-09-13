@@ -218,6 +218,11 @@ LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
         extension="rs",
         code_block_tag="rust",
     ),
+    "lean": LanguageConfig(
+        name="lean",
+        extension="lean",
+        code_block_tag="lean",
+    ),
 }
 
 DEFAULT_LANGUAGE = "python"
