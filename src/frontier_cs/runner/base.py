@@ -128,7 +128,13 @@ class ResearchRunner(Runner):
 
         With nested solution structure, problem_id is already the nested path
         (e.g., "cant_be_late/high_availability_loose_deadline_large_overhead").
+
+        formal_conjectures problems are generated from a submodule rather than
+        committed; materialize them on first access.
         """
+        from ..lazy_problems import ensure_formal_conjectures
+
+        ensure_formal_conjectures(self.problems_dir, problem_id)
         return self.problems_dir / problem_id
 
     def _get_problem_path_or_error(

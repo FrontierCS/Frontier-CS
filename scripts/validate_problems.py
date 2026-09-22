@@ -90,6 +90,16 @@ def validate_problem(
     print(f"Validating: {problem_id}")
     print("=" * 60)
 
+    # Problem families marked with `.skip-validation` (e.g. formal_conjectures)
+    # have no reference solution by design; treat as passing without running.
+    problem_dir = Path(f"{track}/problems/{problem_id}")
+    for d in [problem_dir, *problem_dir.parents]:
+        if (d / ".skip-validation").exists():
+            print("  SKIP: .skip-validation marker (no reference solution by design)")
+            return True
+        if d == Path(f"{track}/problems"):
+            break
+
     # Find reference solution
     ref_path = find_reference_solution(track, problem_id)
     if ref_path is None:

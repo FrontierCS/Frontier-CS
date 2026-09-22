@@ -17,10 +17,11 @@ def count_research_problems(research_dir: Path) -> int:
     if poc_dir.exists():
         count += 4
     
-    # Count all evaluator.py files, excluding those in poc_generation
+    # Count all evaluator.py files, excluding those in poc_generation and
+    # formal_conjectures (auto-generated Lean problems, counted separately)
     for evaluator_file in research_dir.rglob('evaluator.py'):
         # Skip if it's under poc_generation directory
-        if 'poc_generation' not in str(evaluator_file):
+        if 'poc_generation' not in str(evaluator_file) and 'formal_conjectures' not in str(evaluator_file):
             count += 1
     
     return count

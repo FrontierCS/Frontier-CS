@@ -307,6 +307,11 @@ class SingleEvaluator:
         if not research_problems_dir.exists():
             return []
 
+        # formal_conjectures problems are generated from a submodule rather
+        # than committed; materialize them so they appear in the listing.
+        from .lazy_problems import ensure_formal_conjectures
+        ensure_formal_conjectures(research_problems_dir)
+
         problems = []
         
         # Special case: poc_generation has 4 subcategories
