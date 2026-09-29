@@ -23,7 +23,7 @@
 </p>
 
 ## News
-- **Sep 28, 2026:** [FrontierSmith](https://arxiv.org/abs/2605.14445) was selected as a NeurIPS 2026 Spotlight (top 3.7%).
+- **Sep 28, 2026:** [FrontierSmith](https://arxiv.org/abs/2605.14445) was selected as a NeurIPS 2026 Spotlight (top 0.95%).
 - **Sep 28, 2026:** We released [200 FrontierSmith problems](https://github.com/FrontierCS/FrontierSmith) to support community research on training models for open-ended problem solving.
 - **Jun 25, 2026:** FrontierCS was selected as one of 13 projects for [Slingshots // THREE](https://www.laude.org/updates/slingshots-three).
 - **Jun 23, 2026:** Frontier-CS is featured in the [Seed 2.1 Model Card](https://lf3-static.bytednsdoc.com/obj/eden-cn/lapzild-tss/ljhwZthlaukjlkulzlp/seed2.1/Seed2_1_Model_Card.pdf) for frontier research evaluation.
