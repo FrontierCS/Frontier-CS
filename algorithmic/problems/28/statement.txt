@@ -35,13 +35,12 @@ test case was the last one.
 The words in Lewis’s code are composed of lowercase English letters. The length of words is between 1
 to 10 characters. All words in Lewis’s code are pairwise distinct.
 The sum ofK for all queries of the ﬁrst type for each test should be as less as possible. Your score will be determined by the number of this value. If this value is smaller, you will get a higher score if your final answer is correct.
-If value is greater than 4000, the solution will get 0 points. 
+If value is greater than 4000, the solution will get 0 points.
 Violating the interaction protocol or exceeding the limits for the sum ofK cause the “Wrong answer”
 verdict.
 Make sure you print the newline character after each query and ﬂush the output stream buﬀer (flush
 languagecommand)aftereachrequest.Otherwise,thesolutionmaygettheidlenesslimitexceededverdict.
-Note that the jury program isadaptive, i.e. the set of Lewis’s words may be generated at the runtime,
-but the set is guaranteed to be consistent with the answers to previous queries.
+The interactor is non-adaptive: its word lists and their per-initial-letter sizes are fixed before the first query. Queries do not change these lists.
 Page 1 of 2Example
 standard input standard output
 1
@@ -58,3 +57,19 @@ query cy 1
 query cz 1
 answer aaa aba czzzz cxyxy
 Page 2 of 2
+
+## Scoring
+
+Let x be K, the sum of sizes of queried sets. The physical reference (the 60-point level) is a=2400. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(4000-x)/1600).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

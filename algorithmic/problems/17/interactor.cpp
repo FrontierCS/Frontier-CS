@@ -1,6 +1,23 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 
 const int MAXN = 100005;
 int p[MAXN];
@@ -25,15 +42,14 @@ int secondLargestPos(int /*n*/, int l, int r) {
 
 double perCaseScoreBounded(int q, int n) {
     double L = log2((double)n);
-    if (q <= L) return 100.0;
     if (q >= 15.0 * L) return 0.0;
-    return 100.0 * (15.0 * L - (double)q) / (14.0 * L);
+    return natural_log_score(100.0 * referenceScore((15.0 * L - (double)q) / (14.0 * L)), q, L, true);
 }
 
 double perCaseRatioUnbounded(int q, int n) {
     double L = log2((double)n);
     if (q >= 15.0 * L) return 0.0;
-    return 100.0 * (15.0 * L - (double)q) / (14.0 * L);
+    return natural_log_score(100.0 * referenceScore((15.0 * L - (double)q) / (14.0 * L)), q, L, true);
 }
 
 int main(int argc, char* argv[]) {
@@ -117,7 +133,7 @@ int main(int argc, char* argv[]) {
     double unbounded_ratio = minRatioUnbounded / 100.0;
 
     quitp(score_ratio,
-          "all %d tests passed; Ratio: %.4f; RatioUnbounded: %.4f; total queries = %d",
+          "all %d tests passed; Ratio: %.12f; RatioUnbounded: %.12f; total queries = %d",
           T, score_ratio, unbounded_ratio, totalQueries);
     return 0;
 }

@@ -20,11 +20,12 @@ For each $i$ $(0 \leq i \leq N-1)$, a target number of times $T_i$ is given as t
 Let $t_i$ be the actual number of times employee $i$ is assigned cleaning duty.
 Create a cleaning plan that makes the error defined by $\left|t_0 - T_0\right| + \left|t_1 - T_1\right| + \cdots + \left|t_{N-1} - T_{N-1}\right|$ as small as possible.
 
-Scoring
+Raw task objective
 --------
-Let $E$ be the error in the output cleaning plan. You will obtain the score of $10^6 - E$, which is guaranteed to be non-negative.
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
 
-There are 150 testcases, and the score of a submission is the total score for each testcase. If your submission produces an illegal output or exceeds the time limit for some testcases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span>, and the score of the submission will be zero. The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest. If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
+Let $E$ be the error in the output cleaning plan. The raw task reward V is $10^6 - E$, which is guaranteed to be non-negative.
+
 
 Input
 --------
@@ -70,3 +71,13 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc044/PnJFT8lu_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Here E is sum_i abs(actual_count_i-target_count_i), and N is the total number of cleaning assignments; V=2*N-E. Use physical reference a=A=2*N-R. A valid E=0 earns 100 before testing L. For E>0 and L>60, take x=E, a=A, and r=a/x; award min(100,60+ln(r)). A nonpositive anchor has no defined positive-cost logarithmic comparison, so retain the existing nonzero-cost branch.
+
+The checker reports points/100.

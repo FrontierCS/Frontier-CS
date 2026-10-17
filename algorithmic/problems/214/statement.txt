@@ -58,10 +58,19 @@ Constraints:
 - The sequence $a$ is guaranteed to be a permutation of $1\sim n$
 
 Scoring:
-Your score is calculated based on the number of operations $m$:
-- If $m \leq 20n$, you receive full score (1.0).
-- If $m > 200n$, you receive 0 score.
-- Otherwise, Score = max(0.0, 1.0 - (m - 20n) / (200n - 20n)), linearly decreasing from 1.0 to 0.0.
+
+The physical objective is number of submitted operations m=rr; smaller is better. The physical reference is `a = 20*N`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(200*N-m)/(180*N)).
+
+A valid solution with `m=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / m
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Time limit:
 2 seconds

@@ -1,5 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
+
+// Reference calibration: 60 points at r=1, logarithmic rewards above it.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 using namespace std;
 
 static inline void flush_out(){ cout << flush; }
@@ -76,18 +97,13 @@ int main(int argc, char* argv[]) {
             if (user_ans != correct) {
                 quitp(0.0, "Wrong Guess");
             }
-            double score = 0.0;
-            long long B = n; 
-            if (used <= B) score = 1.0;
-            else if (used >= QUERY_LIMIT) score = 0.0;
-            else score = double(QUERY_LIMIT - used) / double(QUERY_LIMIT - B);
-
-            double unbounded_score = 0.0;
-            if (used >= QUERY_LIMIT) unbounded_score = 0.0;
-            else unbounded_score = double(QUERY_LIMIT - used) / double(QUERY_LIMIT - B);
+            if (QUERY_LIMIT <= n) quitf(_fail, "Query budget must exceed anchor n");
+            double score = calibrated(double(QUERY_LIMIT - used) / double(QUERY_LIMIT - n));
+    score = natural_log_score(100.0 * score, used, n, true) / 100.0;
+            double unbounded_score = score;
 
             cerr << "[Interactor] used=" << used << "\n";
-            quitp(score, "Correct Guess. Ratio: %.4f, RatioUnbounded: %.4f", score, unbounded_score);
+            quitp(score, "Correct Guess. Ratio: %.12f, RatioUnbounded: %.12f", score, unbounded_score);
         } else {
             quitf(_wa, "Invalid Action Type: %s", op.c_str());
         }

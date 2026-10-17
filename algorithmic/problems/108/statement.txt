@@ -8,7 +8,7 @@ For example, there are n=3 rings, each covering m=4 sections. There are n*m=12 s
 Wabbit cannot see where any of the arcs are. Given the relative positions of the arcs, Wabbit can open the lock on his own.
 To be precise, Wabbit needs n−1 integers p_1,p_2,…,p_{n−1} satisfying 0≤p_i<n*m such that for each i (1≤i<n), Wabbit can rotate ring 0 clockwise exactly p_i times such that the sections that ring 0 covers perfectly aligns with the sections that ring i covers. In the example above, the relative positions are p_1=1 and p_2=7.
 To operate the lock, he can pick any of the n rings and rotate them by 1 section either clockwise or anti-clockwise. You will see the number on the display after every rotation.
-Wabbit has asked you to help him to find the relative positions of the arcs after all of your rotations are completed. You may perform up to 30000 rotations before Wabbit gets impatient, and your score is inversely linear related to the max number of queries.
+Wabbit has asked you to help him to find the relative positions of the arcs after all of your rotations are completed. You may perform up to 30000 rotations before Wabbit gets impatient, and fewer rotations improve the score as defined in Scoring.
 
 Input
 The first line consists of 2 integers n and m (2≤n≤100,2≤m≤20), indicating the number of rings and the number of sections each ring covers.
@@ -40,3 +40,17 @@ After the third rotation (which is rotating ring 1 clockwise by 1 section), we h
 If we rotate ring 0 clockwise once, we can see that the sections ring 0 covers will be the same as the sections that ring 1 covers, hence p_1=1.
 If we rotate ring 0 clockwise five times, the sections ring 0 covers will be the same as the sections that ring 2 covers, hence p_2=5.
 Note that if we will make a different set of rotations, we can end up with different values of p_1 and p_2 at the end.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of rotation queries. Define the objective x=Q, its physical reference a=A=12000, and the lower-band calculation L=100*(1-Q/30000).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

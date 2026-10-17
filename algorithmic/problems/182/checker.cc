@@ -1,3 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include "testlib.h"
 #include <vector>
 
@@ -48,20 +73,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 5. 计算得分 (Scoring)
-    if (K_user == 0) {
-        if (M == 0) {
-             quitf(_ok, "Ratio: 1");
-        } else {
-             quitf(_wa, "Logic error: Valid solution found with size 0 for non-empty graph.");
-        }
-    }
-
-    double score = (double)K_optimal / K_user * 100.0;
-    double Ratio = (double)K_optimal / K_user;
-
-    // 6. 输出结果
-    quitf(_ok, "Valid Vertex Cover. K_user=%d, K_jury=%d, Ratio: %.4f", K_user, K_optimal, Ratio);
-
-    return 0;
+    if(K_optimal<0 || K_optimal>N) quitf(_fail,"Invalid reference size");
+    double performance;
+    if(K_optimal==0) performance=K_user==0 ? 1.0 : 0.0;
+    else performance=(double)K_optimal/K_user;
+    double score=calibrated(performance);
+    score = natural_log_score(100.0L * (score), K_user, K_optimal, true) / 100.0;
+    quitp(score,"K_user=%d K_reference=%d Ratio: %.12f RatioUnbounded: %.12f",K_user,K_optimal,score,score);
 }

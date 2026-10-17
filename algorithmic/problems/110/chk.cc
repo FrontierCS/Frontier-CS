@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 // chk_grid.cc
 #include "testlib.h"
 #include <bits/stdc++.h>
@@ -121,11 +137,9 @@ static bool canRead(const GridIndex& G, const string& s) {
 }
 
 // Compute the TRUE prefix score: largest X with all numbers 1..X readable.
-// If capX >= 0, stop early and return min(realScore, capX).
-static long long prefixScore(const GridIndex& G, long long capX = -1) {
+static long long prefixScore(const GridIndex& G) {
     long long X = 0;
     for (long long k = 1; ; ++k) {
-        if (capX >= 0 && k > capX) return capX;
         string s = to_string(k);
         if (canRead(G, s)) X = k;
         else return X;
@@ -161,13 +175,14 @@ int main(int argc, char* argv[]) {
     vector<string> yourGrid = readParticipantGrid(ouf);
     GridIndex Gyour = indexGrid(yourGrid);
 
-    // Cap participant evaluation at Best (ratio is clamped to [0,1] anyway)
-    long long Your = prefixScore(Gyour, /*capX=*/Best);
+    // Evaluate the full objective, including improvement over the reference.
+    long long Your = prefixScore(Gyour);
 
-    double ratio = (Best == 0 ? 0.0 : (double)Your / (double)Best);
-    if (ratio < 0) ratio = 0;
-    double unbounded_ratio = max(0.0, ratio);
-    if (ratio > 1) ratio = 1;
+    if (Best <= 0) quitf(_fail, "Reference grid must have a positive prefix score.");
+    double performance = (double)Your / (double)Best;
+    double ratio = (performance <= 1.0 ? 0.6 * performance : 0.6 + 0.02 * log(performance));
+    ratio = natural_log_score(100.0 * ratio, Your, Best, false) / 100.0;
+    double unbounded_ratio = ratio;
 
-    quitp(ratio, "Valid grid. Your=%lld Best=%lld Ratio: %.8f, RatioUnbounded: %.8f", Your, Best, ratio, unbounded_ratio);
+    quitp(ratio, "Valid grid. Your=%lld Best=%lld Ratio: %.12f, RatioUnbounded: %.12f", Your, Best, ratio, unbounded_ratio);
 }

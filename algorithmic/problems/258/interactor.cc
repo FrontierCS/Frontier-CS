@@ -1,3 +1,21 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
 #include "testlib.h"
 #include <vector>
 #include <iostream>
@@ -5,6 +23,12 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 
 using namespace std;
 
@@ -14,11 +38,11 @@ void bfs(int start, int n, const vector<vector<int>>& adj, vector<int>& dist) {
     queue<int> q;
     q.push(start);
     dist[start] = 0;
-    
+
     while (!q.empty()) {
         int u = q.front();
         q.pop();
-        
+
         for (int v : adj[u]) {
             if (dist[v] == -1) {
                 dist[v] = dist[u] + 1;
@@ -35,7 +59,7 @@ int main(int argc, char* argv[]) {
 
     // Read the number of test cases from the input file
     int t = inf.readInt(1, 10, "t");
-    
+
     // Send t to the user's standard input
     cout << t << endl;
 
@@ -46,7 +70,7 @@ int main(int argc, char* argv[]) {
     for (int case_idx = 0; case_idx < t; ++case_idx) {
         // --- Read Test Case Data ---
         int n = inf.readInt(2, 1000, "n");
-        
+
         // Read Hidden Nodes (Interactor only)
         int hidden_u = inf.readInt(1, n, "hidden_u");
         int hidden_v = inf.readInt(1, n, "hidden_v");
@@ -80,9 +104,9 @@ int main(int argc, char* argv[]) {
         int limit_base = (int)ceil(log2((double)n)) / 2;
         limit_base /= 2;
         int limit_zero = limit_base * 16;
-        
+
         // Hard limit to prevent infinite loops (set slightly above Zero Limit)
-        int hard_limit = n + 50; 
+        int hard_limit = n + 50;
 
         // --- Interaction Loop ---
         int queries = 0;
@@ -90,14 +114,14 @@ int main(int argc, char* argv[]) {
 
         while (true) {
             string type = ouf.readToken("[?!]");
-            
+
             if (type == "?") {
                 queries++;
-                
+
                 int c = ouf.readInt(1, n, "c");
                 vector<int> query_nodes(c);
                 vector<bool> used(n + 1, false);
-                
+
                 int best_node = -1;
                 int min_dist_sum = 1e9;
 
@@ -115,20 +139,20 @@ int main(int argc, char* argv[]) {
                         best_node = node;
                     }
                 }
-                
+
                 // Enforce hard limit
                 if (queries > hard_limit) {
-                    cout << "-1 -1" << endl; 
+                    cout << "-1 -1" << endl;
                     quitf(_wa, "Test Case %d: Query limit exceeded (>%d)", case_idx + 1, hard_limit);
                 }
 
                 cout << best_node << " " << min_dist_sum << endl;
-            } 
+            }
             else if (type == "!") {
                 int guess_1 = ouf.readInt(1, n, "guess_1");
                 int guess_2 = ouf.readInt(1, n, "guess_2");
-                
-                bool correct = (guess_1 == hidden_u && guess_2 == hidden_v) || 
+
+                bool correct = (guess_1 == hidden_u && guess_2 == hidden_v) ||
                                (guess_1 == hidden_v && guess_2 == hidden_u);
 
                 if (correct) {
@@ -136,68 +160,26 @@ int main(int argc, char* argv[]) {
                     solved = true;
                 } else {
                     cout << "Incorrect" << endl;
-                    quitf(_wa, "Test Case %d: Wrong guess. Expected {%d, %d}, got {%d, %d}", 
+                    quitf(_wa, "Test Case %d: Wrong guess. Expected {%d, %d}, got {%d, %d}",
                           case_idx + 1, hidden_u, hidden_v, guess_1, guess_2);
                 }
-                break; 
+                break;
             }
         }
-        
+
         tot_moves += queries;
 
-        // --- Calculate Score for this Graph (Quadratic) ---
-        // Formula: Score = 1.0 * ((K_zero - Q) / (K_zero - K_base))^2
-        double case_score = 0.0;
-        
-        // Denominator: K_zero - K_base
-        double denominator = (double)(limit_zero - limit_base);
-        // Numerator: K_zero - Q
-        double numerator = (double)limit_zero - (double)queries;
-
-        // Calculate raw ratio
-        double ratio = numerator / denominator;
-        ratio = max(0.0, ratio);
-        double calculated_score = ratio * ratio;
-
-        if (solved) {
-            if (queries <= limit_base) {
-                // If Q <= K_base, score is at least 1.0 (calculated_score will be >= 1.0)
-                case_score = calculated_score; 
-                // However, standard "Base Score" usually caps at 100 for ranking purposes unless bonus is intended.
-                // But logic here says "Score follows the curve", so we keep the high value if Q is small.
-                // Usually standard problems cap at 1.0, but for "Unbounded" support we calculate it raw first.
-                // Let's stick to the prompt's implied logic:
-                // If Q > K_zero, score is 0.
-                if (queries >= limit_zero) {
-                    case_score = 0.0;
-                } else {
-                    case_score = calculated_score;
-                }
-            } else if (queries >= limit_zero) {
-                case_score = 0.0;
-            } else {
-                // Between K_base and K_zero
-                case_score = calculated_score;
-            }
+        // A zero-query anchor is a true cost lower bound for small n.
+        double case_score;
+        if (limit_base == 0) {
+            case_score = solved && queries == 0 ? 1.0 : 0.0;
         } else {
-            case_score = 0.0;
+            double r = std::max(0.0, (double(limit_zero) - queries) / (limit_zero - limit_base));
+            case_score = solved ? calibrated(r * r) : 0.0;
+            if (solved) case_score = natural_log_score(100.0L * (case_score), queries, limit_base, true) / 100.0;
         }
-        
-        // For standard "score_ratio" output, we typically clamp max score to 1.0 
-        // unless it's a specific contest type. However, based on the previous turn's code
-        // and standard custom invokers, let's clamp the main score to [0, 1] 
-        // and keep the bonus in the unbounded part, OR just use the curve.
-        // Given "Score = max(0, ...)", let's implement standard clamping for the main score.
-        double clamped_score = case_score;
-        if (clamped_score > 1.0) clamped_score = 1.0;
-        if (clamped_score < 0.0) clamped_score = 0.0;
-        
-        total_score += clamped_score;
-
-        // Unbounded score keeps the raw calculated value (even > 1.0)
-        double unbounded_val = calculated_score;
-        if (unbounded_val < 0.0) unbounded_val = 0.0; // Still floor at 0
-        tot_unbounded_score += unbounded_val;
+        total_score += case_score;
+        tot_unbounded_score += case_score;
     }
 
     // --- Final Verdict ---
@@ -205,7 +187,7 @@ int main(int argc, char* argv[]) {
     double unbounded_score_ratio = tot_unbounded_score / (double)t;
 
     // Output final score
-    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
+    quitp(score_ratio, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f", tot_moves, score_ratio, unbounded_score_ratio);
 
     return 0;
 }

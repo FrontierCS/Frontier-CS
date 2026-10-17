@@ -1,3 +1,24 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Preserve the bounded base ratio for the unchanged low-score branch.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 // Polyomino Packing (Reflections Allowed) — Checker (updated to new statement)
 // Uses testlib: https://codeforces.com/blog/entry/18431
 //
@@ -7,7 +28,7 @@
 //   - n ∈ [100, 10000]
 //   - k_i ∈ [1, 10]
 //   - Σk_i ≤ 2000  (enforced)
-//   - Scoring per test: score = 1e5 * (Σk_i) / (W*H)   (higher is better)
+//   - Base ratio = (Σk_i)/(W*H); apply penalized() for awarded points.
 //
 // Input (from problem):
 //   Line 1: n
@@ -147,6 +168,8 @@ int main(int argc, char* argv[]) {
 
     double score = (double) totalCells / (double) area;
     // Include "Ratio:" in message so judge system can parse the partial score
-    quitp(score, "Ratio: %.9f (cells=%lld, W=%lld, H=%lld, area=%lld)",
+    score=penalized(score);
+    score = natural_log_score(100.0 * score, area, (long double)totalCells / 0.6L, true) / 100.0;
+    quitp(score, "Ratio: %.12f (cells=%lld, W=%lld, H=%lld, area=%lld)",
           score, totalCells, W, H, area);
 }

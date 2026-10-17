@@ -33,13 +33,20 @@ The value of R must satisfy 0 <= R <= M. After the completion of all R rounds (i
 
 Scoring
 
-Your score is calculated based on the Total Efficiency Value V.
+The physical objective is rounds times total swap distance V=R_rounds*sum|u-v|; smaller is better. The physical reference is `a = best_value from ans`; matching a positive reference earns 60 points.
 
-The scoring function is defined as follows:
-- If V <= 10,000,000,000,000 (10^13), you receive 100 points.
-- If V >= 3,300,000,000,000,000 (3.3×10^15), you receive 0 points.
-- Otherwise, your score is calculated linearly:
-  Score = 100 * (3.3×10^15 - V) / (3.3×10^15 - 10^13)
+B and H are the baseline and target efficiency values read from the answer file; H is best_value. V is rounds times the sum of swap distances.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(B-V)/(B-H)), with H=best_value from the answer file.
+
+A valid solution with `V=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / V
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Constraints
 

@@ -1,4 +1,3 @@
-```markdown
 # Rope Network for Xiaotu (Optimization)
 
 ## Problem
@@ -114,34 +113,21 @@ This produces points uniform over the polygon.
 ---
 
 ## Scoring
-This is a **minimization** problem.
 
-For each test case, the judge computes:
-- `OBJ_you`: your objective value.
-- `OBJ_base`: the objective value of a deterministic internal reference solution computed from that test case.
+The physical objective is mean distance Y from the deterministic sample points to the nearest selected rope; smaller is better. The physical reference is `a = B-0.6*max(B,1e-30)`; matching a positive reference earns 60 points.
 
-### Per-test score
-Let:
-- \(B = \mathrm{OBJ\_base}\)
-- \(Y = \mathrm{OBJ\_you}\)
+Define the historical low-score expression (in points):
 
-If your output is infeasible, then `score_test = 0`.
+    P_low = 100*clamp((B-Y)/max(B,1e-30),0,1).
 
-Otherwise, the score for that test is:
-\[
-\mathrm{score\_test} = \mathrm{clamp}\left(\frac{B - Y}{\max(B, 10^{-30})},\ 0,\ 1\right)
-\]
+A valid solution with `Y=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-This means:
-- matching the baseline gets score `0`
-- improving on the baseline gives a score in `(0, 1]`
-- doing worse than the baseline is clamped to `0`
+    r = a / Y
+    P = min(100, 60 + ln(r)).
 
-### Final score
-The checker emits one per-test ratio in `[0, 1]` for each hidden test case.
-The final score is the sum of these per-test ratios, scaled to the total points configured for this problem.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
----
+B is the objective of choosing the first K candidate ropes; the same deterministic samples are used for both objectives.
 
 ## Constraints
 - Time limit: 2 seconds
@@ -181,4 +167,3 @@ Hidden tests satisfy:
 
 ### Explanation (high level)
 You chose candidate ropes #4 \((0,2)\) and #5 \((1,3)\). The judge generates 5000 deterministic uniform sample points inside the polygon (using seed 1234567), computes for each point the distance to the nearer of these two segments, averages those distances to get `OBJ_you`, then compares that objective against the judge's deterministic reference objective to compute the normalized score.
-```

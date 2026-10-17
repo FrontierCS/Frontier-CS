@@ -1,4 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+#include <algorithm>
+// Historical calibration; the physical-objective mapping is applied below.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <vector>
 #include <iostream>
 #include <algorithm>
@@ -64,10 +88,10 @@ int main(int argc, char* argv[]) {
     // Loop to handle multiple test cases in one file (if present)
     while (!inf.seekEof()) {
         case_count++;
-        
+
         // 1. Read N for the current test case
         int n = inf.readInt(1, 200000, "n");
-        
+
         // 2. Read the sorted array for the current test case
         vector<int> a(n);
         for(int i = 0; i < n; ++i) {
@@ -81,7 +105,7 @@ int main(int argc, char* argv[]) {
             int j = i;
             while(j < n && a[j] == val) j++;
             // Create block
-            blocks.push_back({val, j - i, i + 1, j}); 
+            blocks.push_back({val, j - i, i + 1, j});
             i = j;
         }
         build_st(blocks.size());
@@ -102,7 +126,7 @@ int main(int argc, char* argv[]) {
 
         long long queries = 0;
         bool solved = false;
-        
+
         // 6. Interaction Loop
         while(true) {
             string type = ouf.readToken("[?!]");
@@ -156,7 +180,7 @@ int main(int argc, char* argv[]) {
                         if (b_max_idx != -1) {
                             int freq_mid = blocks[b_max_idx].count;
                             int val_mid = blocks[b_max_idx].value;
-                            
+
                             if (freq_mid > best_freq) {
                                 best_freq = freq_mid;
                                 best_val = val_mid;
@@ -175,7 +199,7 @@ int main(int argc, char* argv[]) {
                 for(int i=0; i<n; ++i) {
                     user_ans[i] = ouf.readInt();
                 }
-                
+
                 if (user_ans == a) {
                     solved = true;
                 } else {
@@ -184,13 +208,13 @@ int main(int argc, char* argv[]) {
                 break; // End of this test case
             }
         }
-        
+
         total_queries_all += queries;
 
         // 7. Calculate Independent Score for this Case
         double current_ratio = 0.0;
         double current_unbounded = 0.0;
-        
+
         if (solved) {
             // Single unbounded quadratic scoring curve in the query count:
             //   r = 1.0  when queries == k_base   (-> 100 after the judge's *100)
@@ -204,10 +228,11 @@ int main(int argc, char* argv[]) {
             double curve = r * r;
 
             // Unbounded score: report the raw curve (may exceed 1 -> scoreUnbounded > 100).
-            current_unbounded = curve;
+            current_unbounded = reference_score(curve);
+            current_unbounded = natural_log_score(100.0L * (current_unbounded), queries, k_base, true) / 100.0;
 
             // Bounded score: same curve clipped to 1.0, i.e. clipped to 100 on output.
-            current_ratio = (curve > 1.0) ? 1.0 : curve;
+            current_ratio = current_unbounded;
         } else {
             // Not solved (or WA, though WA usually quits immediately above)
             current_ratio = 0.0;
@@ -227,11 +252,11 @@ int main(int argc, char* argv[]) {
 
     // Bounded score is the unbounded average clipped to 100 (i.e. ratio clipped to 1.0).
     double final_score_ratio = total_ratio / case_count;
-    if (final_score_ratio > 1.0) final_score_ratio = 1.0;
+
     if (final_score_ratio < 0.0) final_score_ratio = 0.0;
 
     // Output formatted exactly as requested
-    quitp(final_score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f",
+    quitp(final_score_ratio, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f",
           total_queries_all, final_score_ratio, final_unbounded);
 
     return 0;

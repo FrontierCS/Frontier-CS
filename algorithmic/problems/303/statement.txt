@@ -92,25 +92,21 @@ For a feasible output, define:
 ---
 
 ## Scoring
-This is an optimization problem with continuous scoring.
 
-For each test case, the judge computes:
-- Your profit \(P\).
-- A deterministic internal reference profit \(P_0\), computed by the judge from the same test case.
+The physical objective is net collected profit P=collected-c*moves; larger is better. The physical reference is `a = 2.5*P0 if P0>0; 0.6*total_value if P0=0`; matching a positive reference earns 60 points.
 
-The per-test score ratio is:
-\[
-\text{ratio} =
-\begin{cases}
-0 & \text{if } P \le 0 \\
-\mathrm{clamp}\left(\dfrac{P - P_0}{P},\, 0,\, 1\right) & \text{otherwise}
-\end{cases}
-\]
-where \(\mathrm{clamp}(x,0,1)=\min(1,\max(0,x))\).
+Define the historical low-score expression (in points):
 
-The final score is the sum of per-test ratios, scaled to the total points configured for this problem.
+    P_low = 0 if P<=0; 100*max(0,(P-P0)/P) if P>0 and P0>0; 100*P/total_value if P>0 and P0=0.
 
----
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
+
+    r = P / a
+    points = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(points-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+P0 is the total value of the two initial pinholes; total_value is the sum of all pinhole values.
 
 ## Constraints
 - Time limit: 2 seconds

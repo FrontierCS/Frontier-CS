@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -111,6 +127,7 @@ struct State {
     }
 };
 
+static long long physical_cluster_sum = 0, physical_color_sum = 0;
 static long long compute_score(const Input& in, const vector<char>& out_moves) {
     State st(in);
     int steps = (int)min<long long>((long long)out_moves.size(), (long long)N * N - 1);
@@ -158,6 +175,8 @@ static long long compute_score(const Input& in, const vector<char>& out_moves) {
     }
     long long denom = 0;
     for (int i = 1; i <= M; i++) denom += d[i] * d[i];
+    physical_cluster_sum = num;
+    physical_color_sum = denom;
     if (denom == 0) return 0;
     long long score = llround(1e6L * (long double)num / (long double)denom);
     return score;
@@ -224,9 +243,17 @@ int main(int argc, char* argv[]) {
     long long baseline_value = ans.readLong();
     long long best_value = ans.readLong();
 
-    double score_ratio = max(0.0, min(1.0, (double)(score - baseline_value) / (best_value - baseline_value)));
-    double unbounded_ratio = max(0.0, (double)(score - baseline_value) / (best_value - baseline_value));
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, unbounded_ratio);
+    // External calibration anchors do not limit the feasible raw objective.
+    double gap = (double)best_value - (double)baseline_value;
+    // A dominated reference cannot define a decreasing quality scale.
+    bool theoretical_anchor = gap <= 0.0;
+    if (theoretical_anchor) gap = 1000000.0 - (double)baseline_value;
+    ensuref(gap > 0.0, "Invalid calibration anchors");
+    double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
+    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    if (theoretical_anchor) score_ratio = min(1.0, calibration_ratio);
+    score_ratio = natural_log_score(100.0 * score_ratio, physical_cluster_sum, (long double)physical_color_sum * (theoretical_anchor ? (long double)baseline_value + 0.6L*gap : (long double)best_value) / 1e6L, false) / 100.0;
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, score_ratio);
     // quitf(_wa, "score (%lld)", score);
     return 0;
 }

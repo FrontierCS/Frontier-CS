@@ -1,3 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+
+// Legacy base ratio, retained only to decide and preserve the lower band.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 #include <cassert>
 
@@ -60,6 +82,8 @@ int main(int argc, char* argv[]) {
         }
     }
     double score=full_score*(1.0*(query_limit-query_count)/query_limit);
-    quitp(score, "qurey count: %d, Ratio: %.4f",query_count, score);
+    score=penalized(score);
+    score = natural_log_score(100.0 * score, query_count, 12000.0L, true) / 100.0;
+    quitp(score, "qurey count: %d, Ratio: %.12f",query_count, score);
     return 0;
 }

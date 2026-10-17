@@ -1,6 +1,23 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 
 static inline double dist2D(long long xa, long long ya, long long xb, long long yb) {
     double dx = (double)xa - (double)xb;
@@ -172,10 +189,14 @@ int main(int argc, char** argv) {
     double ratio_base = min(1.0, max(0.0, part1 + part2));
 
     // Visibility remap: widen mid-range (40–60 -> 30–95 approx.)
-    double ratio = remapVisibility(ratio_base);
+    double performance = part1 + part2_unbounded;
+    if (performance <= 1.0) performance = remapVisibility(performance);
+    double ratio = referenceScore(performance);
+    ratio = natural_log_score(100.0 * ratio, L_you, (long double)L_base / std::pow((long double)N, 0.6L), true) / 100.0;
+    ratio_base_unbounded = ratio;
     // double ratio = ratio_base;
 
-    quitp(ratio, "Ratio: %.4f (base=%.4f). RatioUnbounded: %.4f", ratio, ratio_base, ratio_base_unbounded);
+    quitp(ratio, "Ratio: %.12f (base=%.12f). RatioUnbounded: %.12f", ratio, ratio_base, ratio_base_unbounded);
     return 0;
 }
 

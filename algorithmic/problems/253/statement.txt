@@ -70,29 +70,6 @@ The evaluator replies with:
 If you receive 0, you must terminate immediately (Wrong Answer).
 
 ------------------------------------------------------------
-Scoring (MODIFIED)
-------------------------------------------------------------
-
-Each request has a cost:
-
-- Delivery query:
-    cost(? k y1..yk) = 0.5 + log2(k + 1)
-
-- Block / Unblock:
-    cost(- x) = 2
-    cost(+ x) = 2
-
-The final answer line starting with '!' has cost 0.
-
-Your goal is to minimize the total cost (sum of costs of all your requests).
-(You must still respect the hard limit of at most 100*m requests per test case.)
-
-Scoring thresholds:
-- If TotalCost ≤ 50000: full score (100 points)
-- If TotalCost ≥ 150000: zero score (0 points)
-- Otherwise: linearly interpolated between 0 and 100 points
-
-------------------------------------------------------------
 Input (same as the original problem)
 ------------------------------------------------------------
 
@@ -167,3 +144,18 @@ Explanation (not part of the interaction):
 - In the first test case, road 1 is repaired and road 2 is not.
   For each query '? 1 y', k=1 so Y is always y, and the replies shown are consistent.
 - In the second test case, all three roads are repaired, and the final answer is correct.
+
+Scoring
+
+The physical objective is total weighted query cost C (type costs2,2,0.5+log2(k+1)); smaller is better. The physical reference is `a = 50000`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(150000-C)/100000).
+
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / C
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.

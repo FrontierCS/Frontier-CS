@@ -1,3 +1,20 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+#include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -5,6 +22,12 @@
 #include <vector>
 #include <string>
 #include "testlib.h"
+
+// Reference calibration: 60 points at r=1, logarithmic rewards above it.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 using namespace std;
 
 enum {
@@ -26,16 +49,8 @@ std::vector<int> U, V;
 std::string T;
 int QUERY_COUNT = 0;
 
-double score(int x){
-    if (x <= 900) return 1.0;
-    if (x >= 5000) return 0.0;
-    return (5000.0 - x) / (5000.0 - 900.0);
-}
-
-double score_unbounded(int x){
-    if (x >= 5000) return 0.0;
-    return (5000.0 - x) / (5000.0 - 900.0);
-}
+double score(int x){ return natural_log_score(100.0 * calibrated((5000.0-x)/4100.0), x, 900.0L, true) / 100.0; }
+double score_unbounded(int x){ return score(x); }
 
 [[noreturn]] void wrong(const int num) {
     fprintf(stdout, "-1\n");
@@ -46,7 +61,7 @@ double score_unbounded(int x){
 [[noreturn]] void ok() {
     double r  = score(QUERY_COUNT);
     double ru = score_unbounded(QUERY_COUNT);
-    quitp(r, "Ratio: %.4f , RatioUnbounded: %.4f , Queries: %d", r, ru, QUERY_COUNT);
+    quitp(r, "Ratio: %.12f , RatioUnbounded: %.12f , Queries: %d", r, ru, QUERY_COUNT);
 }
 
 int query(std::string s) {
@@ -90,6 +105,9 @@ void answer(std::string t) {
 
 int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
+    // A contestant may exit immediately after its final answer. A notification
+    // to the closed pipe must not kill the interactor before its verdict.
+    std::signal(SIGPIPE, SIG_IGN);
 
     N = inf.readInt();
     R = inf.readInt();

@@ -27,10 +27,22 @@ The next len_moves lines should each contain two integers xk, yk each, signifyin
 should move the element from position xk to position yk (1 ≤ k ≤ len_moves, 1 <= xk, yk <= n).
 If several possible sequences of moves exist, you can print any of them.
 
-Scoring 
-You will be graded based on the final costs you give. 
-To be more specific, your answer will be compared to a solution best_answer.
-Your final score will be calculated as the average of 100 * min(best_answer / your_answer, 1) across all cases.
+## Scoring
+
+Let x be C, the total cost of the submitted moves. R>0 is the comparison move cost stored with the test. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*R/x.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Time limit: 2 seconds
 
@@ -43,6 +55,5 @@ Sample Output:
 12 2
 4 2
 4 1
-Sample Explanation: 
+Sample Explanation:
 The total cost is (2 + 1) = 3, and the number of moves is 2. Thus the final cost is (3 + 1) * (2 + 1) = 12.
-

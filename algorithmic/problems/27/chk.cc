@@ -1,3 +1,24 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Preserve the bounded base ratio for the unchanged low-score branch.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -154,7 +175,7 @@ int main(int argc, char** argv) {
         quitp(0.0, "Invalid output");
     }
 
-    // Compute score ratio = min(k / U(n, m), 1)
+    // Base ratio includes the existing 1.5 normalization factor.
     auto computeU = [&](long long n, long long m) -> long long {
         long double sn = sqrt((long double)n);
         long double sm = sqrt((long double)m);
@@ -177,8 +198,10 @@ int main(int argc, char** argv) {
     double unbounded_ratio = max(0.0, (double)ratioLD);
     if (ratioLD > 1.0L) ratioLD = 1.0L;
     if (ratioLD < 0.0L) ratioLD = 0.0L;
-    double ratio = (double)ratioLD;
+    double ratio = penalized((double)ratioLD);
+    ratio = natural_log_score(100.0 * ratio, K, 0.9L*U, false) / 100.0;
+    unbounded_ratio = ratio;
 
-    quitp(ratio, "Ratio: %.3f, RatioUnbounded: %.3f", ratio, unbounded_ratio);
+    quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f", ratio, unbounded_ratio);
     return 0;
 }

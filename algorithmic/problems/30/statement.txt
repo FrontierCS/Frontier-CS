@@ -14,7 +14,7 @@ There is a hidden mole in one of the nodes. To find its position, you can pick a
 , the mole will move to the parent node of the node it is currently on.
 
 Use at most 160
- operations to find the current node where the mole is located. If the number of operations is more than 160, you will get zero grade. Otherwise, your grade will be determined by the sum of the depth of the nodes in your query (the same node in two different queries will be counted twice). The depth of a node is the distance from the node to the root and the depth of the root is 0. 
+ operations to find the current node where the mole is located. If the number of operations is more than 160, you will get zero grade. Otherwise, your grade will be determined by the sum of the depth of the nodes in your query (the same node in two different queries will be counted twice). The depth of a node is the distance from the node to the root and the depth of the root is 0.
 
 Input
 Each test contains multiple test cases. The first line contains the number of test cases t
@@ -147,4 +147,18 @@ The answer 4
 
 Please note that the example is only for understanding the statement, and the queries in the example do not guarantee to determine the unique position of the mole.
 
+## Scoring
 
+Let x be D, the sum of query depths. R is the comparison depth sum stored with the test. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(3*R-x)/(2*R)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If R=0, a valid D=0 receives 100 points and D>0 receives 0; the displayed lower formula is used only for R>0. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

@@ -1,66 +1,59 @@
 #include "testlib.h"
-#include <vector>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 using namespace std;
 
-int main(int argc, char * argv[]) {
+int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
-    
-    int T = inf.readInt();
-    int total_cases = 0;
-    double total_ratio = 0;
-    double total_unbounded_ratio = 0;
-    
-    for (int tc = 1; tc <= T; tc++) {
-        int n = inf.readInt();
-        int m = inf.readInt();
-        long long c = inf.readLong();
-        
-        vector<long long> a(n + 1, 0);
-        for (int i = 1; i <= n; i++) {
-            long long ai = inf.readLong();
-            a[i] = a[i-1] + ai;
+    const int T = inf.readInt(1, 50000, "T");
+    long double total_points = 0;
+    for (int tc = 1; tc <= T; ++tc) {
+        const int n = inf.readInt(1, 500000, "n");
+        const int m = inf.readInt(1, 500000, "m");
+        const long long c = inf.readLong(0LL, 500000LL, "c");
+        vector<long long> a(n + 1, 0), b(m + 1, 0);
+        for (int i = 1; i <= n; ++i)
+            a[i] = a[i - 1] + inf.readLong(0LL, 1000000000000LL, "a[i]");
+        for (int i = 1; i <= m; ++i)
+            b[i] = b[i - 1] + inf.readLong(0LL, 1000000000000LL, "b[i]");
+        auto rank = [&](long long experience) -> long long {
+            return upper_bound(b.begin() + 1, b.end(), experience) - (b.begin() + 1);
+        };
+        const long long reference = ans.readLong();
+        const long long baseline = rank(a[n]) - c;
+        if (reference < baseline)
+            quitf(_fail, "Case %d: reference %lld below one-character value %lld", tc, reference, baseline);
+
+        const int d = ouf.readInt(1, n, "number of segments");
+        long long value = -c * d;
+        int next_day = 1;
+        for (int j = 0; j < d; ++j) {
+            const int l = ouf.readInt(1, n, "segment left endpoint");
+            const int r = ouf.readInt(l, n, "segment right endpoint");
+            if (l != next_day)
+                quitf(_wa, "Case %d: segments must consecutively cover all days", tc);
+            value += rank(a[r] - a[l - 1]);
+            next_day = r + 1;
         }
-        
-        vector<long long> b(m + 1, 0);
-        for (int i = 1; i <= m; i++) {
-            long long bi = inf.readLong();
-            b[i] = b[i-1] + bi;
-        }
-        
-        // Read reference answer
-        long long ref_score = ans.readLong();
-        
-        /** Changing to one line for test case */
-        long long participant_score = ouf.readLong();
-        
-        if (participant_score != ref_score) {
-            quitf(_wa, "Test case %d: answer %lld does not match reference %lld", 
-                tc, participant_score, ref_score);
-        }
-        
-        /** particpant score and ref score are equal */
-        
-        double ratio = 0.8; // min(1.0, (double)participant_score / ref_score * 0.8);
-        double unbounded_ratio = 0.8; // (double)participant_score / ref_score * 0.8;
-        
-        total_ratio += ratio;
-        total_unbounded_ratio += unbounded_ratio;
-        total_cases++;
+        if (next_day != n + 1)
+            quitf(_wa, "Case %d: final days are not covered", tc);
+        if (value > reference)
+            quitf(_fail, "Case %d: feasible value %lld exceeds reference %lld", tc, value, reference);
+
+        // Subtract in a wide integer type before converting the physical regret.
+        const __int128 regret = (__int128)reference - value;
+        const __int128 reference_regret = (__int128)reference - baseline;
+        long double points;
+        if (regret == 0) points = 100;
+        else if (reference_regret == 0) points = 0;
+        else if (regret >= reference_regret)
+            points = 60 * max(0.0L, 2.0L - (long double)regret / (long double)reference_regret);
+        else
+            points = min(100.0L, 60.0L + log((long double)reference_regret) - log((long double)regret));
+        total_points += points;
     }
-    
-    total_ratio /= total_cases;
-    total_unbounded_ratio /= total_cases;
-    double score = total_ratio * 100;
-    double unbounded_score = total_unbounded_ratio * 100;
-    
-    if (!ouf.seekEof()) {
-        quitf(_wa, "Extra output found");
-    }
-    
-    string msg = format(
-        "Correct! Ratio: %.6f (Score: %.2f). RatioUnbounded: %.6f (ScoreUnbounded: %.2f)",
-        total_ratio, score, total_unbounded_ratio, unbounded_score);
-    
-    quitp(total_ratio, msg.c_str());
+    if (!ouf.seekEof()) quitf(_wa, "Extra output found");
+    const double ratio = (double)(total_points / (100.0L * T));
+    quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f", ratio, ratio);
 }

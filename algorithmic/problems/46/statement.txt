@@ -56,21 +56,22 @@ Your output is rejected if any of the following occurs:
 • The machine orders together with the job precedence constraints induce a cycle in the disjunctive graph
   (i.e., there exists no feasible schedule consistent with your machine orders).
 
-Scoring (Lower is Better)
--------------------------
-Let P be the makespan computed from your output for a test case. The answer file for each test contains two integers:
-(B, T). For this problem, **T is fixed to 0** (a trivial lower bound), and **B > 0** is the makespan of a simple feasible
-baseline schedule (a naïve dispatch heuristic). The checker applies the general formula:
+## Scoring
 
-  If B ≤ T:   score = 1.0 if P ≤ T else 0.0
-  Else:       score = clamp( (B - P) / (B - T), 0, 1 )
+Let x be the makespan. B is the larger and T the smaller of the two stored baseline/target values. On released tests T=0. If B=T, award 100 for x<=T and 0 otherwise. The physical reference (the 60-point level) is a=0.4*B+0.6*T. Define the lower-band continuation:
 
-With T = 0 and B > 0, this simplifies to:
+    L(x) = 100*min(1,max(0,(B-x)/(B-T))).
 
-  score = clamp( 1 - P / B, 0, 1 )
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
 
-Your final problem score is the average of your per-test scores. The checker prints partial credit messages containing
-the substring “Ratio: <value>” as required by the judge.
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Constraints
 -----------

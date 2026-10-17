@@ -1,4 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+#include <algorithm>
+// Historical calibration; the physical-objective mapping is applied below.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -24,7 +48,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i <= n; i++) {
         a[i] = inf.readInt();
     }
-    
+
     // Compute the correct answer: all rooms that can reach the same cycle as room 1
     // First, find the cycle that room 1 reaches
     vector<int> path;
@@ -35,7 +59,7 @@ int main(int argc, char* argv[]) {
         path.push_back(cur);
         cur = a[cur];
     }
-    
+
     // cur is now the start of the cycle
     set<int> cycle_rooms;
     bool in_cycle = false;
@@ -43,7 +67,7 @@ int main(int argc, char* argv[]) {
         if (room == cur) in_cycle = true;
         if (in_cycle) cycle_rooms.insert(room);
     }
-    
+
     // The answer set A: all rooms that eventually reach this cycle
     set<int> answer_set;
     for (int start = 1; start <= n; start++) {
@@ -56,13 +80,13 @@ int main(int argc, char* argv[]) {
             pos = a[pos];
         }
     }
-    
+
     // Send n to contestant
     cout << n << endl;
     cout.flush();
-    
+
     double total_cost = 0.0;
-    
+
     // Process queries
     while (true) {
         string line;
@@ -74,38 +98,38 @@ int main(int argc, char* argv[]) {
                 quitf(_wa, "Unexpected EOF");
             }
         } while (line.empty());
-        
+
         if (line[0] == '?') {
             // Query: ? u k |S| S1 S2 ... S|S|
             istringstream iss(line.substr(1));
             int u;
             long long k;
             int s_size;
-            
+
             if (!(iss >> u >> k >> s_size)) {
                 cout << -1 << endl;
                 cout.flush();
                 quitf(_wa, "Invalid query format");
             }
-            
+
             if (u < 1 || u > n) {
                 cout << -1 << endl;
                 cout.flush();
                 quitf(_wa, "Invalid u: %d", u);
             }
-            
+
             if (k < 1) {
                 cout << -1 << endl;
                 cout.flush();
                 quitf(_wa, "Invalid k: %lld", k);
             }
-            
+
             if (s_size < 0 || s_size > n) {
                 cout << -1 << endl;
                 cout.flush();
                 quitf(_wa, "Invalid |S|: %d", s_size);
             }
-            
+
             set<int> S;
             for (int i = 0; i < s_size; i++) {
                 int x;
@@ -126,15 +150,15 @@ int main(int argc, char* argv[]) {
                 }
                 S.insert(x);
             }
-            
+
             // Calculate cost for this query: 5 + sqrt(|S|) + log10(k)
             double query_cost = 5.0 + sqrt((double)s_size) + log10((double)k);
             total_cost += query_cost;
-            
+
             // Simulate k teleports from u
             // Use cycle detection for large k
             int pos = u;
-            
+
             // First, find the cycle starting from u
             vector<int> u_path;
             vector<int> u_pos(n + 1, -1);
@@ -143,10 +167,10 @@ int main(int argc, char* argv[]) {
                 u_path.push_back(pos);
                 pos = a[pos];
             }
-            
+
             int cycle_start_idx = u_pos[pos];
             int cycle_len = u_path.size() - cycle_start_idx;
-            
+
             // Determine final position after k steps
             int final_pos;
             if (k < (long long)u_path.size()) {
@@ -155,24 +179,24 @@ int main(int argc, char* argv[]) {
                 long long remaining = (k - cycle_start_idx) % cycle_len;
                 final_pos = u_path[cycle_start_idx + remaining];
             }
-            
+
             int answer = S.count(final_pos) ? 1 : 0;
             cout << answer << endl;
             cout.flush();
-            
+
         } else if (line[0] == '!') {
             // Answer: ! |A| A1 A2 ... A|A|
             istringstream iss(line.substr(1));
             int a_size;
-            
+
             if (!(iss >> a_size)) {
                 quitf(_wa, "Invalid answer format");
             }
-            
+
             if (a_size < 0 || a_size > n) {
                 quitf(_wa, "Invalid |A|: %d", a_size);
             }
-            
+
             set<int> A;
             for (int i = 0; i < a_size; i++) {
                 int x;
@@ -187,29 +211,30 @@ int main(int argc, char* argv[]) {
                 }
                 A.insert(x);
             }
-            
+
             // Check correctness
             if (A != answer_set) {
-                quitf(_wa, "Wrong answer set. Expected size %d, got size %d", 
+                quitf(_wa, "Wrong answer set. Expected size %d, got size %d",
                       (int)answer_set.size(), (int)A.size());
             }
-            
+
             // Scoring
             const double BEST_COST = 10000.0;
             const double WORST_COST = 150000.0;
-            
-            double score_ratio = max(0.0, min(1.0, (WORST_COST - total_cost) / (WORST_COST - BEST_COST)));
-            double unbounded_ratio = max(0.0, (WORST_COST - total_cost) / (WORST_COST - BEST_COST));
-            
-            quitp(score_ratio, "Cost: %.2f. Ratio: %.4f, RatioUnbounded: %.4f",
+
+            double score_ratio = reference_score((WORST_COST - total_cost) / (WORST_COST - BEST_COST));
+            score_ratio = natural_log_score(100.0L * (score_ratio), total_cost, BEST_COST, true) / 100.0;
+            double unbounded_ratio = score_ratio;
+
+            quitp(score_ratio, "Cost: %.2f. Ratio: %.12f, RatioUnbounded: %.12f",
                   total_cost, score_ratio, unbounded_ratio);
-            
+
         } else {
             cout << -1 << endl;
             cout.flush();
             quitf(_wa, "Invalid command: %s", line.c_str());
         }
     }
-    
+
     return 0;
 }

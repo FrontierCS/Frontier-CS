@@ -27,9 +27,8 @@ Input
 An integer N (N = 1000), represent the length of string S.
 
 Grading
-If your program is judged as correct for all the test cases, set M as the maximum of the parameter m of the function Query for all the test cases. However, if your program is judged as correct without calling the function Query, your score is calculated by M = 0.
- - If 103 <= M <= 1002,your score is 10 + ⌊(1002 - M)^2 / 9000⌋ points.
- - If 0 <= M <= 102, your score is 100 points.
+For each test case, set M to the maximum parameter m used in a query. If the program answers correctly without any queries, set M=0.
+Use the scoring rule below.
 
 Sample Communication
 Assume s = "110". If we put the stone slate on the machine, input (m, a, b) = (4, [3, 3, 2, 2], [2, 2, 1, 0]),and make a query, the machine will operate as follows.
@@ -38,3 +37,19 @@ Assume s = "110". If we put the stone slate on the machine, input (m, a, b) = (4
  3. For the second operation, since S_1 is ‘1’, the machine sets b_2, i.e. 1, in the memory area of the machine.
  4. For the third operation, since S_2 is ‘0’, the machine sets a_1, i.e. 3, in the memory area of the machine.
  5. Since the integer which is finally set in the memory area is 3, the machine shows 3.
+
+## Scoring
+
+Let x be M, the largest query parameter m. Use the maximum m over all queries, or 0 if there are none. The physical reference (the 60-point level) is a=102. Define the lower-band continuation:
+
+    L(x) = 0.6*(10+(1002-x)^2/9000).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

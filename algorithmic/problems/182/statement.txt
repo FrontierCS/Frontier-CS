@@ -13,19 +13,7 @@ This is a heuristic optimization problem.
 You are NOT required to find the theoretically optimal solution.
 Instead, you should try to minimize the size of the set S (denoted as |S|).
 
-Let:
-  K* = the minimum vertex cover size (optimal solution).
-  K  = the size of the vertex cover found by your solution.
-
-The score is defined as:
-  Score = K* / K * 100
-
-Thus:
-- Score = 100.0 means you found an optimal vertex cover.
-- Larger K yields a smaller score.
-- Invalid solutions (where some edges are not covered) receive score = 0.
-
-The value K* is known to the judge but not to the contestant.
+Points depend on your set size relative to the stored reference; see Scoring.
 
 ## Input Format
 
@@ -55,17 +43,20 @@ Requirements:
 
 ## Scoring
 
-Let:
-  K = Σ x_i (Total number of vertices selected, i.e., sum of 1s in output)
-  K* = Optimal minimum vertex cover size (hidden)
+The physical objective is vertex cover cardinality K; smaller is better. The physical reference is `a = R`; matching a positive reference earns 60 points.
 
-If the solution is invalid (i.e., there exists an edge {u, v} where x_u=0 and x_v=0):
-  Score = 0
+R is the stored reference vertex-cover size, not necessarily a proven optimum.
 
-Otherwise:
-  Score = K* / K * 100
+Define the historical low-score expression (in points):
 
-Higher score is better.
+    P_low = 60*R/K (R>0); when R=0, 60 if K=0 else 0.
+
+A valid solution with `K=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / K
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Example
 
@@ -89,7 +80,7 @@ The output selects vertices 2 and 3 (S={2, 3}).
 - Edge {3,4} is covered by 3.
 All edges are covered.
 Total size K = 2.
-Assuming the optimal K* = 2, the Score = 2 / 2 * 100 = 100.0.
+If the stored reference cover size is R=2, then r=2/2=1 and P=60 points.
 
 ## Constraints
 

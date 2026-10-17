@@ -21,16 +21,12 @@ Operation 1 cannot create a new stack $i>m$, but it can move boxes into an empty
 
 Please find a sequence of operations that carries out all the boxes with as little total energy expenditure as possible.
 
-Scoring
+Raw task objective
 --------
-If all the boxes are carried out with less or equal to $5000$ operations, and the total energy expenditure is $V$, you will obtain a score of $\max(1, 10000-V)$.
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
+If all the boxes are carried out with less or equal to $5000$ operations, and the total energy expenditure is $C$, the raw task reward V is $\max(1, 10000-C)$.
 If you failed to carry out all the boxes, or if you output an illegal operation sequence (specifying out-of-range values or a box that has already been carried out, or specifying a box that does not satisfy the condition in operation 2), it is judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span>.
-
-There are $150$ test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
-
 
 
 Input
@@ -74,3 +70,15 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc026/lPQezTZx_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Here E is the total box-moving energy. Use physical reference a=A=10000-R when R>=1. At R=1, the old 60-point cost plateau is E>=9999; choose its improvement-side boundary A=9999 as the reference, and keep the entire old lower band unchanged. A valid E=0 earns 100 before testing L. For E>0 and L>60, take x=E, a=A, and r=a/x; award min(100,60+ln(r)). The logarithm compares actual energy A/E, never the transformed reward (10000-E). A nonpositive anchor has no defined positive-cost logarithmic comparison; use the zero-reference fallback defined below.
+
+When the physical reference a is nonpositive, no ratio to a positive physical reference exists. For a nonzero objective, preserve L when L<=60; above that threshold use the calibration improvement r0=(V-B)/(R-B)>1 and award 60+ln(r0) points. This explicit fallback has natural-log coefficient 1, but r0 measures calibrated reward improvement, not a physical target ratio. The exact-zero minimizing rule still takes priority.
+
+The checker reports points/100.

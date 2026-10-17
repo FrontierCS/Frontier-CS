@@ -1,7 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <vector>
 #include <string>
-#include <cmath>
 
 namespace {
     constexpr int MAX_N = (int)1E5 + 10, SINGLE_QUERY_LIM = (int)1E7,
@@ -9,7 +29,7 @@ namespace {
     int subtask, n;
     int cnt_query, cnt_round;
     int inter[SINGLE_QUERY_LIM+10];
-    
+
     // Helper to ensure conditions and quit if they fail
     void Ensure(bool condition, const char* fail_message) {
         if (!condition){
@@ -18,7 +38,7 @@ namespace {
     }
 
     int p[MAX_N], q[MAX_N], vis[MAX_N], an;
-    
+
     int flip(int u) {
         u = q[u];
         if (vis[u] ^= 1) {
@@ -28,7 +48,7 @@ namespace {
         }
         return an || (vis[1] && vis[n]);
     }
-    
+
     bool check(int c1[], int c2[]) {
         int opt = -1;
         for (int i = 0; i < n; i++)
@@ -37,7 +57,7 @@ namespace {
                 break;
             }
         if (opt == -1) return false;
-        
+
         bool f1 = true, f2 = true;
         for (int i = 1, op1 = opt, op2 = opt; i < n; i++) {
             op1++; op2--;
@@ -53,9 +73,10 @@ namespace {
     double f(double x) {
         return std::min(std::max(std::log2(x), 0.0), 8.0);
     }
-    
+
     double lambda(int t, int Q) {
-        return std::max(0.0, 1 - 0.1 * (f(t / 18.0) + f(Q / 1.5E7)));
+        double r = std::max(0.0, 1 - 0.1 * (std::log2((t+1.0)/19.0) + std::log2((Q+1.0)/15000001.0)));
+        return natural_log_score(100.0 * reference_score(r), (t+1.0L)*(Q+1.0L), 19.0L*15000001.0L, true) / 100.0;
     }
 
 } // namespace
@@ -92,7 +113,7 @@ int main(int argc, char* argv[]) {
     inter[0] = subtask;
     inter[1] = n;
     output_inter(2);
-    
+
     int N;
     while (true) {
         N = ouf.readInt();
@@ -101,7 +122,7 @@ int main(int argc, char* argv[]) {
             Ensure(check(p, inter), "Final answer is incorrect.");
             break;
         } else {
-            Ensure(N <= SINGLE_QUERY_LIM, "Single query size limit exceeded.");
+            Ensure(0 <= N && N <= SINGLE_QUERY_LIM, "Single query size limit exceeded.");
             cnt_round += 1;
             cnt_query += N;
             Ensure(cnt_round <= TOTAL_ROUND_LIM, "Total round limit exceeded.");
@@ -110,12 +131,13 @@ int main(int argc, char* argv[]) {
             query(N);
         }
     }
-    
-    double score_ratio = lambda(cnt_round, cnt_query);
-    
+
+    // The final answer was validated above. No batches and no flips is exact zero cost.
+    double score_ratio = (cnt_round == 0 && cnt_query == 0)
+        ? 1.0 : lambda(cnt_round, cnt_query);
+
     // Use quitp with a formatted message that includes the "Ratio:" tag
-    quitp(score_ratio, "Correct. Rounds: %d, Queries: %d. Ratio: %.4f", cnt_round, cnt_query, score_ratio);
-    
+    quitp(score_ratio, "Correct. Rounds: %d, Queries: %d. Ratio: %.12f", cnt_round, cnt_query, score_ratio);
+
     return 0;
 }
-

@@ -1,7 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <iostream>
 #include <map>
-#include <algorithm>
 
 using namespace std;
 
@@ -57,7 +76,8 @@ int main(int argc, char *argv[]) {
   double R = (1.0*P)/(1.0*n);
   double score = (6-R)/(6-1.5);
   score = max(score, 0.0);
+  score = referenceScore(score);
+    score = natural_log_score(100.0 * score, P, 1.5L*n, true) / 100.0;
   double unbounded_score = score;
-  score = min(score, 1.0);
-  quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_score);
+  quitp(score, "Ratio: %.12lf, RatioUnbounded: %.12lf", score, unbounded_score);
 }

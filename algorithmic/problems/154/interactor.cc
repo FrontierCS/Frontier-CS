@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 #include "testlib.h"
@@ -153,7 +169,7 @@ static Input parse_input_all_stdin(){
     // Rust reads the entire stdin to string and then parses.
     // We parse directly as tokens.
     Input in;
-    int N; 
+    int N;
     if(!(cin >> N)) {
         throw runtime_error("failed to read input");
     }
@@ -478,7 +494,7 @@ struct Sim {
         return out;
     }
 
-    long long compute_score() const {
+    double compute_quality_sum() const {
         double score = 0.0;
         for(auto [x,y] : hs){
             auto dist = bfs(blocked, x, y);
@@ -494,7 +510,15 @@ struct Sim {
             }
             score += (double)r / (30.0*30.0) * pow(2.0, -n);
         }
-        return (long long)llround(1e8 * score / (double)hs.size());
+        return score;
+    }
+
+    double compute_quality() const {
+        return compute_quality_sum() / (double)hs.size();
+    }
+
+    long long compute_score() const {
+        return (long long)llround(1e8 * compute_quality_sum() / (double)hs.size());
     }
 };
 
@@ -710,18 +734,12 @@ int main(int argc, char* argv[]) {
     long long baseline_value = ans.readLong();
     long long best_value     = ans.readLong();
 
-    double score_ratio;
-    if (best_value == baseline_value) {
-        score_ratio = (score >= best_value ? 1.0 : 0.0);
-    } else {
-        score_ratio = (double)(score - baseline_value) / (double)(best_value - baseline_value);
-        if (score_ratio < 0.0) score_ratio = 0.0;
-        if (score_ratio > 1.0) score_ratio = 1.0;
-    }
-
-    double ratio_unbounded = (double)(score - baseline_value) / (double)(best_value - baseline_value);
-    if (ratio_unbounded < 0.0) ratio_unbounded = 0.0;
-    quitp(score_ratio, "Value: %lld. Ratio: %.6f. RatioUnbounded: %.6f", score, score_ratio, ratio_unbounded);
+    // External calibration anchors do not limit the feasible raw objective.
+    double gap = (double)best_value - (double)baseline_value;
+    ensuref(gap > 0.0, "Invalid calibration anchors");
+    double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
+    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    score_ratio = natural_log_score(100.0 * score_ratio, sim.compute_quality(), (long double)best_value / 1e8L, false) / 100.0;
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, score_ratio);
     return 0;
 }
-

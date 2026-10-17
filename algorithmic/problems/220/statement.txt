@@ -68,7 +68,7 @@ We can show that an answer always exists under the given constraints. If there a
 
 In the first test case, if the first player passes a card with number 2 and the second player passes a card with number 1, then the first player has two cards with number 1 and the second player has two cards with number 2. Then, after making this operation, both players are solid.
 
-In the second test case, 0 operations would be enough too. Note that you do not need to minimize the number of operations.
+In the second test case, 0 operations would be enough too. Fewer operations receive a higher score.
 
 ## Constraints
 
@@ -82,3 +82,18 @@ In the second test case, 0 operations would be enough too. Note that you do not 
 ## Memory Limit
 
 256 MB
+
+Scoring
+
+The physical objective is operation count Q=num; smaller is better. The physical reference is `a = n*n/2.0`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(n*n-n-Q)/(n*n-n-n*n/2.0)) for n>2; 60*(n*n/2.0+1)/(Q+1) for n<=2.
+
+A valid solution with `Q=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.

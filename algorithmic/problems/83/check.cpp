@@ -1,3 +1,18 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -54,8 +69,10 @@ int main(int argc, char* argv[]) {
         quitf(_fail, "User M=0 (impossible)");
 
     double ratio = (double)M_std / (double)M_user;
-    double unbounded_ratio = max(0.0, ratio);
-    double score = max(0.0, min(1.0, ratio));
+    // The standard solution is a performance reference, worth 60 points.
+    double score = (ratio <= 1.0 ? 0.6 * ratio : 0.6 + 0.02 * log(ratio));
+    score = natural_log_score(100.0 * score, M_user, M_std, true) / 100.0;
+    double unbounded_ratio = score;
 
-    quitp(score, "User M=%lld, Std M=%lld, Ratio: %.4f, RatioUnbounded: %.4f", M_user, M_std, score, unbounded_ratio);
+    quitp(score, "User M=%lld, Std M=%lld, Ratio: %.12f, RatioUnbounded: %.12f", M_user, M_std, score, unbounded_ratio);
 }

@@ -80,22 +80,20 @@ For flushing:
 
 ------------------------------------------------------------
 Scoring (open-ended)
-------------------------------------------------------------
-Each query “? l T” has a cost:
-  single_cost(l, T) = 0.05 + 1/l
 
-(So the cost depends only on l.)
+The physical objective is total query cost C=sum(0.05+1/l); smaller is better. The physical reference is `a = 500`; matching a positive reference earns 60 points.
 
-Let TOTAL_COST be the sum of single_cost(l,T) over all queries you make (for the whole submission).
+Define the historical low-score expression (in points):
 
-Scoring is a linear clamp based on TOTAL_COST:
-- If TOTAL_COST ≤ 500: score = 100 (full score)
-- If TOTAL_COST ≥ 2500:  score = 0
-- Otherwise:
-    score = 100 * (2500 - TOTAL_COST) / (2500 - 500)
-          = 100 * (2500 - TOTAL_COST) / 2000
+    P_low = 60*max(0,(2500-C)/2000).
 
-------------------------------------------------------------
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / C
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
 Example
 ------------------------------------------------------------
 Input

@@ -52,10 +52,21 @@ YES
 1 3
 
 Scoring:
-The last number in the first line of the input file is s. Let your number of steps be cnt. Then:
-- If cnt ≤ s, you will receive 10 points.
-- If cnt > s and you can complete the level, you will receive max(5, 10 - (cnt - s) / ⌊n/2⌋ - 1) points.
-- If you cannot complete the level, you will receive 0 points.
+
+The physical objective is clearance sequence length C=cnt; smaller is better. The physical reference is `a = mxstp`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,1-(C-s)/(10*n)), with s=mxstp from the input.
+
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / C
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+The length C includes the starting cell. NO still receives 0.
 
 Constraints:
 - 1 ≤ L ≤ R ≤ m ≤ 40

@@ -1,9 +1,9 @@
 # Limited Shuffle Restoring
 
-**Input file:** standard input  
-**Output file:** standard output  
-**Time limit:** 3 seconds  
-**Memory limit:** 512 meblbytes  
+**Input file:** standard input
+**Output file:** standard output
+**Time limit:** 3 seconds
+**Memory limit:** 512 meblbytes
 
 **This is an interactive problem.**
 
@@ -25,7 +25,7 @@ After the solution has finished asking questions, it must make a guess. If you t
 
 If your solution makes more than \\(\lfloor 5n/3 \rfloor + 5\\) queries, the interactor will finish with the WA verdict. If you do not flush the output after printing a query, you may receive the IL verdict.
 
-Note that the interactor in this task is **adaptive**, i.e. the array may be generated at the runtime consistently with your questions.
+The interactor is **non-adaptive**: it generates the shuffled array before reading any query, and this fixed array is used for every comparison and for checking the final answer.
 
 ## Example
 
@@ -38,3 +38,21 @@ Note that the interactor in this task is **adaptive**, i.e. the array may be gen
 | <              | ? 2 1           |
 | >              | ? 5 2           |
 | >              | ! 2 3 1 5 4     |
+
+## Scoring
+
+Let q be the number of comparisons and L=floor(5*n/3)+5 be the hard query budget.
+The 60-point reference is q60=L: a correct answer using the entire legal budget
+receives 60 points. This is a budget-based reference, not a claimed human-best
+strategy.
+
+After the final permutation has been validated:
+
+    P = 100,                         if q=0;
+    P = min(100,60+ln(L/q)),          if 1<=q<=L.
+
+Here ln is the natural logarithm with coefficient 1. Halving the query count adds
+ln(2) points; reducing it by a factor of e adds one point. Every successful legal
+positive-query result is at least 60, so there is no successful lower-score branch.
+An incorrect permutation, an invalid query, or exceeding L queries is rejected.
+Across test files, take the arithmetic mean of the file scores.

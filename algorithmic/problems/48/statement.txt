@@ -14,13 +14,21 @@ Given your centers C = {c_i}, the checker computes the largest common radius tha
     r(C) = min( ½ * min_{i≠j} ||c_i - c_j||_2 ,  min_i dist(c_i, ∂[0,1]^3) ),
 where dist(c_i, ∂[0,1]^3) is the minimum distance from c_i to any cube face. If any coordinate lies outside [0,1] (up to an absolute tolerance of 1e−12), the output is rejected.
 
-Scoring
-This is an optimization problem. For each test case we normalize your geometric radius r(C) between a baseline lower bound and a general upper bound:
-    score = clamp( (r(C) − baseline) / (best − baseline), 0, 1 ).
-Here:
-• baseline is the radius achieved by a balanced m×k×ℓ cubic grid with m·k·ℓ ≥ n (equally spaced centers with margin r = 1/(2·max(m,k,ℓ))). This is a constructive packing every team can implement quickly.
-• best is an a priori upper bound that no packing can exceed: best = min( ½ , ((δ·3)/(4πn))^{1/3} ), where δ = π/√18 is the Kepler density upper bound for sphere packings in 3D.
-Your total score is the average of per-test-case scores.
+## Scoring
+
+Let x be rho, the geometric sphere radius. B and R are the baseline and comparison radii stored with the test. If R<=B+1e-15, use the separate rule: 60 if rho+1e-18>=R, otherwise 0. These tolerances are absolute. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(x-B)/(R-B)).
+
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Validation & precision
 • The checker reads doubles and computes in IEEE-754 double precision. It accepts coordinates on the faces of the cube.

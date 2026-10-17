@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -44,19 +66,19 @@ long long subtree_sum_at_depth(int node, int target_depth) {
     int d = get_depth(node);
     if (d > target_depth || target_depth >= h) return 0;
     if (d == target_depth) return f[node];
-    
+
     int steps = target_depth - d;
     int left = node << steps;
     int right = ((node + 1) << steps) - 1;
-    
+
     int depth_start = first_at_depth(target_depth);
     int depth_end = min(last_at_depth(target_depth), n);
-    
+
     left = max(left, depth_start);
     right = min(right, depth_end);
-    
+
     if (left > right) return 0;
-    
+
     int left_idx = left - depth_start;
     int right_idx = right - depth_start;
     return prefix_sum[target_depth][right_idx + 1] - prefix_sum[target_depth][left_idx];
@@ -64,18 +86,18 @@ long long subtree_sum_at_depth(int node, int target_depth) {
 
 long long query_sum(int center, int dist) {
     if (dist <= 0) return 0;
-    
+
     long long result = 0;
     int center_depth = get_depth(center);
-    
+
     result += subtree_sum_at_depth(center, center_depth + dist);
-    
+
     int cur = center;
     for (int k = 1; k <= dist && k <= center_depth; k++) {
         int prev = cur;
         cur = cur / 2;
         int other_child = (prev == cur * 2) ? (cur * 2 + 1) : (cur * 2);
-        
+
         int remaining = dist - k;
         if (remaining == 0) {
             result += f[cur];
@@ -83,7 +105,7 @@ long long query_sum(int center, int dist) {
             result += subtree_sum_at_depth(other_child, get_depth(other_child) + remaining - 1);
         }
     }
-    
+
     return result;
 }
 
@@ -136,16 +158,17 @@ int main(int argc, char* argv[]) {
             if (!(iss >> user_ans)) {
                 quitf(_wa, "Invalid answer format");
             }
-            
+
             if (user_ans != total_sum) {
                 quitf(_wa, "Wrong answer: expected %lld, got %lld", total_sum, user_ans);
             }
-            
+
             // 超过 R 则 0 分，低于 L 则满分，中间线性插值
-            double score_ratio = max(0.0, min(1.0, (double)(R - query_count) / (double)(R - L)));
-            double unbounded_ratio = max(0.0, (double)(R - query_count) / (double)(R - L));
-            
-            quitp(score_ratio, "Queries: %d. Ratio: %.4f, RatioUnbounded: %.4f", 
+            double score_ratio = referenceScore(max(0.0, (double)(R - query_count) / (double)(R - L)));
+            score_ratio = natural_log_score(100.0L * (score_ratio), query_count, L, true) / 100.0;
+            double unbounded_ratio = score_ratio;
+
+            quitp(score_ratio, "Queries: %d. Ratio: %.12f, RatioUnbounded: %.12f",
                   query_count, score_ratio, unbounded_ratio);
             return 0;
         } else if (line[0] == '?') {
@@ -155,31 +178,31 @@ int main(int argc, char* argv[]) {
             if (!(iss >> u >> d)) {
                 quitf(_wa, "Invalid query format: %s", line.c_str());
             }
-            
+
             if (u < 1 || u > n) {
                 quitf(_wa, "Invalid u: %d (should be 1 <= u <= %d)", u, n);
             }
             if (d < 1) {
                 quitf(_wa, "Invalid d: %lld (should be d >= 1)", d);
             }
-            
+
             // 检查每个 u 的查询次数限制
             query_count_per_u[u]++;
             if (query_count_per_u[u] > MAX_QUERIES_PER_U) {
                 quitf(_wa, "Too many queries on u = %d (exceeded %d)", u, MAX_QUERIES_PER_U);
             }
-            
+
             query_count++;
-            
+
             int center = p[u];
             long long result = query_sum(center, (int)d);
-            
+
             cout << result << endl;
             cout.flush();
         } else {
             quitf(_wa, "Invalid command: %s", line.c_str());
         }
     }
-    
+
     return 0;
 }

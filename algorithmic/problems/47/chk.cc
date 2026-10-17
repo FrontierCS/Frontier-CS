@@ -1,20 +1,51 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Preserve the bounded base ratio for the unchanged low-score branch.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
+#include <charconv>
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
 struct Item { long long w,h,v,limit; };
 struct BinSpec { long long W,H; bool allow_rotate; };
 
-void skipWS(InStream& s){ while(!s.eof() && isspace(s.curChar())) s.readChar(); }
-void expectChar(InStream& s, char c){ skipWS(s); char got = s.readChar(); if (got!=c) quitf(_fail,"Expected '%c' but got '%c'", c, got); }
+void skipWS(InStream& s){ while(!s.eof() && isspace((unsigned char)s.curChar())) s.readChar(); }
+void expectChar(InStream& s, char c){ skipWS(s); if (s.eof() || s.readChar()!=c) s.quitf(_pe,"Expected JSON character '%c'", c); }
 string readString(InStream& s){
     skipWS(s);
     expectChar(s, '"');
     string out; char c;
     while(true){
+        if (s.eof()) s.quitf(_pe, "Unterminated JSON string");
         c = s.readChar();
+        if ((unsigned char)c < 32) s.quitf(_pe, "Unescaped control character");
         if (c=='"') break;
         if (c=='\\'){
+            if (s.eof()) s.quitf(_pe, "Unterminated JSON escape");
             char e = s.readChar();
             switch(e){
                 case '"': out.push_back('"'); break;
@@ -25,7 +56,35 @@ string readString(InStream& s){
                 case 'n': out.push_back('\n'); break;
                 case 'r': out.push_back('\r'); break;
                 case 't': out.push_back('\t'); break;
-                default: out.push_back(e); break;
+                case 'u': {
+                    auto hex4 = [&]() {
+                        unsigned value = 0;
+                        for (int i = 0; i < 4; ++i) {
+                            if (s.eof()) s.quitf(_pe, "Incomplete Unicode escape");
+                            char h = s.readChar();
+                            int d = h >= '0' && h <= '9' ? h-'0' :
+                                    h >= 'a' && h <= 'f' ? h-'a'+10 :
+                                    h >= 'A' && h <= 'F' ? h-'A'+10 : -1;
+                            if (d < 0) s.quitf(_pe, "Invalid Unicode escape");
+                            value = value*16+d;
+                        }
+                        return value;
+                    };
+                    unsigned code = hex4();
+                    if (code >= 0xD800 && code <= 0xDBFF) {
+                        if (s.eof() || s.readChar() != '\\' || s.eof() || s.readChar() != 'u')
+                            s.quitf(_pe, "Missing low surrogate");
+                        unsigned low = hex4();
+                        if (low < 0xDC00 || low > 0xDFFF) s.quitf(_pe, "Invalid low surrogate");
+                        code = 0x10000 + (code-0xD800)*1024 + low-0xDC00;
+                    } else if (code >= 0xDC00 && code <= 0xDFFF) s.quitf(_pe, "Unexpected low surrogate");
+                    if (code < 0x80) out += char(code);
+                    else if (code < 0x800) { out += char(0xC0 | code>>6); out += char(0x80 | (code&63)); }
+                    else if (code < 0x10000) { out += char(0xE0 | code>>12); out += char(0x80 | ((code>>6)&63)); out += char(0x80 | (code&63)); }
+                    else { out += char(0xF0 | code>>18); out += char(0x80 | ((code>>12)&63)); out += char(0x80 | ((code>>6)&63)); out += char(0x80 | (code&63)); }
+                    break;
+                }
+                default: s.quitf(_pe, "Invalid JSON escape");
             }
         } else {
             out.push_back(c);
@@ -33,25 +92,28 @@ string readString(InStream& s){
     }
     return out;
 }
-long long readJsonLong(InStream& s){
-    skipWS(s);
-    bool neg=false;
-    if (s.curChar()=='+' || s.curChar()=='-'){ neg = (s.curChar()=='-'); s.readChar(); }
-    if (!isdigit(s.curChar())) quitf(_fail, "Expected integer digit, got '%c'", s.curChar());
-    long long val = 0;
-    while(!s.eof() && isdigit(s.curChar())){
-        int d = s.curChar()-'0';
-        if (val > (LLONG_MAX - d)/10) quitf(_fail, "Integer overflow");
-        val = val*10 + d;
-        s.readChar();
+long long readJsonLong(InStream& stream) {
+    skipWS(stream);
+    string token;
+    if (!stream.eof() && stream.curChar() == '-') token += stream.readChar();
+    while (!stream.eof() && stream.curChar() >= '0' && stream.curChar() <= '9') {
+        token += stream.readChar();
+        if (token.size() > 20) stream.quitf(_pe, "JSON integer is out of range");
     }
-    return neg ? -val : val;
+    size_t first = !token.empty() && token[0] == '-' ? 1 : 0;
+    if (first == token.size() || (token[first] == '0' && token.size() > first + 1))
+        stream.quitf(_pe, "Expected JSON integer without leading zeroes");
+    long long value;
+    auto parsed = from_chars(token.data(), token.data() + token.size(), value);
+    if (parsed.ec != errc() || parsed.ptr != token.data() + token.size())
+        stream.quitf(_pe, "JSON integer is out of range");
+    return value;
 }
 bool readJsonBool(InStream& s){
     skipWS(s);
-    if (s.curChar()=='t'){ string ex="true"; for(char c:ex){ if (s.readChar()!=c) quitf(_fail,"Malformed boolean"); } return true; }
-    if (s.curChar()=='f'){ string ex="false"; for(char c:ex){ if (s.readChar()!=c) quitf(_fail,"Malformed boolean"); } return false; }
-    quitf(_fail, "Expected boolean"); return false;
+    if (s.curChar()=='t'){ string ex="true"; for(char c:ex){ if (s.readChar()!=c) s.quitf(_pe,"Malformed boolean"); } return true; }
+    if (s.curChar()=='f'){ string ex="false"; for(char c:ex){ if (s.readChar()!=c) s.quitf(_pe,"Malformed boolean"); } return false; }
+    s.quitf(_pe, "Expected boolean"); return false;
 }
 
 void parseInput(map<string,Item>& items, BinSpec& bin){
@@ -133,10 +195,12 @@ vector<Place> parseOutput(const map<string,Item>& items, const BinSpec& bin){
             firstF=false;
             string kk = readString(ouf);
             expectChar(ouf, ':');
+            int bit = kk=="type" ? 1 : kk=="x" ? 2 : kk=="y" ? 4 : kk=="rot" ? 8 : 0;
+            if (mask & bit) quitf(_pe, "Duplicate placement field");
             if (kk=="type"){ t = readString(ouf); mask|=1; }
             else if (kk=="x"){ x = readJsonLong(ouf); mask|=2; }
             else if (kk=="y"){ y = readJsonLong(ouf); mask|=4; }
-            else if (kk=="rot"){ long long b = readJsonLong(ouf); rot = (int)(b!=0); mask|=8; }
+            else if (kk=="rot"){ long long b = readJsonLong(ouf); if (b!=0 && b!=1) quitf(_wa,"rot must be 0 or 1"); rot = (int)b; mask|=8; }
             else quitf(_wa,"Unknown field in placement: %s", kk.c_str());
         }
         expectChar(ouf, '}');
@@ -146,10 +210,11 @@ vector<Place> parseOutput(const map<string,Item>& items, const BinSpec& bin){
         if (rot && !bin.allow_rotate) quitf(_wa,"Rotation not allowed by this test");
         long long w = rot ? it->second.h : it->second.w;
         long long h = rot ? it->second.w : it->second.h;
-        if (x < 0 || y < 0 || x + w > bin.W || y + h > bin.H) quitf(_wa,"Placement of %s is out of bin bounds", t.c_str());
+        if (x < 0 || y < 0 || w > bin.W || h > bin.H || x > bin.W - w || y > bin.H - h) quitf(_wa,"Placement of %s is out of bin bounds", t.c_str());
         res.push_back(Place{t,x,y,rot,w,h});
     }
     expectChar(ouf, '}');
+    if (!ouf.seekEof()) ouf.quitf(_pe, "Extra data after JSON object");
     return res;
 }
 
@@ -212,14 +277,34 @@ int main(int argc, char* argv[]){
     long long baseline = ans.readLong();
     long long best = ans.readLong();
     long long value = evaluate(P, items);
+    // Fractional area relaxation is a rigorous integer-profit upper bound.
+    vector<Item> by_density;
+    for (const auto &kv : items) by_density.push_back(kv.second);
+    sort(by_density.begin(), by_density.end(), [](const Item &a, const Item &b) {
+        return (__int128)a.v*b.w*b.h > (__int128)b.v*a.w*a.h;
+    });
+    long long remaining = bin.W*bin.H, upper = 0;
+    for (const Item &a : by_density) {
+        long long area = a.w*a.h;
+        long long take = min(a.limit, remaining/area);
+        upper += take*a.v;
+        remaining -= take*area;
+        if (take < a.limit) {
+            upper += (long long)((__int128)remaining*a.v/area);
+            break;
+        }
+    }
+    const bool exact_bound = best >= upper;
     double ratio, unbounded_ratio = 0.0;
     if (best <= baseline){
         ratio = (value >= best) ? 1.0 : 0.0;
+        unbounded_ratio = ratio;
     }else{
         ratio = (double)(value - baseline) / (double)(best - baseline);
         if (ratio < 0) ratio = 0;
-        unbounded_ratio = std::max(0.0, ratio);
-        if (ratio > 1) ratio = 1;
+        ratio = exact_bound ? penalized(ratio) : reference_score(ratio);
+    ratio = natural_log_score(100.0 * ratio, value, exact_bound ? baseline + 0.6L*(best-baseline) : (long double)best, false) / 100.0;
+        unbounded_ratio = ratio;
     }
-    quitp(ratio, "Value: %lld. Ratio: %.6f, RatioUnbounded: %.6f", value, ratio, unbounded_ratio);
+    quitp(ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", value, ratio, unbounded_ratio);
 }

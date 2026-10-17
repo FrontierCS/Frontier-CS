@@ -133,24 +133,6 @@ Constraints and guarantees
 - The hidden deck for each hand is fixed before the hand begins and does not depend on your queries.
 - With this single-raise-per-round structure and symmetric stacks, Bob always has enough chips to CALL any legal RAISE you declare.
 
-Scoring
-Only programs that follow the protocol, do not exceed the RATE budget, and finish all hands are scored.
-
-Let W be the final average profit per hand printed by the judge (the SCORE value). Your points are a piecewise-linear function of W:
-
-- If W ≤ 8.0: score = 0.
-- If 8.0 < W ≤ 11.0: score increases linearly from 0 to 40:
-  score = round(13.3 × (W − 8)).
-- If 11.0 < W ≤ 14.0: score increases linearly from 40 to 82:
-  score = 40 + round(14 × (W − 11)).
-- If 14.0 < W: score increases linearly from 82 to Infinite:
-  score = 82 + round(3 × (W − 14)).
-
-
-Interpretation:
-- Around W ≥ 11 indicates you beat a simple baseline (roughly “Small Task”).
-- Around W ≥ 16 indicates a strong strategy (roughly “Large Task”).
-
 Example interaction (illustrative only)
 Judge: 1
 Judge: STATE 1 1 100 100 10 0
@@ -175,3 +157,16 @@ Strategy discussion (non-binding)
 - The opponent’s CALL decision underestimates your future aggression (she assumes you will CHECK afterwards), which can be exploited by well-timed raises.
 - RATE queries give you (win, tie) probabilities under random completions; combined with current pot and effective stacks, you can estimate immediate fold equity versus call equity to choose raise sizes.
 - Budget your RATE calls: preflop and early-street coarse estimates (small t) and larger t near pivotal decisions can perform well within the 3,000,000 budget.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+X is the average profit per hand. Define h=0 for X<=8, (40/3)*(X-8)/100 for 8<X<=11, (40+14*(X-11))/100 for 11<X<=14, and (82+3*(X-14))/100 for X>14. Define the objective x=X, its physical reference a=A=20, and the lower-band calculation L=60*h.
+
+```text
+P = L,                           if L <= 60
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero value of a maximizing objective is not a perfect solution and earns no special full-score award. The checker reports P/100.

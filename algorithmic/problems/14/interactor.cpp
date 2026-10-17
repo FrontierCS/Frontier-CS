@@ -1,3 +1,18 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 // interactor.cpp
 // Build: g++ -std=gnu++17 -O2 -pipe -static -s interactor.cpp -o interactor
 // Run  : interactor <input> <output> <answer> [--seed=...]
@@ -16,6 +31,12 @@
 //   Correct: quitp(f/100), wrong: quitp(0)
 
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -114,10 +135,12 @@ int main(int argc, char* argv[]) {
                 quitp(0.0, "Wrong answer. hidden n=%lld, your guess=%lld, queries=%lld", n, g, qcnt);
             } else {
                 double score = score_from_queries(qcnt);
-                double part  = max(0.0, min(100.0, score)) / 100.0;
-                double unbounded_part = max(0.0, score) / 100.0;
-                
-                quitp(part, "OK. n=%lld, queries=%lld, Ratio: %.4f, RatioUnbounded: %.4f", n, qcnt, part, unbounded_part);
+                double r = qcnt <= 1 ? 2.0/(qcnt+1.0) : max(0.0, score)/100.0;
+                double part = reference_score(r);
+    part = natural_log_score(100.0 * part, qcnt, 1, true) / 100.0;
+                double unbounded_part = part;
+
+                quitp(part, "OK. n=%lld, queries=%lld, Ratio: %.12f, RatioUnbounded: %.12f", n, qcnt, part, unbounded_part);
             }
 
         } else {

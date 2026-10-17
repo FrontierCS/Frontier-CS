@@ -29,21 +29,16 @@ Please achieve this with as few operations as possible.
 </figure>
 
 
-
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $K$ be the number of operations and $E$ be the number of pairs of balls violating the condition after finishing the operations.
 Here $E$ is the total number of pairs of $(x,y)$ and $(x+1,y') (y'\in\\{y,y+1\\})$ such that the ball $(x,y)$ has a larger number than the ball $(x+1,y')$.
-Then you will obtain the following score.
+The raw task reward V is defined as follows.
 
 - If $E=0$, $100000-5K$.
 - If $E>0$, $50000-50E$.
-
-
-There are 150 test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
 
 
 Input
@@ -78,7 +73,6 @@ The number of operations $K$ must not exceed $10000$ and any two balls to be swa
 If not satisfied, the submission will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> .
 
 
-
 <a href="https://img.atcoder.jp/ahc021/d17182d7.html?lang=ja&seed=0&output=15%0D%0A2+0+3+1%0D%0A8+5+9+5%0D%0A24+5+25+6%0D%0A9+5+10+6%0D%0A10+10+11+10%0D%0A1+0+2+1%0D%0A28+9+29+10%0D%0A0+0+1+0%0D%0A18+7+19+8%0D%0A18+18+19+19%0D%0A20+5+21+5%0D%0A11+0+12+1%0D%0A27+12+28+12%0D%0A19+1+20+2%0D%0A7+3+8+3%0D%0A">Show example</a>
 
 
@@ -93,3 +87,13 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc021/d17182d7_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. Each logarithmic branch has its own original quantity x and physical 60-point reference a: r=a/x for the completed-task minimizing cost, or r=x/a for the maximizing composite quality. The upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+When no parent-child order constraint is violated and 50000<=R<100000, let C be the swap count and A=(100000-R)/5. In this completed-task cost branch, take x=C, a=A, and r=a/x; L>60 earns min(100,60+ln(r)). A completed construction with exactly zero C earns 100, even when the reference lies at another stage; an incomplete zero-operation output does not. In all other branches, retain the original ordered composite objective V: take x=V, a=T, and r=x/a; when L>60, award min(100,60+ln(r)). This retains completion priority rather than treating incomplete low-cost outputs as good solutions.
+
+The checker reports points/100.

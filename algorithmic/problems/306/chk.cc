@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -134,13 +156,14 @@ int main(int argc, char* argv[]) {
 
     long long F = InstallCost + BlastCost + Harvested;
 
-    // Score formula: Score_test = min(1000, 100 * B / max(1, F))
-    double score_1000 = min(1000.0, 100.0 * (double)B / (double)max(1LL, F));
-    double ratio = score_1000 / 1000.0;
+    double r = (double)B / (10.0 * (double)max(1LL, F));
+    double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0L * (ratio), F, (long double)B/10.0L, true) / 100.0;
+    double score_1000 = 100.0 * ratio;
 
     quitp(ratio,
           "OK. InstallCost=%lld BlastCost=%lld Harvested=%lld F=%lld B=%lld "
-          "Score=%.4f Ratio: %.6f",
+          "Score=%.4f Ratio: %.12f RatioUnbounded: %.12f",
           InstallCost, BlastCost, Harvested, F, B,
-          score_1000, ratio);
+          score_1000, ratio, ratio);
 }

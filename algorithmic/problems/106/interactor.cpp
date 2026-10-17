@@ -1,3 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+
+// Legacy base ratio, retained only to decide and preserve the lower band.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 
 #include <bits/stdc++.h>
@@ -8,48 +30,48 @@ constexpr int MAXQ = 5000;
 using namespace std;
 
 struct DSU {
-	std::vector<int> f, siz;
+    std::vector<int> f, siz;
 
-	DSU() {}
-	DSU(int n) {
-		init(n);
-	}
+    DSU() {}
+    DSU(int n) {
+        init(n);
+    }
 
-	void init(int n) {
-		f.resize(n);
-		std::iota(f.begin(), f.end(), 0);
-		siz.assign(n, 1);
-	}
+    void init(int n) {
+        f.resize(n);
+        std::iota(f.begin(), f.end(), 0);
+        siz.assign(n, 1);
+    }
 
-	int find(int x) {
-		while (x != f[x]) {
-			x = f[x] = f[f[x]];
-		}
-		return x;
-	}
+    int find(int x) {
+        while (x != f[x]) {
+            x = f[x] = f[f[x]];
+        }
+        return x;
+    }
 
-	bool same(int x, int y) {
-		return find(x) == find(y);
-	}
+    bool same(int x, int y) {
+        return find(x) == find(y);
+    }
 
-	bool merge(int x, int y) {
-		x = find(x), y = find(y);
-		if (x == y) {
-			return false;
-		}
-		f[y] = x;
-		siz[x] += siz[y];
-		return true;
-	}
+    bool merge(int x, int y) {
+        x = find(x), y = find(y);
+        if (x == y) {
+            return false;
+        }
+        f[y] = x;
+        siz[x] += siz[y];
+        return true;
+    }
 
-	int size(int x) {
-		return siz[find(x)];
-	}
+    int size(int x) {
+        return siz[find(x)];
+    }
 };
 
 int main(int argc, char ** argv){
-	registerInteraction(argc, argv);
-	int n = inf.readInt();
+    registerInteraction(argc, argv);
+    int n = inf.readInt();
     int m = inf.readInt();
     vector<bitset<MAXN>> E(n);
     DSU dsu(2 * n);
@@ -65,17 +87,17 @@ int main(int argc, char ** argv){
 
     bool flag = true;
     for (int i = 0; i < n; i++) {
-    	flag &= !dsu.same(i, n + i);
+        flag &= !dsu.same(i, n + i);
     }
 
     cout << n << endl;
     cout.flush();
-    
+
     for (int q = 1; q <= MAXQ + 1; ++q) {
         string S = ouf.readToken();
         if (S == "?") {
             if (q > MAXQ) { cout << "-1\n"; quitf(_wa, "too many queries"); }
-            
+
             bitset<MAXN> F;
             int k = ouf.readInt();
             if (k < 1 || k > n) { cout << "-1\n"; quitf(_wa, "query %d: k=%d out of range", q, k); }
@@ -91,15 +113,15 @@ int main(int argc, char ** argv){
             for (int i = 0; i < n; i++) if (F[i]) ans += (E[i]&F).count();
             cout << ans/2 << endl;
             cout.flush();
-            
+
         } else if (S == "N" || S == "Y") {
-        	if ((S == "Y") != flag) {
-        		quitp(0., "Wrong guess 0. Ratio: 0.0000");
-        	}
+            if ((S == "Y") != flag) {
+                quitp(0., "Wrong guess 0. Ratio: 0.0000");
+            }
 
             int r = ouf.readInt();
             if (r < 0 || r > n) { cout << "-1\n"; quitf(_wa, "answer %d out of range", r); }
-            
+
             std::vector<int> v(r);
             for (int i = 0; i < r; i++) {
                 v[i] = ouf.readInt();
@@ -108,32 +130,36 @@ int main(int argc, char ** argv){
             }
 
             if (S == "Y") {
-            	std::array<std::vector<int>, 2> a;
-            	for (int i = 0; i < n; i++) {
-            		a[dsu.same(i, 0)].push_back(i);
-            	}
+                std::array<std::vector<int>, 2> a;
+                for (int i = 0; i < n; i++) {
+                    a[dsu.same(i, 0)].push_back(i);
+                }
 
                 std::sort(v.begin(), v.end());
-            	if (std::find(a.begin(), a.end(), v) != a.end()) {
-            		double ratio = 1. * (MAXQ - q) / MAXQ;
-            		quitp(ratio, "Correct guess Y. Ratio: %.4f", ratio);
-            	} else {
-            		quitp(0., "Wrong guess 1. Ratio: 0.0000");
-            	}
+                if (std::find(a.begin(), a.end(), v) != a.end()) {
+                    double ratio = 1. * (MAXQ - q) / MAXQ;
+                    ratio=penalized(ratio);
+    ratio = natural_log_score(100.0 * ratio, q - 1, 1999.0L, true) / 100.0;
+                    quitp(ratio, "Correct guess Y. Ratio: %.12f", ratio);
+                } else {
+                    quitp(0., "Wrong guess 1. Ratio: 0.0000");
+                }
             } else {
-            	if (r % 2 == 0) {
-            		quitp(0., "Wrong guess 2. Ratio: 0.0000");
-            	}
-            	for (int i = 0; i < r; i++) {
-            		if (!E[v[i]][v[(i + 1) % r]]) {
-            			quitp(0., "Wrong guess 3. Ratio: 0.0000");
-            		}
-            	}
+                if (r % 2 == 0) {
+                    quitp(0., "Wrong guess 2. Ratio: 0.0000");
+                }
+                for (int i = 0; i < r; i++) {
+                    if (!E[v[i]][v[(i + 1) % r]]) {
+                        quitp(0., "Wrong guess 3. Ratio: 0.0000");
+                    }
+                }
 
-            	double ratio = 1. * (MAXQ - q) / MAXQ;
-            	quitp(ratio, "Correct guess N. Ratio: %.4f", ratio);
+                double ratio = 1. * (MAXQ - q) / MAXQ;
+                ratio=penalized(ratio);
+    ratio = natural_log_score(100.0 * ratio, q - 1, 1999.0L, true) / 100.0;
+                quitp(ratio, "Correct guess N. Ratio: %.12f", ratio);
             }
-        
+
         } else {
             cout << "-1\n"; quitf(_wa, "invalid query");
         }

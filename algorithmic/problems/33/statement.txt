@@ -16,16 +16,6 @@ For each ki, output two lines:
 - The first line contains an integer n (the length of the permutation).
 - The second line contains n integers: a valid permutation of {0, 1, …, n−1} having exactly ki increasing subsequences.
 
-Scoring
-Let m be the maximum permutation length you used across all queries.
-Your score for the test file will be determined as follows:
-
-m ≤ 90 → 100 points
-
-90 < m < 2000 -> linear function
-
-m >= 2000 -> 0
-
 Example
 Input
 2
@@ -40,3 +30,19 @@ Output
 Explanation
 For k = 3, one valid permutation is [1, 0], which has exactly 3 increasing subsequences: [], [0], [1].
 For k = 8, one valid permutation is [0, 1, 2], which has exactly 8 increasing subsequences: [], [0], [1], [2], [0, 1], [0, 2], [1, 2], [0, 1, 2].
+
+## Scoring
+
+Let x be m, the maximum length of the constructed permutations. The physical reference (the 60-point level) is a=90. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(2000-x)/1910).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

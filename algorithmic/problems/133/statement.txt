@@ -10,7 +10,7 @@ From the second line to the n+1 line, where the i+1 line contains two real numbe
 The n+2 line is a positive integer m (m <= n*(n-1)/2) , representing the number of line segments that Little Z considers important.
 From line n+3 to line n+m+2, each line has two positive integers a, b (1 <= a, b <= n), representing a line segment. Among them, a and b represent the numbering of the two endpoints of the line segment, respectively.
 In the n+m+3 line, there is a real number r (0 < r <= 5.0) representing the radius of the circle formed by the brush on the paper.
-In line n+m+4 , there are four real numbers p_1, p_2, p_3, p_4, which are the parameters used for scoring.
+In line n+m+4 , there are four real numbers p_1, p_2, p_3, p_4, which are legacy input parameters and do not affect the current score.
 
 Output
 Only one number per line represents the total area of the highlighted area after the stroke.
@@ -28,17 +28,16 @@ standard input
 standard output
 5.1415927
 
-Scoring
+## Scoring
 
-Note:
-This problem provides four parameters p1, p2, p3, p4 in the input file.
-All four values must be read from the input, but only p1 and p3 are used for scoring;
-p2 and p4 are ignored.
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
 
-Let difference denote the absolute difference between your answer and the standard answer.
-Your score for each test point is computed as follows:
+E is the absolute difference between the submitted area estimate and the stored reference area. Define the objective x=E, its physical reference a=A=(2/3)*1e-6, and the lower-band calculation L=100/(1+E/1e-6).
 
-score = 100 / (1 + p1 * p3)
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
 
-
-The total score is the sum of the scores over all test points.
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. Zero error means equality to the stored floating-point reference; do not infer zero from rounded awarded points. The checker reports P/100.

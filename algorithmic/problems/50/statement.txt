@@ -11,7 +11,22 @@ are k_i integers, the j-th integer a_j means that the set with id a_j contains t
 
 Find some sets so that each element belongs to at least one of these sets. You need to minimize the total cost of these sets. This value will determine your final score.
 
-Output: 
+Output:
 
 Firstly output an integer |S|, which means the number of sets you choose. After that, output |S| ids of the sets you choose in another line.
 
+## Scoring
+
+Let x be C, the total construction cost. R>0 is the comparison cost stored with the test. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(2*R-x)/R).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

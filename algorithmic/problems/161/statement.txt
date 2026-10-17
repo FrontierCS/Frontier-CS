@@ -30,21 +30,19 @@ You may set $P_i$ to a positive value for $i\notin V'$, but this will not expand
 Please build a TV network that can deliver live broadcasts to all residents while reducing the sum of the costs $S=\sum_{i=1}^N{P_i^2}+\sum_{j\in E'} w_j$ as small as possible.
 
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $n$ be the number of residents in the coverage area of the live broadcast.
-Then you will obtain the following score.
+The raw task reward V is defined as follows.
 
 - If $n\lt K$, $\mathrm{round}(10^6 \times (n+1)/K)$.
 - If $n=K$, $\mathrm{round}(10^6\times(1+10^8/(S+10^7)))$.
 
 **Note that $S$ may not fit into the 32-bit integer.**
 
-There are 300 test cases, and the score of a submission is the total score for each test case.
 The input for seed=0 is manually created and is not included in the test cases.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
 
 
 Input
@@ -142,3 +140,15 @@ You have to use the specified hashtag and public account. You can only share vis
 <a href="https://twitter.com/search?q=%23AHC020%20%23visualizer&src=typed_query&f=live">List of shared images</a>
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. Each logarithmic branch has its own original quantity x and physical 60-point reference a: r=a/x for the completed-task minimizing cost, or r=x/a for the maximizing composite quality. The upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. If R<=B, set U=11000000, L=100*max(0,(V-B)/(U-B)), and T=B+0.6*(U-B). Otherwise set L=60*max(0,(V-B)/(R-B)) and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+When all households are covered and 1e6<T<11e6, let C be the sum of squared transmitter powers and enabled-edge costs, and A=1e8/(T/1e6-1)-1e7. In this completed-task cost branch, take x=C, a=A, and r=a/x; L>60 earns min(100,60+ln(r)). A completed construction with exactly zero C earns 100, even when the reference lies at another stage; an incomplete zero-operation output does not. In all other branches, retain the original ordered composite objective V: take x=V, a=T, and r=x/a; when L>60, award min(100,60+ln(r)). This retains completion priority rather than treating incomplete low-cost outputs as good solutions.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

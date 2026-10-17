@@ -73,23 +73,21 @@ P(s) = P_{\text{bigram}}(s) + P_{\text{motif}}(s)
 \]
 
 ## Scoring
-This problem is evaluated on multiple hidden test instances.
 
-For each test instance:
-- If your output is infeasible (wrong length, characters outside the alphabet, or wrong per-letter counts), you get ratio `0`.
-- Otherwise, let `X = P(s)` be your total penalty.
-- The judge also computes a deterministic internal reference string from the same test instance.
-- Let `B` be the total penalty of that reference string.
+The physical objective is string penalty X=computePenalty(output); smaller is better. The physical reference is `a = B-0.6*max(1,B)`; matching a positive reference earns 60 points.
 
-Your per-test ratio is:
-\[
-\mathrm{ratio} = \mathrm{clamp}\left(\frac{B - X}{\max(B, 1)},\, 0,\, 1\right)
-\]
-where `clamp(x,0,1)=min(1,max(0,x))`.
+Define the historical low-score expression (in points):
 
-Lower penalty is strictly better, and matching or exceeding the baseline penalty gives ratio `0`.
+    P_low = 100*clamp((B-X)/max(B,1),0,1).
 
-The final score is the sum of per-test ratios, scaled to the total points configured for this problem.
+A valid solution with `X=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / X
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+B is the penalty of the deterministic reference string.
 
 ## Constraints
 - Time limit: 2 seconds

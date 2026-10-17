@@ -107,27 +107,20 @@ Your goal is to **minimize** `O`.
 
 ## Scoring
 
-For each test file, define the **baseline** solution as building no pads at all.
+The physical objective is weighted routing objective O; smaller is better. The physical reference is `a = 0.4*B (nominal center of rounded60 bin)`; matching a positive reference earns 60 points.
 
-Its objective value is therefore
+Define the historical low-score expression (in points):
 
-`B = sum_{i=1..N} dist(s_i, t_i)`
+    P_low = 100*round(1000000*clamp((B-O)/B,0,1))/1000000.
 
-For a feasible submission with objective value `O`, the score for that test file is
+A valid solution with `O=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-`score = round(1,000,000 * max(0, min(1, (B - O) / B )))`
+    r = a / O
+    P = min(100, 60 + ln(r)).
 
-Since direct transport is always allowed, any feasible solution satisfies `O <= B`, so this is simply the relative improvement over the baseline, scaled to `1,000,000`.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
-- Baseline solution: score `0`
-- Better solutions: higher scores
-- Perfectly eliminating all driving distance: score `1,000,000`
-
-If your output is infeasible, the score is `0`.
-
-The total score of a submission is the sum of its scores over all test files.
-
----
+B is the no-pad baseline sum of source-to-target distances. If B=0, retain the existing exact 100 branch. Rounding is used only to identify and preserve the old low-score branch; the upper logarithm uses the unrounded physical O.
 
 ## Constraints
 
@@ -201,5 +194,5 @@ With pads at intersections 2 and 4:
 
 Thus `O = 4 + 8 + 8 = 20`.
 
-Relative improvement is `(31 - 20) / 31 = 11/31`, so the score for this file is approximately `354,839`.
+Relative improvement is `(31 - 20) / 31 = 11/31`, so the rounded base score is `35.4839` points. Since this is below 60, the final score is also `35.4839`.
 ```

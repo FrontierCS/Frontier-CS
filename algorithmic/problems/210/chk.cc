@@ -1,3 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
+
+// Historical bounded base ratio; only its <=60-point branch is retained.
+static double bounded_base_ratio(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 
 #include <bits/stdc++.h>
@@ -298,7 +322,10 @@ int main(int argc, char* argv[]) {
     double unbounded_ratio = (best_possible > 0) ? ((double)score_value / (double)best_possible) : 0.0;
 
     // IMPORTANT: keep "Ratio:" substring for the platform parser.
-    quitp(ratio, "Ratio: %.9f, RatioUnbounded: %.9f, Value: %lld, BestPossible: %lld",
+    ratio=bounded_base_ratio(ratio);
+    ratio = natural_log_score(100.0L * (ratio), score_value, 0.6L*best_possible, false) / 100.0;
+    unbounded_ratio=ratio;
+    quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f, Value: %lld, BestPossible: %lld",
           ratio, unbounded_ratio, score_value, best_possible);
 }
 

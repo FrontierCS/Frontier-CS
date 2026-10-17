@@ -45,12 +45,18 @@ Important:
 
 Scoring
 
-This problem is graded based on the number of Query operations Q.
-- If Q ≤ 4,000: you receive 100 points
-- If 4,000 < Q ≤ 20,000: you receive 100 × (20,000 - Q) / (20,000 - 4,000) points
-- If Q > 20,000: you receive 0 points
+The physical objective is number of queries Q; smaller is better. The physical reference is `a = 4000`; matching a positive reference earns 60 points.
 
-Your final score is the average score across all test cases.
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(20000-Q)/16000).
+
+A valid solution with `Q=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Constraints
 
@@ -72,8 +78,8 @@ Interaction Example:
 < Query 1 1
 (You query with only chameleon 1)
 
-> 0
-(Judge responds: 0 distinct colors - actually this would be 1, but depends on the setup)
+> 1
+(Judge responds: a single chameleon displays one color.)
 
 < Query 6 6 2 1 3 5 8
 (You query with 6 chameleons)
@@ -116,19 +122,19 @@ using namespace std;
 int main() {
     int N;
     cin >> N;  // Read N from judge
-    
+
     // Example query
     cout << "Query 3 1 2 3" << endl;  // endl flushes automatically
     int result;
     cin >> result;  // Read query result
-    
+
     // More queries...
-    
+
     // Submit answers (exactly N times)
     cout << "Answer 1 5" << endl;
     cout << "Answer 2 8" << endl;
     // ... N answers total
-    
+
     return 0;
 }
 ```

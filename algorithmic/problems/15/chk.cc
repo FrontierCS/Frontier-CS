@@ -1,7 +1,21 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <vector>
 #include <numeric>
-#include <algorithm>
 using namespace std;
 
 // Function to perform the swap operation on a permutation
@@ -63,23 +77,16 @@ int main(int argc, char* argv[]) {
     int baseline_operations = 4 * n;
     int best_operations = 2 * n + 1;
 
-    double ratio = 0, unbounded_ratio = 0;
+    // 2*n+1 is a performance target, not a lower bound on required operations.
+    // Legal shorter constructions must continue to receive higher scores.
+    double performance = max(0.0, double(baseline_operations - your_operations)
+                                  / (baseline_operations - best_operations));
+    double ratio = performance <= 1.0 ? 0.6 * performance
+        : 0.6 + 0.02 * log(performance);
+    double unbounded_ratio = ratio;
+    ratio = natural_log_score(100.0 * ratio, your_operations, best_operations, true) / 100.0;
 
-    if (your_operations >= baseline_operations) {
-        // Score is 0 if not better than baseline
-        ratio = 0.0;
-    } else {
-        double your_value = (double)(baseline_operations - your_operations);
-        double best_value = (double)(baseline_operations - best_operations);
-
-        if (best_value <= 0) { // Avoid division by zero
-            ratio = 1.0;
-        } else {
-            ratio = std::max(0.0, std::min(1.0, your_value / best_value)); // Clamp
-            unbounded_ratio = std::max(0.0, your_value / best_value);
-        }
-    }
-
-    quitp(ratio, "Final average score ratio. Ratio: %.4f, RatioUnbounded: %.4f", ratio, unbounded_ratio);
+    unbounded_ratio = ratio;
+    quitp(ratio, "Final average score ratio. Ratio: %.12f, RatioUnbounded: %.12f", ratio, unbounded_ratio);
     return 0;
 }

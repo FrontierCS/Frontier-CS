@@ -1,32 +1,49 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include<bits/stdc++.h>
+#include <ext/rope>
 #include "testlib.h"
 using namespace std;
 
+// Calibrate a feasible performance reference to 60 percent.
+static double referenceScore(double ratio) {
+    return ratio <= 1.0 ? 0.6 * ratio : (0.6 + 0.02 * std::log(ratio));
+}
+
 int n;
-vector<int> applyMove(const vector<int>& perm, int x, int y) {
-    vector<int> result = perm;
-    int element = result[x - 1];
-    result.erase(result.begin() + x - 1);
-    result.insert(result.begin() + y - 1, element);
-    return result;
-}
-bool isSorted(const vector<int>& perm) {
-    for (int i = 0; i < (int)perm.size(); i++) {
-        if (perm[i] != i + 1) return false;
-    }
-    return true;
-}
-bool validateMoves(vector<int> perm, const vector<pair<int, int>>& moves, long long& totalCost) {
+// A balanced rope supports moves without copying the whole permutation.
+// The former vector erase/insert implementation took O(n * number_of_moves),
+// causing checker TLE on valid answers for the released n=300000 cases.
+bool validateMoves(const vector<int>& perm, const vector<pair<int, int>>& moves, long long& totalCost) {
+    __gnu_cxx::rope<int> sequence(perm.data(), perm.size());
     totalCost = 0;
     for (const auto& move : moves) {
         int x = move.first, y = move.second;
-        if (x < 1 || x > (int)perm.size() || y < 1 || y > (int)perm.size()) {
-            return false;
-        }
-        perm = applyMove(perm, x, y);
+        if (x < 1 || x > (int)perm.size() || y < 1 || y > (int)perm.size()) return false;
+        int element = sequence[x - 1];
+        sequence.erase(x - 1, 1);
+        // y is the position after removal, exactly as in the original checker.
+        sequence.insert(y - 1, element);
         totalCost += y;
     }
-    return isSorted(perm);
+    int expected = 1;
+    for (auto it = sequence.const_begin(); it != sequence.const_end(); ++it) {
+        if (*it != expected++) return false;
+    }
+    return true;
 }
 
 int main(int argc, char* argv[]) {
@@ -37,6 +54,7 @@ int main(int argc, char* argv[]) {
         original_perm[i] = inf.readInt();
     }
     long long best_answer = ans.readLong();
+    if (best_answer <= 0) quitf(_fail, "Reference cost must be positive");
     long long participant_cost;
     int len_moves;
     vector<pair<int, int>> moves;
@@ -66,12 +84,12 @@ int main(int argc, char* argv[]) {
     if (!validateMoves(original_perm, moves, actual_cost)) {
         quitf(_wa, "The given sequence of moves does not sort the permutation");
     }
-    if (1LL * (actual_cost + 1) * (len_moves + 1) != participant_cost) {
+    if ((__int128)(actual_cost + 1) * ((long long)len_moves + 1) != participant_cost) {
         quitf(_wa, "Claimed cost %lld does not match actual cost %lld from moves", participant_cost, actual_cost);
     }
-    double score_ratio = (double)best_answer / participant_cost;
-    double unbounded_score_ratio = max(0.0, score_ratio);
-    score_ratio = min(1.0, score_ratio); 
-    quitp(score_ratio, "Cost: %lld. Ratio: %.6f, RatioUnbounded: %.6f", participant_cost, score_ratio, unbounded_score_ratio);
+    double score_ratio = referenceScore((double)best_answer / participant_cost);
+    score_ratio = natural_log_score(100.0 * score_ratio, participant_cost, best_answer, true) / 100.0;
+    double unbounded_score_ratio = score_ratio;
+    quitp(score_ratio, "Cost: %lld. Ratio: %.12f, RatioUnbounded: %.12f", participant_cost, score_ratio, unbounded_score_ratio);
     return 0;
 }

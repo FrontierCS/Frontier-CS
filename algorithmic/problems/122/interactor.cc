@@ -1,7 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <iostream>
 #include <vector>
-#include <algorithm>
 #include <string>
 
 using namespace std;
@@ -92,9 +113,9 @@ int main(int argc, char *argv[]) {
     int w = ouf.readInt();
     if(l == r && l == w){
       double score = (200000.0-1.0*sumn)/(200000.0-23867.0);
-      score = min(score, 1.0);
-      score = max(score, 0.0);
-      quitp(score, "Ratio: %.3lf", score);
+      score = reference_score(score);
+    score = natural_log_score(100.0 * score, sumn, 23867.0L, true) / 100.0;
+      quitp(score, "Ratio: %.12lf, RatioUnbounded: %.12lf", score, score);
     }
     else quitf(_wa, "Wrong guess");
   }
@@ -116,10 +137,10 @@ int main(int argc, char *argv[]) {
     int w = ouf.readInt();
     if(w == chosen){
       double score = (210000.0-1.0*sumn)/(210000.0-23867.0);
-      double unbounded_score = max(0.0, score);
-      score = min(score, 1.0);
-      score = max(score, 0.0);
-      quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_score);
+      score = reference_score(score);
+    score = natural_log_score(100.0 * score, sumn, 23867.0L, true) / 100.0;
+      double unbounded_score = score;
+      quitp(score, "Ratio: %.12lf, RatioUnbounded: %.12lf", score, unbounded_score);
     }
     else quitf(_wa, "Wrong guess");
   }

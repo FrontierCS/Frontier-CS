@@ -128,16 +128,18 @@ Then we can distribute $\sum_{d=1}^{10} \min(a_d,b_d)$ pieces to attendees.
 Here, the $i$-th strawberry belongs to a piece if and only if its center $(x_i, y_i)$ is contained inside (excluding the circumference) of the piece.
 If a strawberry is cut in a straight line that passes through its center, it belongs to no pieces.
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $b_d$ be the number of pieces with $d$ strawberries on them.
-Then, you will get the following score.
+The raw task reward V is defined as follows.
 
 $\mathrm{round}\left(10^6 \frac{\sum_{d=1}^{10}\min(a_d,b_d)}{\sum_{d=1}^{10} a_d}\right)$
 
 If the number of cuts exceeds $K$ or you specify an invalid line, it will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> .
 
-There are 100 test cases, and the score of a submission is the total score for each test case. If you get a result other than <span class='label label-success' data-toggle='tooltip' data-placement='top' title="Accepted">AC</span> for one or more test cases, the score of the submission will be zero. The highest score obtained during the contest time will determine the final ranking, and there will be no system test after the contest. If more than one participant gets the same score, the ranking will be determined by the submission time of the submission that received that score.
+There are 100 test files. The raw objective above is converted to benchmark points by the Scoring section below. Invalid output earns 0 for that file, and the benchmark averages the per-file points.
 
 
 Input
@@ -196,3 +198,15 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc012/f756367b32_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. If R=1000000, set L=100*max(0,(V-B)/(R-B)) and T=B+0.6*(R-B). Otherwise set L=60*max(0,(V-B)/(R-B)) and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the number of satisfied cake-piece requests and D the total number of requests. The upper band uses the count itself: set x=X, physical reference a=A=D*T/1e6, and r=x/a; award min(100,60+ln(r)). Zero satisfied requests are not a perfect solution.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

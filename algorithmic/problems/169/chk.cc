@@ -1,3 +1,22 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+static long long completed_cost = 0;
+static bool objective_complete = false;
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -24,10 +43,10 @@ static vector<pair<char, int>> parseOutput(int n) {
     vector<pair<char, int>> ops;
     while (!ouf.seekEof()) {
         string dstr = ouf.readWord();
-        ensuref(!dstr.empty(), "Empty direction token");
-        ensuref((int)dstr.size() == 1, "Parse error: %s", dstr.c_str());
+        ouf.ensuref(!dstr.empty(), "Empty direction token");
+        ouf.ensuref((int)dstr.size() == 1, "Parse error: %s", dstr.c_str());
         char d = dstr[0];
-        ensuref(d >= 'A' && d <= 'Z', "Out of range: %s", dstr.c_str());
+        ouf.ensuref(d >= 'A' && d <= 'Z', "Out of range: %s", dstr.c_str());
         int p = ouf.readInt(0, n - 1, "p");
         if ((long long)ops.size() + 1 > 4LL * n * n) {
             quitf(_wa, "Too many operations");
@@ -82,6 +101,8 @@ static long long computeScore(const InputData& input, const vector<pair<char, in
     }
     long long score;
     if (X == 0 && Y == 0) {
+        objective_complete = true;
+        completed_cost = T;
         score = 8LL * n * n - T;
     } else {
         score = 4LL * n * n - 1LL * n * (X + Y);
@@ -100,7 +121,14 @@ int main(int argc, char* argv[]) {
     long long baseline_value = ans.readLong();
     long long best_value = ans.readLong();
 
-    double score_ratio = max(0.0, min(1.0, (double)(score - baseline_value) / (best_value - baseline_value)));
-    double unbounded_ratio = max(0.0, (double)(score - baseline_value) / (best_value - baseline_value));
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, unbounded_ratio);
+    // External calibration anchors do not limit the feasible raw objective.
+    double gap = (double)best_value - (double)baseline_value;
+    ensuref(gap > 0.0, "Invalid calibration anchors");
+    double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
+    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    if (objective_complete && completed_cost == 0) score_ratio = 1.0;
+    else if (objective_complete && best_value >= 4LL*input.n*input.n && best_value < 8LL*input.n*input.n) {
+        score_ratio = natural_log_score(100.0*score_ratio, completed_cost, 8.0L*input.n*input.n-best_value, true)/100.0;
+    } else score_ratio = natural_log_score(100.0*score_ratio, score, best_value, false)/100.0;
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, score_ratio);
 }

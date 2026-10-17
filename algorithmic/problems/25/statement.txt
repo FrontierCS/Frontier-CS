@@ -13,10 +13,10 @@ For each testcase:
 Interaction starts by reading an integer the number of vertices.
 Then you can make queries of the type "? s" (without quotes) where s is a binary string of length n such that character s_i is 1 if node i ∈ S and 0 otherwise. After the query, read an integer, which is the answer to your query.
 After printing a query do not forget to output end of line and flush the output. The interactor is nonadaptive. The graph does not change during the interaction.
- 
+
 Constraints
 1 <= |V| <= 200.
-You are allowed to use at most 3500 queries for each testcase. Your score is inversely linear related to the number of queries.
+You are allowed to use at most 3500 queries for each testcase. The score depends on the query count as defined in Scoring.
 
 Output
 When you find if G is connected or disconnected, print it in the format "! x" (without quotes), where x is 1 if G is connected and 0 otherwise.
@@ -41,3 +41,21 @@ Input|Output|Description
      |? 11  | Ask a query for subset {1,2}.
   0  |      | The judge responds with 0.
      |! 0   | The algorithm detected that G is disconnected.
+
+## Scoring
+
+Let x be Q, the query count in a subcase. n is the subcase vertex count. The physical reference (the 60-point level) is a=n*max(1,floor(log2(n))). Define the lower-band continuation:
+
+    L(x) = 60*max(0,(3500-x)/(3500-a)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their arithmetic mean.
+
+Across test files, use the arithmetic mean of the file scores.

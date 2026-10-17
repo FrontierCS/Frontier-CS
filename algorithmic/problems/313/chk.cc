@@ -1,4 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+#include <algorithm>
+// Historical calibration; the physical-objective mapping is applied below.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -115,13 +139,11 @@ int main(int argc, char *argv[]) {
     // We report ratio in [0,1] for quitp:
     //   ratio = score / 2000 = min(2, (B+1)/(Y+1)) / 2
     double rawRatio = (double)(B + 1) / (double)(Y + 1);
-    double clamped = min(2.0, rawRatio);
-    double displayScore = 1000.0 * clamped;
-    double scoreRatio = clamped / 2.0;
-    if (scoreRatio < 0.0) scoreRatio = 0.0;
-    if (scoreRatio > 1.0) scoreRatio = 1.0;
+    double scoreRatio = reference_score(rawRatio);
+    scoreRatio = natural_log_score(100.0L * (scoreRatio), Y, B, true) / 100.0;
+    double displayScore = 100.0 * scoreRatio;
 
-    quitp(scoreRatio, "Y=%lld B=%lld score=%.6f Ratio: %.9f", Y, B, displayScore, scoreRatio);
+    quitp(scoreRatio, "Y=%lld B=%lld score=%.12f Ratio: %.12f", Y, B, displayScore, scoreRatio);
 
     return 0;
 }

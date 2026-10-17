@@ -18,16 +18,20 @@ All listed pairs must be distinct. You may print the points in any order.
 Maximize k subject to the validity constraint (no axis-parallel rectangle formed by four chosen points).
 
 ## Scoring
-Let k be the number of points you output, and let U(n, m) be the theoretical upper bound we use for this problem:
-U(n, m) = floor(min(n · sqrt(m) + m, m · sqrt(n) + n, n · m)).
 
-Your score for a test is:
-score = 100 × min(k / U(n, m), 1).
+Let x be K, the number of selected points. U=floor(min(n*sqrt(m)+m,m*sqrt(n)+n,n*m)). The constraints give U>0. The physical reference (the 60-point level) is a=0.9*U. Define the lower-band continuation:
 
-- Achieving the upper bound U(n, m) yields a score of 100.
-- Outputting 0 points yields a score of 0.
-- Invalid outputs (out-of-range coordinates, duplicates, or violating the rectangle constraint) receive a score of 0 for that test.
-Your final score is the average over all tests.
+    L(x) = 100*min(1,max(0,x/(1.5*U))).
+
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 ## Time limit
 1 second
@@ -46,4 +50,3 @@ Output
 2 1
 
 (The sample illustrates the format and a valid solution; for a 2×2 grid, 3 is optimal under the given constraint.)
-

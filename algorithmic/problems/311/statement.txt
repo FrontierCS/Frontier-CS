@@ -109,34 +109,18 @@ For each test case, a deterministic **baseline layout** is defined as follows:
 
 Let `B` be the objective value of this baseline layout, and let `F` be the objective value of your output.
 
-The score for that test case is
+The physical objective is per-case weighted sinusoidal interaction energy F_j; larger is better. The physical reference is `a = 2*B_j+1`; matching a positive reference earns 60 points.
 
-\[
-S
-=
-10^6
-\cdot
-\operatorname{clamp}\left(
-\frac{F+1}{B+1},
-0,
-2
-\right),
-\]
+Define the historical low-score expression (in points):
 
-where
+    P_low = 60*(F_j+1)/(2*(B_j+1)).
 
-\[
-\operatorname{clamp}(x,0,2)=
-\begin{cases}
-0 & x<0\\
-x & 0\le x\le 2\\
-2 & x>2
-\end{cases}
-\]
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
 
-The score of an input file is the arithmetic mean of its test case scores.
+    r = F_j / a
+    P = min(100, 60 + ln(r)).
 
-Higher is better.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. A parsed layout with an out-of-range bay or repeated bay is assigned F_j=0 and receives 30/(B_j+1) points, not necessarily zero. Missing or malformed integers can still be rejected by the output parser. This is a maximization objective, so zero energy does not receive a zero-cost bonus. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Constraints
 
