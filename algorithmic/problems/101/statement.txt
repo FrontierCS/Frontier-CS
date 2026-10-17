@@ -1,8 +1,9 @@
 Problem Name: Circuit
 
 Description:
-You are given a circuit board consisting of N component slots and R external switches.  
+You are given a circuit board consisting of N component slots.  
 Each slot contains either an AND gate (&) or an OR gate (|). The actual type of each slot is hidden.  
+Every slot was supposed to contain an AND gate, but at most R slots mistakenly contain an OR gate instead.  
 Your task is to determine the true type of every slot by interacting with the judge.
 
 Specifications of the Circuit Board:
@@ -25,7 +26,7 @@ Specifications of the Circuit Board:
 - The output of the circuit is defined as the output of switch 0.
 
 Interaction:
-At the beginning of the interaction, the judge prints N and R, followed by N lines each containing Ui Vi.  
+At the beginning of the interaction, the judge prints N and R (the maximum number of OR gates in the hidden circuit), followed by N lines each containing Ui Vi.  
 This describes the wiring of the board. Then your program must interact as follows:
 
 1. Query:  
@@ -41,6 +42,7 @@ This describes the wiring of the board. Then your program must interact as follo
 Constraints:
 - 1 ≤ N ≤ 8000  
 - 1 ≤ R ≤ min(N, 120)  
+- The hidden circuit contains at most R OR gates (|)  
 - i < Ui < Vi ≤ 2N for all 0 ≤ i < N  
 - For each j=1..2N, exactly one i satisfies Ui=j or Vi=j  
 - At most 5000 queries may be made. Exceeding this limit results in Wrong Answer.
@@ -58,27 +60,27 @@ Sample Interaction:
 
 Suppose the input file contains:
 3 2
-3 4
-2 4
-0 1
+1 4
+2 3
+5 6
 &&|
 
 The judge first outputs:
 3 2
-3 4
-2 4
-0 1
+1 4
+2 3
+5 6
 
-(Here the hidden true circuit is T = "&&|".)
+(Here the hidden true circuit is T = "&&|". It has 1 OR gate, which does not exceed R = 2.)
 
 Then the interaction may proceed as follows (lines beginning with '#' are explanations):
 
-? 01001
+? 0001110
 # Player asks a query with binary string s.
 1
 # Judge replies that the circuit output is 1.
 
-? 11111
+? 1111111
 # Another query.
 0
 # Judge replies with 0.
