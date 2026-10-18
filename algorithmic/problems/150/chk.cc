@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
     double gap = (double)best_value - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     // Physical quality keeps full coverage ahead of partial coverage. Once
     // complete, halving the occupied-cell count adds ln(2), without the old
     // reward's 2*N*N-denominator offset or rounding.

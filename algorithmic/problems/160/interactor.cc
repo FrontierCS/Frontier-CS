@@ -250,7 +250,7 @@ int main(int argc, char* argv[]) {
     if (theoretical_anchor) gap = 1000000.0 - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     if (theoretical_anchor) score_ratio = min(1.0, calibration_ratio);
     score_ratio = natural_log_score(100.0 * score_ratio, physical_cluster_sum, (long double)physical_color_sum * (theoretical_anchor ? (long double)baseline_value + 0.6L*gap : (long double)best_value) / 1e6L, false) / 100.0;
     quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, score_ratio);

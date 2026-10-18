@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
     } else {
         if (m_std < 0) quitf(_fail, "Negative reference operation count");
         double performance = max(0.0, (2.0 * m_std - m_user) / m_std);
-        score_ratio = (performance <= 1.0 ? 0.6 * performance : 0.6 + 0.02 * log(performance));
+        score_ratio = (0.6 * performance);
     }
     score_ratio = natural_log_score(100.0L * (score_ratio), m_user, m_std, true) / 100.0;
     double unbounded_ratio = score_ratio;

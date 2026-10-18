@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
         quitf(_fail, "Reference value must exceed baseline value");
     double r = max(0.0, (double)(participant_value - baseline_value) /
                         (double)(best_value - baseline_value));
-    double score_ratio = r <= 1.0 ? 0.6 * r : (0.6 + 0.02 * log(r));
+    double score_ratio = 0.6 * r;
     score_ratio = natural_log_score(100.0 * score_ratio, participant_value, best_value, false) / 100.0;
     double unbounded_ratio = score_ratio;
     quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", participant_value, score_ratio, unbounded_ratio);

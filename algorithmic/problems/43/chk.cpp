@@ -19,7 +19,7 @@ using namespace std;
 
 static double referenceScore(long long moves) {
     const double r = max(0.0, double(moves) / 63000.0);
-    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * log(r);
+    return 0.6 * r;
 }
 
 struct State {

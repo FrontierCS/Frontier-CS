@@ -5,7 +5,9 @@
 // the original objective with its 60-point anchor using the natural logarithm.
 static double natural_log_score(double old_points, long double value,
                                 long double anchor, bool minimize) {
-    if (minimize && value == 0.0L) return 100.0;
+    // References have nine decimal places. Accept their rounding uncertainty
+    // instead of requiring an exact match to the parsed floating-point value.
+    if (minimize && value <= 1e-9L) return 100.0;
     if (old_points <= 60.0) return old_points;
     // A zero reference or a flat legacy score has no positive logarithmic anchor.
     if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;

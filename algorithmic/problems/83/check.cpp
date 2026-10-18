@@ -70,7 +70,7 @@ int main(int argc, char* argv[]) {
 
     double ratio = (double)M_std / (double)M_user;
     // The standard solution is a performance reference, worth 60 points.
-    double score = (ratio <= 1.0 ? 0.6 * ratio : 0.6 + 0.02 * log(ratio));
+    double score = (0.6 * ratio);
     score = natural_log_score(100.0 * score, M_user, M_std, true) / 100.0;
     double unbounded_ratio = score;
 

@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
 
     if (Best <= 0) quitf(_fail, "Reference grid must have a positive prefix score.");
     double performance = (double)Your / (double)Best;
-    double ratio = (performance <= 1.0 ? 0.6 * performance : 0.6 + 0.02 * log(performance));
+    double ratio = (0.6 * performance);
     ratio = natural_log_score(100.0 * ratio, Your, Best, false) / 100.0;
     double unbounded_ratio = ratio;
 

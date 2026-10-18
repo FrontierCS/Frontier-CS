@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
     score = wrongpred == 0 ? 1.0 : 0.0;
   } else {
     double r = max(0.0, (2.0 * minwrongpred - wrongpred) / minwrongpred);
-    score = r <= 1.0 ? 0.6 * r : (0.6 + 0.02 * log(r));
+    score = 0.6 * r;
     score = natural_log_score(100.0 * score, wrongpred, minwrongpred, true) / 100.0;
   }
   double unbounded_score = score;

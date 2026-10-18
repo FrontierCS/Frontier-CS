@@ -81,8 +81,7 @@ int main(int argc, char* argv[]) {
     // Legal shorter constructions must continue to receive higher scores.
     double performance = max(0.0, double(baseline_operations - your_operations)
                                   / (baseline_operations - best_operations));
-    double ratio = performance <= 1.0 ? 0.6 * performance
-        : 0.6 + 0.02 * log(performance);
+    double ratio = 0.6 * performance;
     double unbounded_ratio = ratio;
     ratio = natural_log_score(100.0 * ratio, your_operations, best_operations, true) / 100.0;
 

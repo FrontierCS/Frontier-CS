@@ -35,9 +35,9 @@ All feasibility and interaction limits apply before scoring; invalid output rece
 E is the absolute difference between the submitted area estimate and the stored reference area. Define the objective x=E, its physical reference a=A=(2/3)*1e-6, and the lower-band calculation L=100/(1+E/1e-6).
 
 ```text
-P = 100,                         if x = 0
-P = L,                           if L <= 60 and x > 0
+P = 100,                         if x <= 1e-9
+P = L,                           if L <= 60 and x > 1e-9
 P = min(100, 60 + ln(r)),      otherwise
 ```
 
-Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. Zero error means equality to the stored floating-point reference; do not infer zero from rounded awarded points. The checker reports P/100.
+Absolute error at most 1e-9 is treated as zero before the lower-band test. The reference areas are stored to nine decimal places, so this tolerance avoids requiring the exact rounding of the stored reference. For example, outputs 45.922141146 and 45.9221411465 both receive 100 points against reference 45.922141146. Errors above this tolerance retain the scoring curve above. The checker reports P/100.

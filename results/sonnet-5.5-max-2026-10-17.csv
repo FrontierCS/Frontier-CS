@@ -14,6 +14,7 @@ problem_id,score,trajectories,provenance
 13,59.63987995996,1,historical_submission
 14,57.64705975351,1,historical_submission
 15,61.23150925046,1,historical_submission
+16,0.0,0,missing_submission
 17,57.954737356340004,1,historical_submission
 22,60.40517253992,1,historical_submission
 23,62.210674529831245,1,historical_submission
@@ -61,6 +62,7 @@ problem_id,score,trajectories,provenance
 86,60.82522736319,1,historical_submission
 87,60.0,1,historical_submission
 89,59.770660260389995,1,historical_submission
+93,0.0,0,missing_submission
 101,6.25,1,historical_submission
 104,60.814860418929996,1,historical_submission
 106,63.255268021861,1,historical_submission
@@ -74,14 +76,14 @@ problem_id,score,trajectories,provenance
 117,61.100661066983996,1,historical_submission
 119,60.48660101800301,1,historical_submission
 120,60.023134943811996,1,historical_submission
-121,73.62062328864286,1,historical_submission
+121,75.07992159564284,1,historical_submission
 122,60.180521526999996,1,historical_submission
 123,42.02380782234,1,historical_submission
 124,60.520229377330004,1,historical_submission
 125,60.121952468829996,1,historical_submission
 127,64.73454443805,1,historical_submission
 132,60.0,1,historical_submission
-133,58.334755384699996,1,historical_submission
+133,68.05164650054,1,historical_submission
 134,60.089155483409996,1,historical_submission
 135,60.343522574969995,1,historical_submission
 137,52.0,1,historical_submission

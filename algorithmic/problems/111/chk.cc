@@ -152,7 +152,7 @@ int main(int argc, char* argv[]){
 
     double ratio = (Best == 0) ? 0.0 : (double)Your / (double)Best;
     if (ratio < 0) ratio = 0;
-    ratio = ratio <= 1.0 ? 0.6 * ratio : (0.6 + 0.02 * log(ratio));
+    ratio = 0.6 * ratio;
     ratio = natural_log_score(100.0 * ratio, Your, Best, false) / 100.0;
     double unbounded_ratio = ratio;
 

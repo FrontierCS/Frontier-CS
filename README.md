@@ -223,11 +223,11 @@ L(x), & L(x) \leq 60, \\
 \end{cases}
 ```
 
-Here $`\ln`$ is the natural logarithm of the improvement in the actual objective. It rewards progress beyond the reference while limiting the influence of exceptionally large improvements. Scores remain capped at 100, and valid zero-cost optima retain their explicit full-score treatment.
+Here $`\ln`$ is the natural logarithm of the improvement in the actual objective. It rewards progress beyond the reference while limiting the influence of exceptionally large improvements. Scores remain capped at 100, and valid zero-cost optima retain their explicit full-score treatment. For floating-point answers, problems 121 and 133 treat errors within their stated numerical tolerance as zero: relative error at most $`10^{-9}`$ for 121 and absolute error at most $`10^{-9}`$ for 133.
 
 Apply the formula at each evaluator's scoring unit before aggregation, preserving its subcase and multi-objective structure. Then average test files equally and problems equally.
 
-[Per-problem results for six models](results/README.md) are available under these scoring rules.
+[Per-problem results for six models](results/README.md) are available under these scoring rules. Their means use the same 179 problems, excluding problem 61 whose output format changed; runs without a submission count as zero.
 
 ### Raw Score
 

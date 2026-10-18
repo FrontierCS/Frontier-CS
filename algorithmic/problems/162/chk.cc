@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
     double gap = (double)best_value - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     if (E == 0 && K == 0) score_ratio = 1.0;
     else if (E == 0 && best_value >= 50000 && best_value < 100000) {
         score_ratio = natural_log_score(100.0*score_ratio, K, (100000.0L-best_value)/5.0L, true)/100.0;

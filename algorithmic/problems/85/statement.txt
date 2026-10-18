@@ -39,7 +39,7 @@ where c is an integer 0, 1, or 2, which represent red, yellow and blue respectiv
 
 "query"
 
-The interactor will return the distance between your current node and the exit. The number of times you make a query will determine your score. Details are shown below.
+The interactor will return the distance between your current node and the exit. You may make at most 100000 distance queries; exceeding this limit receives zero points. This limit is separate from the limit of 100000 moves. The number of times you make a query will determine your score. Details are shown below.
 
 ## Scoring
 

@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
         } else if (cmd == "yes" || cmd == "no") {
             // Participant claims to have found the position or determined it's impossible
             double performance = max(0.0, (2.0 * stdSteps - userSteps) / stdSteps);
-            double score_ratio = (performance <= 1.0 ? 0.6 * performance : 0.6 + 0.02 * log(performance));
+            double score_ratio = (0.6 * performance);
             score_ratio = natural_log_score(100.0L * (score_ratio), userSteps, stdSteps, true) / 100.0;
             double unbounded_ratio = score_ratio;
             string msg = userSteps <= stdSteps ? "At or above reference." : "Below reference.";

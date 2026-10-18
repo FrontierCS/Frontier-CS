@@ -133,7 +133,7 @@ int main(int argc, char* argv[]) {
     double gap = (double)best_value - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     if (objective_complete && completed_cost == 0) score_ratio = 1.0;
     else if (objective_complete && best_value >= complete_reward_floor && best_value < complete_reward_ceiling) {
         score_ratio = natural_log_score(100.0*score_ratio, completed_cost, (long double)complete_reward_ceiling-best_value, true)/100.0;

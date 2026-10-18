@@ -136,7 +136,7 @@ int main(int argc, char* argv[]) {
     double gap = (double)best_value - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     score_ratio = natural_log_score(100.0 * score_ratio, score_sum, (long double)best_value / 2312311.0L, false) / 100.0;
     quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, score_ratio);
     return 0;

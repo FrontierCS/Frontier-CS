@@ -126,6 +126,26 @@ class ScoringRecalibration(unittest.TestCase):
         self.assertAlmostEqual(self.run_checker(133, '', '.500002', '.5'), 1/3)
         self.assertAlmostEqual(self.run_checker(133, '', '.5000001', '.5'), .6+.01*math.log(20/3))
 
+    def test_probability_rounding_uses_relative_tolerance(self):
+        reference = '0.0052510053510665894'
+        for output in [reference, '0.005251005351', '0.00525100535']:
+            self.assertEqual(self.run_checker(121, '', output, reference), 1)
+        self.assertEqual(self.run_checker(121, '', '1.0000000005e-30', '1e-30'), 1)
+        self.assertEqual(self.run_checker(121, '', '0', '1e-30'), 0)
+        outside = self.run_checker(121, '', '.500000001', '.5')
+        self.assertAlmostEqual(outside, .6+.01*math.log(.04/2e-9))
+        self.assertLess(outside, 1)
+
+    def test_area_rounding_uses_absolute_tolerance(self):
+        reference = '45.922141146'
+        for output in [reference, '45.9221411465', '45.9221411455']:
+            self.assertEqual(self.run_checker(133, '', output, reference), 1)
+        # A relative tolerance would incorrectly accept this larger error.
+        self.assertLess(self.run_checker(133, '', '5118.869799116', '5118.869799106'), 1)
+        self.assertEqual(self.run_checker(133, '', '0.0000000005', '0'), 1)
+        self.assertAlmostEqual(self.run_checker(133, '', '0.000000002', '0'),
+                               .6+.01*math.log((2/3)*1e-6/2e-9))
+
     def test_error_halving_adds_ln_two_without_score_gap_proxy(self):
         first = self.run_checker(133, '', '0.0000002', '0')
         second = self.run_checker(133, '', '0.0000001', '0')

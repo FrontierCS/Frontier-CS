@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
         ratio = 1.0;
     } else {
         double r = (double)user_lcs / optimal_lcs;
-        ratio = r <= 1.0 ? 0.6*r : 0.6 + 0.02*log(r);
+        ratio = 0.6 * r;
         ratio = natural_log_score(100.0L * (ratio), user_lcs, optimal_lcs, false) / 100.0;
     }
     quitp(ratio, "User LCS: %d, Reference LCS: %d. Ratio: %.12f, RatioUnbounded: %.12f",

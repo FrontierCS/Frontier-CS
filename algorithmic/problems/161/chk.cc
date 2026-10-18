@@ -174,7 +174,7 @@ int main(int argc, char* argv[]) {
     if (theoretical_anchor) gap = 11000000.0 - (double)baseline_value;
     ensuref(gap > 0.0, "Invalid calibration anchors");
     double calibration_ratio = max(0.0, ((double)score - (double)baseline_value) / gap);
-    double score_ratio = calibration_ratio <= 1.0 ? 0.6 * calibration_ratio : 0.6 + 0.02 * log(calibration_ratio);
+    double score_ratio = 0.6 * calibration_ratio;
     if (theoretical_anchor) score_ratio = min(1.0, calibration_ratio);
     const long double value_anchor = theoretical_anchor ? (long double)baseline_value + 0.6L*gap : (long double)best_value;
     if (objective_complete && completed_cost == 0) score_ratio = 1.0;

@@ -207,8 +207,7 @@ int main(int argc, char** argv) {
         // Use the actual reference, even when its recursive construction is
         // worse than the integer grid. Clamping it to L0 changes the anchor.
         const double performance = sRef / L;
-        ratio = performance <= 1.0 ? 0.6 * performance
-                                  : 0.6 + 0.02 * log(performance);
+        ratio = 0.6 * performance;
         ratio = natural_log_score(100.0 * ratio, L, sRef, true) / 100.0;
     }
     quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f", ratio, ratio);

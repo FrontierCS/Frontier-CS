@@ -42,9 +42,9 @@ p is the output probability and p_ref is the stored reference probability. When 
 If p_ref=0, output p=0 receives 100 and every nonzero p receives zero; the following rule applies only when p_ref is nonzero.
 
 ```text
-P = 100,                         if x = 0
-P = L,                           if L <= 60 and x > 0
+P = 100,                         if x <= 1e-9
+P = L,                           if L <= 60 and x > 1e-9
 P = min(100, 60 + ln(r)),      otherwise
 ```
 
-Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. Zero error means equality to the stored floating-point reference; do not infer zero from rounded awarded points. The checker reports P/100.
+Relative error at most 1e-9 is treated as zero before the lower-band test. This numerical tolerance avoids requiring the exact rounding of the stored floating-point reference. For example, the stored value 0.0052510053510665894 and the rounded output 0.005251005351 both receive 100 points. The tolerance is relative, so outputting zero for a small nonzero reference does not receive full credit. Errors above this tolerance retain the scoring curve above. The checker reports P/100.
