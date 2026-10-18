@@ -70,11 +70,23 @@ Yes
 (a&(b&(c&(d&e))))
 
 Scoring:
-Your score is calculated based on the number of (&,|) $m$, and $m_0$(number of (&,|) by std):
-if $m \leq m_0$, you receive full score (1.0).
-if $m>2 * m_0$, you receive 0 score.
-otherwise Score = $(2 * m_0 - m) / (m_0)$, linearly decreasing from 1.0 to 0.0.
-The score for a test point is the minimum score among all test data within it
+
+The physical objective is Boolean expression operation count m_j; smaller is better. The physical reference is `a = juryOps_j`; matching a positive reference earns 60 points.
+
+juryOps_j is the number of binary operators in the reference expression for case j.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(2*juryOps_j-m_j)/juryOps_j).
+
+A valid solution with `m_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / m_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+A correct No answer receives 100. If juryOps_j=0, a valid zero-operator expression receives 100 and a positive count receives 0. Take the minimum case score within the file.
 
 Time limit:
 2 seconds

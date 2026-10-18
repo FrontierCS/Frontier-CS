@@ -14,19 +14,6 @@ However, a wicked wizard is working against you. While the structure of the grap
 
 You must navigate the graph and collect all treasures as fast as possible. You are provided with a base_move_count, and your score depends on how close your move count is to this baseline.
 
-Scoring:
-Let moves be the number of moves you take.
-If moves <= base_move_count, you get:
-   100 - c * (sol_fraction - 1)
-   where c = 90 / sqrt(base_fraction - 1)
-   base_fraction = (base_move_count + 1) / n
-   sol_fraction = (moves + 1) / n
-
-If base_move_count < moves <= 2 * base_move_count, you get:
-   20 * (1.0 - (moves + 1) / (base_move_count + 1)) points.
-
-If moves > 2 * base_move_count, you get 0 points.
-
 Interaction Protocol
 
 First, the interactor prints an integer t (1 <= t <= 5), the number of maps to solve.
@@ -72,3 +59,21 @@ Example Output:
 2
 
 1
+
+## Scoring
+
+Let x be m, the move count in a completed map. B is the base_move_count supplied for that map. Failed maps receive 0. The physical reference (the 60-point level) is a=B. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(2*B-x)/B)^2.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their arithmetic mean.
+
+Across test files, use the arithmetic mean of the file scores.

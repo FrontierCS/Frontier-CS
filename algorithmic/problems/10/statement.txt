@@ -10,17 +10,30 @@ Little Cyan Fish has a weighted tree of n verticies generated in the following w
 - First, generate a random labeled tree: uniformly randomly select from all nn−2 possible labeled trees.
 - Then, independently assign random integer edge weights in the range [1, K] to each edge, where K is a hidden parameter.
 
-You cannot directly observe the structure of the tree or the edge weights, but Little Cyan Fish grants 
+You cannot directly observe the structure of the tree or the edge weights, but Little Cyan Fish grants
 you a superpower: querying! Each time, you can query the distance between two vertices. Specifically, you
 can choose two vertices u, v (1 \leq u, v \leq n, u \neq v), and we will tell you the distance between these two
 vertices (i.e., the sum of the edge weights on the simple path connecting these two vertices).
 
-Now, Little Cyan Fish wants you to determine all the edges and their weights within queries as less as you can. 
+Now, Little Cyan Fish wants you to determine all the edges and their weights within queries as less as you can.
 
-Scoring
+## Scoring
 
-The score is calculated based on the linear formula determined by the range [5n, Z]:
-- Score = 100 * (Z - Q) / (Z - 5n)
+Let x be Q, the query count in a group. Z=floor(n*n/3). The physical reference (the 60-point level) is a=5*n. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(Z-x)/(Z-5*n)) if n>=16; 60*(5*n+1)/(x+1) if n<=15.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their arithmetic mean.
+
+Across test files, use the arithmetic mean of the file scores.
 
 
 Interaction Protocol
@@ -32,7 +45,7 @@ Next, the interaction process begins. To
 make a query, you need to output a line “? u v” (1 \leq u, v \leq n, u \neq v), describing a query. Then, you need
 to read the result from standard input.
 To provide your answer, you need to output “! u_1 v_1 w_1 u_2 v_2 w_2··· u_{n−1} v_{n−1} w_{n−1}”. You can output
-these edges in any order. The output of the answer will not count towards the n * n / 3 query limit. After you
+these edges in any order. The hard query limit for each group is n*(n+1)/2. The output of the final answer does not count toward this limit. The value floor(n*n/3) is used only in the scoring formula. After you
 output the answer, you need to immediately read the next set of test data or terminate your program.
 After outputting a query, do not forget to output a newline character and flush the output stream.
 To do this, you can use fflush(stdout) or cout.flush() in C++, System.out.flush() in Java,

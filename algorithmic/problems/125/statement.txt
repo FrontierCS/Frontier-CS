@@ -48,43 +48,16 @@ Device Behavior (for clarity)
   – Else (x ∈ S), remove x.
 • The judge replies with r = number of DISTINCT mineral kinds represented by S. If S is empty, r = 0.
 
-Scoring / Ratio (informative)
-• Let Q be your total number of “? x” queries.
-• The judge also knows an optimal_queries value for the instance.
-• Your ratio is (1,000,000 − Q) / (1,000,000 − optimal_queries).
-• The judge reports this ratio and scores only on Accepted submissions.
+## Scoring
 
-Sample Communication
-Judge → program:
-4
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
 
-Program → judge:
-? 1
-Judge → program:
-1
+Q is the number of mineral queries and R is the stored reference query count, with 0<=R<=1000000. Define the objective x=Q, its physical reference a=A=R when R>0; 400000 when R=0, and the lower-band calculation L=60*(1000000-Q)/(1000000-R) when 0<R<1000000; 60*1000001/(Q+1) when R=1000000; 100*(1000000-Q)/1000000 when R=0.
 
-Program → judge:
-? 2
-Judge → program:
-2
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
 
-Program → judge:
-? 5
-Judge → program:
-2
-
-Program → judge:
-? 2
-Judge → program:
-1
-
-Program → judge:
-! 3 4
-Program → judge:
-! 5 1
-Program → judge:
-! 8 7
-Program → judge:
-! 2 6
-
-(Here, the program used 4 queries total.)
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

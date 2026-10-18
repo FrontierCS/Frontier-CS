@@ -56,17 +56,6 @@ Input/Output summary
     ...
     u_{n−1} v_{n−1}
 
-Scoring
-Your solution is judged by both correctness and the number of queries.
-
-- Let Q be the total number of queries you make.
-- Full score (100 points) if Q ≤ 3,000.
-- Zero score if Q > 1,200,000.
-- Otherwise, your score is interpolated linearly:
-  score = 100 × (1,200,000 − Q) / (1,200,000 − 3,000), rounded to the nearest integer.
-
-Only solutions that correctly reconstruct the tree are scored. Violations of the interaction protocol, printing an invalid final tree, or exceeding the total-set-size limit result in 0 points for that test.
-
 Example interaction
 This example is illustrative only. The actual judge will use a hidden tree with n = 1000.
 
@@ -87,3 +76,17 @@ Additional clarifications
 - S must be non-empty (k ≥ 1).
 - If |S| = 1 with S = {x}, then Steiner(S) is the single vertex x. A query “? 1 v x” returns 1 if and only if v = x.
 - The final answer must describe a simple tree on vertices {1, 2, ..., n}. Edges can be in any order, but duplicates and self-loops are not allowed.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of Steiner-membership queries. Define the objective x=Q, its physical reference a=A=3000, and the lower-band calculation L=60*max(0,(1200000-Q)/1197000).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

@@ -87,15 +87,16 @@ $\vdots$
 </tbody>
 </table>
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $A$ be the total length of the set of adopted edges,
 $B$ be the total length of the optimal set of edges under the condition that the true length $l_i$ of every edge is known in advance (<a href="https://en.wikipedia.org/wiki/Minimum_spanning_tree">minimum spanning tree</a>).
-Then, you will get a score of $\mathrm{round}(10^8\times B/A)$.
+The raw task reward V is $\mathrm{round}(10^8\times B/A)$.
 When the set of adopted edges does not make the graph connected, your submission will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span>.
 Note that if your program terminates abnormally, it may be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> instead of <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Runtime Error">RE</span>.
 
-There are 150 test cases, and the score of a submission is the total score for each test case. If you get a result other than <span class='label label-success' data-toggle='tooltip' data-placement='top' title="Accepted">AC</span> for one or more test cases, the score of the submission will be zero. The highest score obtained during the contest time will determine the final ranking, and there will be no system test after the contest. If more than one participant gets the same score, the ranking will be determined by the submission time of the submission that received that score.
 
 Input Generation
 --------
@@ -124,3 +125,15 @@ Tools (Input generator and visualizer)
 - <a href="https://img.atcoder.jp/ahc007/a855b6a456c9892b747e147001b0f89.html?lang=en">Web version</a>: This is more powerful than the local version and can display animations.
 
 <font color="red">You are allowed to share output images (png or gif) of the provided visualizer for seed=0 on twitter during the contest.</font> You have to use the specified hashtag and public account. <a href="https://twitter.com/search?q=%23AHC007%20%23visualizer&src=typed_query&f=live">List of shared images.</a>
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Here E is the total actual length of selected edges, and M is the minimum spanning tree cost. Use physical reference a=A=1e8*M/R. The checker requires selected edges to connect the graph and rejects E<=0 before scoring; there is no valid zero-cost full-score branch for this task. For E>0 and L>60, take x=E, a=A, and r=a/x; award min(100,60+ln(r)). A nonpositive anchor has no defined positive-cost logarithmic comparison, so retain the existing nonzero-cost branch.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

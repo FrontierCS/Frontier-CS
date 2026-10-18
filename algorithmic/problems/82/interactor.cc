@@ -1,4 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
+
+// Continuous reference calibration; the performance anchor earns 60 points.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -55,7 +76,7 @@ int main(int argc, char* argv[]) {
 
     auto finalize_with_ratio = [&](double ratio, double unbounded_ratio, const string &fmt, auto... args) {
         string base = format(fmt.c_str(), args...);
-        quitp(ratio, "%s Ratio: %.4f, RatioUnbounded: %.4f", base.c_str(), ratio, unbounded_ratio);
+        quitp(ratio, "%s Ratio: %.12f, RatioUnbounded: %.12f", base.c_str(), ratio, unbounded_ratio);
     };
 
     while (true) {
@@ -87,9 +108,9 @@ int main(int argc, char* argv[]) {
                 quitf(_wa, "Invalid query: i == j (%d).", i);
             }
 
-            if (queries > QUERY_LIMIT) {
+            if (queries >= QUERY_LIMIT) {
                 cout << -1 << '\n' << flush;
-                finalize_with_ratio(0.0, 0.0, "Query limit exceeded: %d > %d.", queries, QUERY_LIMIT);
+                finalize_with_ratio(0.0, 0.0, "Query limit exceeded: attempted query %d > %d.", queries + 1, QUERY_LIMIT);
             }
 
             int answ = p[i] | p[j];
@@ -132,15 +153,11 @@ int main(int argc, char* argv[]) {
             double ai_score  = ai_raw_nonneg  / 10.0;
             double opt_score = opt_raw_nonneg / 10.0;
 
-            double ratio, unbounded_ratio = 1.0;
-            if (opt_score <= 0.0) {
-                ratio = (ai_score <= 0.0) ? 1.0 : 0.0;
-            } else {
-                ratio = ai_score / opt_score;
-                if (ratio < 0.0) ratio = 0.0;
-                unbounded_ratio = max(0.0, ratio);
-                if (ratio > 1.0) ratio = 1.0;
-            }
+            ensuref(optimal_queries < 4269, "Reference queries must be below the zero-score baseline");
+            double r = max(0.0, double(4269 - queries) / (4269 - optimal_queries));
+            double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0 * ratio, queries, optimal_queries, true) / 100.0;
+            double unbounded_ratio = ratio;
 
             finalize_with_ratio(ratio, unbounded_ratio,
                                 "Accepted. Queries used: %d. Your score = (4269 - %d) / 10 = %.1f. "

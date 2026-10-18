@@ -1,4 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+#include <algorithm>
+// Historical calibration; the physical-objective mapping is applied below.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <iostream>
 #include <vector>
 #include <set>
@@ -30,11 +54,11 @@ double dist_cost(int x1, int y1, int x2, int y2, char t1, char t2) {
     long long dx = (long long)x1 - x2;
     long long dy = (long long)y1 - y2;
     double r = (double)(dx * dx + dy * dy);
-    
+
     string tc = "";
     tc += t1;
     tc += t2;
-    
+
     if (tc == "RS" || tc == "SR" || tc == "SS") {
         return r * 0.8;
     }
@@ -48,21 +72,21 @@ double dist_cost(int x1, int y1, int x2, int y2, char t1, char t2) {
 class DSU {
 public:
     vector<int> parent;
-    
+
     DSU(int n) {
         parent.resize(n);
         for (int i = 0; i < n; i++) {
             parent[i] = i;
         }
     }
-    
+
     int find(int u) {
         if (parent[u] != u) {
             parent[u] = find(parent[u]);
         }
         return parent[u];
     }
-    
+
     void merge(int u, int v) {
         int a = find(u), b = find(v);
         if (a != b) {
@@ -75,7 +99,7 @@ public:
 double base_mst(const vector<Entity>& entities) {
     int n = entities.size();
     vector<Edge> edges;
-    
+
     // Build edges between non-relay nodes only
     for (int i = 0; i < n; i++) {
         if (entities[i].type == 'C') continue;
@@ -89,13 +113,13 @@ double base_mst(const vector<Entity>& entities) {
             edges.push_back({i, j, cost});
         }
     }
-    
+
     sort(edges.begin(), edges.end());
-    
+
     DSU dsu(n);
     double total_cost = 0.0;
     int cnt = 0;
-    
+
     for (const auto& e : edges) {
         if (dsu.find(e.u) != dsu.find(e.v)) {
             dsu.merge(e.u, e.v);
@@ -103,22 +127,22 @@ double base_mst(const vector<Entity>& entities) {
             cnt++;
         }
     }
-    
+
     return total_cost;
 }
 
 // Calculate actual network cost
-double fitness(const set<int>& relay_nodes, const vector<pair<int, int> >& edges, 
+double fitness(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
                const vector<Entity>& entities) {
     map<int, int> id_to_idx;
     for (size_t i = 0; i < entities.size(); i++) {
         id_to_idx[entities[i].id] = i;
     }
-    
+
     double total_cost = 0.0;
     for (const auto& e : edges) {
         // These should have been verified in verify(), but check for safety
-        if (id_to_idx.find(e.first) == id_to_idx.end() || 
+        if (id_to_idx.find(e.first) == id_to_idx.end() ||
             id_to_idx.find(e.second) == id_to_idx.end()) {
             return 1e18; // Invalid edge
         }
@@ -131,7 +155,7 @@ double fitness(const set<int>& relay_nodes, const vector<pair<int, int> >& edges
         );
         total_cost += cost;
     }
-    
+
     return total_cost;
 }
 
@@ -140,14 +164,14 @@ bool verify(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
             const vector<Entity>& entities) {
     set<int> ids;
     set<int> relay_ids;
-    
+
     for (const auto& e : entities) {
         if (e.type == 'C') {
             relay_ids.insert(e.id);
         }
         ids.insert(e.id);
     }
-    
+
     // Check relay_nodes are valid relay nodes
     set<int> dup_ids;
     for (int id : relay_nodes) {
@@ -159,7 +183,7 @@ bool verify(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
         }
         dup_ids.insert(id);
     }
-    
+
     // Check edges
     for (const auto& e : edges) {
         if (e.first == e.second) {
@@ -169,18 +193,18 @@ bool verify(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
             return false;
         }
         // Cannot connect two relay nodes
-        if (relay_ids.find(e.first) != relay_ids.end() && 
+        if (relay_ids.find(e.first) != relay_ids.end() &&
             relay_ids.find(e.second) != relay_ids.end()) {
             return false;
         }
     }
-    
+
     // Check connectivity using DSU
     map<int, int> id_to_idx;
     for (size_t i = 0; i < entities.size(); i++) {
         id_to_idx[entities[i].id] = i;
     }
-    
+
     int m = entities.size();
     DSU dsu(m);
     for (const auto& e : edges) {
@@ -188,7 +212,7 @@ bool verify(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
         int idx2 = id_to_idx[e.second];
         dsu.merge(idx1, idx2);
     }
-    
+
     if (m > 0) {
         // All non-relay nodes must be connected
         // Find first non-relay node as reference
@@ -211,17 +235,17 @@ bool verify(const set<int>& relay_nodes, const vector<pair<int, int> >& edges,
             }
         }
     }
-    
+
     return true;
 }
 
 int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
-    
+
     // Read input
     int n = inf.readInt();  // Number of robots
     int k = inf.readInt();  // Number of optional relays
-    
+
     vector<Entity> entities;
     for (int i = 0; i < n + k; i++) {
         int id = inf.readInt();
@@ -231,7 +255,7 @@ int main(int argc, char* argv[]) {
         char type = type_str[0];
         entities.push_back({id, x, y, type});
     }
-    
+
     // Read output - first line: relay nodes
     string relay_line = ouf.readLine();
     if (relay_line.empty()) {
@@ -267,7 +291,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
+
     // Read output - second line: edges
     string edge_line = ouf.readLine();
     // Remove trailing whitespace
@@ -305,7 +329,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
+
     // Verify solution
     if (!verify(relay_nodes, edges, entities)) {
         quitf(_wa, "Invalid solution: relay nodes or edges are not valid, or network is not connected");
@@ -314,34 +338,23 @@ int main(int argc, char* argv[]) {
     // Calculate base MST cost (without relays)
     double base_cost = d/9*8;
     double zero_cost = d;
-    
+
     // Calculate actual network cost
     double actual_cost = fitness(relay_nodes, edges, entities);
-    
+
     // Handle edge cases
-    if (actual_cost >= 1e17 || actual_cost -1e-6 <0) {
+    if (actual_cost >= 1e17 || actual_cost < 0.0) {
         quitf(_wa, "Invalid solution: contains invalid edges");
     }
-    
-    // Calculate score ratio
-    // Score = base_cost / actual_cost
-    // If actual_cost <= base_cost, we get full score (1.0)
-    // If actual_cost > base_cost, score decreases
-    double score_ratio;
-    if (actual_cost <= base_cost) {
-        score_ratio = 1.0;  // Perfect or better solution
-    } else if (actual_cost >= zero_cost) {
-        score_ratio = 0.0;
-    } else {
-        score_ratio = min(1.0, (zero_cost-actual_cost) / (zero_cost-base_cost));
-    }
-    
-    // Ensure score is non-negative
-    score_ratio = max(0.0, score_ratio);
+
+    // Preserve the no-relay MST as the zero-score baseline.
+    double score_ratio = zero_cost > 0.0
+        ? reference_score((zero_cost-actual_cost)/(zero_cost-base_cost))
+        : (actual_cost == 0.0 ? 1.0 : 0.0);
+    score_ratio = natural_log_score(100.0L * (score_ratio), actual_cost, base_cost, true) / 100.0;
     double unbounded_ratio = score_ratio;
-    
-    quitp(score_ratio, "Value: %.4f. Ratio: %.4f, RatioUnbounded: %.4f", actual_cost, score_ratio, unbounded_ratio);
-    
+
+    quitp(score_ratio, "Value: %.12f. Ratio: %.12f, RatioUnbounded: %.12f", actual_cost, score_ratio, unbounded_ratio);
+
     return 0;
 }
-

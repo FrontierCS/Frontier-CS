@@ -26,3 +26,18 @@ Interaction
 To use a pen, output one line. First output 0 followed by a space, then output the number of the pen you want to use. After flushing your output, your program should read a single integer x, x = 0 means that the pen was already empty, x = 1 means the pen still had ink before consuming 1 unit of ink (can be empty now).
 
 If you want to select two pens, output one line. First output 1 followed by a space. Then output the number of those two pens, separated by a space. Note that they cannot be the same pen. After flushing your output, you should start processing the next test case (or end the code if there is no next test case).
+
+## Scoring
+
+Let x be c, the number of correct answers. t is the total number of answers requested. Zero correct answers do not earn 100. The physical reference (the 60-point level) is a=0.6*t. Define the lower-band continuation:
+
+    L(x) = 100*c/t.
+
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

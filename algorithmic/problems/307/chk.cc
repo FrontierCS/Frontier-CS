@@ -1,3 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+
+#include <algorithm>
+// Historical bounded base ratio; only its <=60-point branch is retained.
+static double bounded_base_ratio(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -117,8 +140,10 @@ int main(int argc, char* argv[]) {
 
     // quitp expects a value in [0,1]; the platform scales by 1e6 for the per-test score.
     // The "Ratio:" tag is parsed by the orchestrator.
+    ratio = bounded_base_ratio((double)ratio);
+    ratio = natural_log_score(100.0L * (ratio), C, (2.0L/3.0L)*C_base, true) / 100.0;
     quitp((double)ratio,
-          "Ratio: %.9Lf | C=%.9Lf C_base=%.9Lf",
+          "Ratio: %.12Lf | C=%.9Lf C_base=%.9Lf",
           ratio, C, C_base);
 
     return 0;

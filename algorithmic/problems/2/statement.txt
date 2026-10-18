@@ -6,8 +6,23 @@ There is a hidden permutation of n. Recall that a permutation of n is a sequence
 
 Each query must consist of a sequence (not necessarily a permutation) with n integers ranging from 1 to n (both inclusive). Each query is answered with an integer x, indicating the number of the positions where the corresponding element in Piggy's query sequence matches that of the hidden permutation. For example, if the hidden permutation is {1, 3, 4, 2, 5} and the sequence Piggy asks is {2, 3, 5, 2, 5}, he'll receive 3 as the answer.
 
-As Piggy is busy recently, he gives this problem to you. This problem is graded based on the number of queries you recieve. In order to receive any points, you must get better than a baseline of 10000 queries. After that, your answer will be compared to a solution best_queries.
-Your final score will be calculated as the average of 100 * clamp((10000 - your_queries)/(10000 - best_queries), 0, 1) across all cases
+As Piggy is busy recently, he gives this problem to you. This problem is graded based on the number of queries you use. You may make at most 10000 queries, and must use fewer than 10000 queries to receive positive points. Let best_queries be the query count of the reference solution, with 0 <= best_queries < 10000. The value 10000 is the zero-score baseline, not the reference.
+## Scoring
+
+Let x be Q, the number of queries. R is the comparison query count stored with the test, 0<=R<10000. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(10000-x)/(10000-R)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If a=0, the zero-cost rule still applies; positive x uses L(x). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Input
 

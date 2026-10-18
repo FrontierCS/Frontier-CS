@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+
+// Continuous reference calibration; the performance anchor earns 60 points.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -392,36 +414,11 @@ vector<Card> generate_deck_from_seed(uint64_t seed) {
     return deck;
 }
 
-int compute_points_from_W(double W) {
-    // piecewise linear to integer points in [0,100]
-    if (W <= 8.0) return 0;
-    if (W <= 11.0) {
-        double x = 13.3 * (W - 8.0);              // 0 -> 40 over (8,11]
-        return (int) llround(x);
-    }
-    if (W <= 14.0) {
-        double x = 40.0 + 14.0 * (W - 11.0);      // 40 -> 82 over (11,14]
-        return (int) llround(x);
-    }
-    if (W <= 20.0) {
-        double x = 82.0 + 3.0 * (W - 14.0);       // 82 -> 100 over (14,20]
-        return (int) llround(x);
-    }
-    return 100;
-}
-
-double compute_points_unbounded(double W) {
+double normalized_performance(double W) {
     if (W <= 8.0) return 0.0;
-    if (W <= 11.0) {
-        double x = 13.3 * (W - 8.0);
-        return (double) llround(x);
-    }
-    if (W <= 14.0) {
-        double x = 40.0 + 14.0 * (W - 11.0);
-        return (double) llround(x);
-    }
-    double x = 82.0 + 3.0 * (W - 14.0);
-    return (double) llround(x);
+    if (W <= 11.0) return (40.0 / 3.0) * (W - 8.0) / 100.0;
+    if (W <= 14.0) return (40.0 + 14.0 * (W - 11.0)) / 100.0;
+    return (82.0 + 3.0 * (W - 14.0)) / 100.0;
 }
 
 int main(int argc, char* argv[]) {
@@ -596,11 +593,9 @@ int main(int argc, char* argv[]) {
 
     double W = (double)total_delta_sum / (double)G;
     println(fmt1("SCORE", W));
-    int points = compute_points_from_W(W);
-    double ratio = points / 100.0;
-    double points_unbounded = compute_points_unbounded(W);
-    double ratio_unbounded = points_unbounded / 100.0;
-    quitp(ratio, "Average profit W: %.6f, points: %d, Ratio: %.4f, RatioUnbounded: %.4f",
-          W, points, ratio, ratio_unbounded);
+    double ratio = referenceScore(normalized_performance(W));
+    ratio = natural_log_score(100.0 * ratio, W, 20.0L, false) / 100.0;
+    quitp(ratio, "Average profit W: %.6f, points: %.9f, Ratio: %.12f, RatioUnbounded: %.12f",
+          W, 100.0 * ratio, ratio, ratio);
     return 0;
 }

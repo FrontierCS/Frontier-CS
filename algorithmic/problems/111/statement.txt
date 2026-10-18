@@ -27,3 +27,16 @@ Input
 Output
 4
 1 2 3 4
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+X is the submitted valid XOR-set size and R>0 is the size of the validated reference set. Define the objective x=X, its physical reference a=A=R, and the lower-band calculation L=60*X/R.
+
+```text
+P = L,                           if L <= 60
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero value of a maximizing objective is not a perfect solution and earns no special full-score award. The checker reports P/100.

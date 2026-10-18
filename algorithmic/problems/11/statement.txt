@@ -1,9 +1,9 @@
 # Palindrome Path
 
-**Input file:** standard input  
-**Output file:** standard output  
-**Time limit:** 1 second  
-**Memory limit:** 256 megabytes  
+**Input file:** standard input
+**Output file:** standard output
+**Time limit:** 1 second
+**Memory limit:** 256 megabytes
 
 ## Problem Description
 
@@ -13,8 +13,6 @@ The move sequence must be a palindrome. That is, if the sequence is \( M_1, M_2,
 
 Your task is to find such a palindrome move sequence that visits all blank cells and ends at the exit cell. If multiple solutions exist, print any one. If no solution exists, output "-1". You need to minimize the number of moves.
 
-Scoring:
-Clamp(1.0 - (your sequence length - bound) / bound, 0, 1) where bound is a defined reachable solution number
 
 ## Input Format
 
@@ -82,3 +80,19 @@ All blank cells are visited, and the path ends at (2,2).
 - The start cell is considered visited at the beginning.
 - If no moves are required (e.g., start and exit are the same, and only one blank cell), output an empty string.
 - Ensure the output sequence is a palindrome and satisfies the visiting condition.
+
+## Scoring
+
+Let x be L, the length of the palindrome walk. B=12*b*max(n,m), where b is the number of traversable cells. A valid impossibility certificate still receives 100 points. The physical reference (the 60-point level) is a=B. Define the lower-band continuation:
+
+    L(x) = 60*max(0,2-x/B).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

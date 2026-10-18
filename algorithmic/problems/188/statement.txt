@@ -14,19 +14,9 @@ You are NOT required to find the theoretically longest common subsequence (LCS).
 Due to the massive constraints (N, M <= 30,000,000), exact algorithms like O(NM) Dynamic Programming will exceed Time/Memory limits.
 Instead, you should try to maximize the length of your common subsequence Z (denoted as |Z|).
 
-Let:
-  L* = The length of the true optimal LCS (hidden).
-  L  = The length of the common subsequence found by your solution (|Z|).
-
-The score is defined as:
-  Score = (L / L*) * 100
-
-Thus:
-- Score = 100.0 means you found an optimal LCS.
-- Smaller L yields a smaller score.
-- Invalid solutions (where Z is not a subsequence of S1 or S2) receive score = 0.
-
-The value L* is known to the judge but not to the contestant.
+The judge stores a feasible common subsequence as a performance reference.
+Its length is not a certified upper bound on the LCS. Matching its length earns
+60 points, and longer common subsequences continue to earn points.
 
 ## Input Format
 
@@ -50,19 +40,20 @@ Requirements:
 
 ## Scoring
 
-Let:
-  L  = Length of the output string Z.
-  L* = Optimal LCS length (hidden).
+The physical objective is common subsequence length L; larger is better. The physical reference is `a = R`; matching a positive reference earns 60 points.
 
-**Validity Check:**
-The judge will verify if Z is a subsequence of S1 AND S2 using a greedy linear scan.
-If the solution is invalid (e.g., characters in Z do not appear in valid relative order in S1 or S2):
-  Score = 0
+R is the positive length of the stored common-subsequence reference.
 
-Otherwise:
-  Score = (L / L*) * 100
+Define the historical low-score expression (in points):
 
-Higher score is better.
+    P_low = 60*L/R.
+
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
+
+    r = L / a
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Example
 
@@ -93,7 +84,7 @@ User output Z = "AC2E".
    Indices are increasing (0 < 2 < 3 < 4), so it is valid for S2.
 
 Length L = 4.
-Assuming the optimal LCS L* = 4, the Score = 4 / 4 * 100 = 100.0.
+If the reference length is R = 4, then r = 4/4 = 1 and S(r) = 60 points.
 
 ## Constraints
 

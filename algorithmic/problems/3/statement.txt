@@ -21,12 +21,12 @@ Input
 One line, contains two integers, subtask, n, representing the subtask ID and the length of the loop;
 
 Implementation Details
-To ask a query, output one line. First output a number L followed by a space, then print a sequence of L integers ranging from 1 to n separated by a space. 
+To ask a query, output one line. First output a number L followed by a space, then print a sequence of L integers ranging from 1 to n separated by a space.
 After flushing your output, your program should read a sequence of L integers, indicating whether there are adjacent pairs in S after each operation.
 Specifically, The system will maintain a set S, which is initially the result of the previous query (i.e. not reset), and sequentially scans each element u in this query:
 If u is not in S when scanned, perform an operation to light up u so that u is in S; if u is in S when scanned, perform an operation to extinguish u so that u is not in S. Then report an integer indicating whether there are adjacent pairs in S after this operation(0: does not exist; 1: exist).
 
-If you want to guess the permutation, output one line. First output -1 followed by a space, then print a permutation of n separated by a space, representing the arrangement of lamp holder numbers p1~pn. Since the ring has no starting point or direction, any cyclic shift of p1~pn or p1~pn is considered correct. After flushing your output, your program should exit immediately.
+If you want to guess the permutation, output one line. First output -1 followed by a space, then print a permutation of n separated by a space, representing the arrangement of lamp holder numbers p1~pn. Since the ring has no starting point or direction, any cyclic shift of p1,p2,...,pn or of the reversed order pn,p(n-1),...,p1 is considered correct. After flushing your output, your program should exit immediately.
 
 Note that the answer for each test case is pre-determined. That is, the interactor is not adaptive. Also note that your guess does not count as a query.
 
@@ -41,10 +41,22 @@ For a testcase, if your interaction process is illegal or the returned answer is
 
 Otherwise, record the total number of times you call query as t, and record the sum of the number of operations you perform each time when calling query as Q.
 
-Your score ratio lambda will be calculated according to the following formula:
-lambda=max (0, 1-0.1 (f (t/18)+f (Q/ (1.5 * 10^7)))
-Where f (x)=min (max (log_2 (x), 0), 8)
-Then, if the subtask where this testcase is located has a maximum score of S, then you will get lambda * S.
+## Scoring
+
+Let x be (t+1)*(Q+1). t is the number of query batches and Q the total number of flips. The shifted product is intentional; it is not t*Q. The physical reference (the 60-point level) is a=19*15000001. Define the lower-band continuation:
+
+    L(x) = 60*max(0,1-0.1*log2(x/a)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if t=0 and Q=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the shifted composite objective x (division by e). The shifted product x is always positive. A correct direct answer with no batches and no flips has zero physical cost and receives 100; an empty batch still consumes a round and does not qualify. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 The total number of times you call query cannot exceed 10 ^ 7, and the sum of the number of operations you perform each time when calling 'query' cannot exceed 3 * 10 ^ 8.
 To prevent unexpected behavior caused by a large vector, you also need to ensure that the number of operations in a single query call always does not exceed 10 ^ 7.

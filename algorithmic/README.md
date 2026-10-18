@@ -4,6 +4,13 @@
 >
 > For model evaluation workflow, see [SUBMIT.md](../SUBMIT.md).
 
+### Scoring
+
+The active bank contains 180 problems. See the [scoring principles](../README.md#scoring-principles)
+for reference selection, the natural-log improvement bonus, and aggregation.
+Each problem's statement defines its objective, scoring units, lower-band rule,
+and degenerate cases.
+
 ### Problem Structure
 
 Each problem in `problems/{id}/` contains:

@@ -2,7 +2,7 @@ Problem Statement
 --------
 RectJoin is the following single-player game played with square grid paper and pencil.
 
-![example](./images/example.gif) 
+![example](./images/example.gif)
 
 Let $(0, 0)$ be the coordinates of the lower left corner of the grid paper, with the $x$-axis to the right and the $y$-axis to the top.
 The coordinates of the upper right corner of the grid paper are $(N-1, N-1)$.
@@ -20,7 +20,7 @@ Let $(c,c)=((N-1)/2,(N-1)/2)$ be the coordinates of the center of the graph pape
 We define the weight of each grid point as $w(x,y)=(x-c)^2 + (y-c)^2 + 1$ using the distance from the center.
 Let $S=\sum_{x=0}^{N-1}\sum_{y=0}^{N-1} w(x,y)$ be the sum of the weights of all grid points.
 Let $Q$ be the set of coordinates with dots in the final state (including the initially placed dots).
-Then you will get the following score.
+The raw task reward V, converted to final benchmark points in Scoring, is defined as follows.
 
 \\[\mathrm{round}\left(10^6 \cdot\frac{N^2}{M}\cdot\frac{\sum_{(x, y)\in Q} w(x, y)}{S}\right)\\]
 
@@ -33,23 +33,9 @@ Create a program to play the game to get as high a score as possible.
 - Similarly, $p_{i,k} (k=2,3,4)$ can be repeatedly chosen as $p_{j,k'} (k'=2,3,4)$ in $j(>i)$-th operation.
 - As stated in condition 2, there must be no other dots on the perimeter of the chosen rectangle, but conversely, you can choose a point on the perimeter of an already drawn rectangle as $p_{i,1}$ and place a dot on it.
 
-#### Number of test cases
-- Provisional test: 50
-- System test: 2000. We will publish <a href="https://img.atcoder.jp/ahc014/seeds.txt">seeds.txt</a> (sha256=907b41fcba240515612a21798a10b0df7dda744b1268b74b3bbd41b93a73095e) after the contest is over.
-- System test contains 125 inputs for each of $N=31,33,35,\cdots,61$.
-- The input of seed=0 is manually created and is not included in the provisional or system test.
-
-The score of a submission is the total scores for each test case.
-In the provisional test, if your submission produces illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The final ranking will be determined by the system test with more inputs which will be run after the contest is over.
-In the system test, if your submission produces illegal output or exceeds the time limit for some test cases, only the score for those test cases will be zero.
-The system test will be performed only for <font color="red"><strong>the last submission which received a result other than <span class="label label-warning" data-toggle="tooltip" data-placement="top" title="" data-original-title="Compilation Error">CE</span> </strong></font>.
-Be careful not to make a mistake in the final submission.
 
 #### About execution time
 Execution time may vary slightly from run to run.
-In addition, since system tests simultaneously perform a large number of executions, it has been observed that execution time increases by several percent compared to provisional tests.
-For these reasons, submissions that are very close to the time limit may result in <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> in the system test.
 Please measure the execution time in your program to terminate the process, or have enough margin in the execution time.
 
 
@@ -88,7 +74,6 @@ The order of the four points can be clockwise or counterclockwise, but $(x_{i,1}
 
 Input Generation
 --------
-The input of seed=0 is manually created and is not included in the provisional or system test.
 Let $\mathrm{rand}(L,U)$ be a function that generates a uniform random integer between $L$ and $U$, inclusive.
 
 #### Generation of $N$ and $M$
@@ -115,3 +100,13 @@ Do not share GIFs, output itself, scores for other seeds or mention solutions or
 <a href="https://twitter.com/search?q=%23AHC014%20%23visualizer&src=typed_query&f=live">List of shared images</a>
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the integer sum of the selected-point weights, D the sum of weights over all grid points, n the grid side length, and m the initial point count. Its physical reference is a=A=R*m*D/(1e6*n^2). When L>60, take x=X, a=A, and r=x/a; award min(100,60+ln(r)).
+
+The checker reports points/100.

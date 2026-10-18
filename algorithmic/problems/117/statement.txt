@@ -1,14 +1,14 @@
 Line
 
-The territory of country P is a square with side length 2 * 10^12.  
-The origin is placed at the center of the square, and a Cartesian coordinate system is established so that the sides of the square are parallel to the axes.  
+The territory of country P is a square with side length 2 * 10^12.
+The origin is placed at the center of the square, and a Cartesian coordinate system is established so that the sides of the square are parallel to the axes.
 Thus, the territory of country P is the region [-10^12, 10^12] × [-10^12, 10^12].
 
-There are N lines on this territory, each of the form y = a_i * x + b_i.  
-Both a_i and b_i are unknown integers between -10^4 and 10^4.  
+There are N lines on this territory, each of the form y = a_i * x + b_i.
+Both a_i and b_i are unknown integers between -10^4 and 10^4.
 You do not know their values.
 
-Your task is to recover all these N lines.  
+Your task is to recover all these N lines.
 To do this, you may ask the king up to Q_max queries of the following type:
 
 - You give a point (x, y), and the king tells you the sum of the distances from (x, y) to all N lines.
@@ -21,13 +21,13 @@ The only line of input contains one integer n.
 
 Implementation details
 
-You may issue queries by writing to standard output lines of the form 
+You may issue queries by writing to standard output lines of the form
 
     ? x y
 
-This query sends the interactor a query point (x, y).  
+This query sends the interactor a query point (x, y).
 You must ensure that (x, y) is inside the region [-10^12, 10^12] × [-10^12, 10^12], x and y do not have to be integers.
-The interactor returns the sum of distances from (x, y) to all N lines.  
+The interactor returns the sum of distances from (x, y) to all N lines.
 You may call this function at most Q_max times.
 
 You must also make a guess exactly once of the form
@@ -36,22 +36,25 @@ You must also make a guess exactly once of the form
 
 You may output the lines in any order.
 
-Subtasks and scoring
-
-If your program fails the time limit (1.0 s), memory limit (256 MiB),  
-or produces wrong output, the score for that test point is 0.
-
-Otherwise, let Q be the number of queries you made and S be the full score of that test point:
-
-- If Q > Q_max, score = 0.
-- If Q_min < Q <= Q_max, score = S * (1 - 0.7 * (Q - Q_min) / (Q_max - Q_min)).
-- If Q <= Q_min, score = S.
-
 Constraints:
-1 <= N <= 100  
--10^4 <= a_i, b_i <= 10^4  
+1 <= N <= 100
+-10^4 <= a_i, b_i <= 10^4
 Q_max = 10^4, Q_min = 402
 No two lines are parallel.
 
-Time limit: 1 second  
+Time limit: 1 second
 Memory limit: 256 MB
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of distance queries. Define the objective x=Q, its physical reference a=A=402, and the lower-band calculation L=60*max(0,1-0.7*(Q-402)/9598).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

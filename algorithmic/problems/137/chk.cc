@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+
+// Continuous reference calibration; the performance anchor earns 60 points.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -158,18 +180,17 @@ int main(int argc, char* argv[]) {
     int part_score = score_on_grid(part, t, seqs);
     int opt_score  = score_on_grid(opt,  t, seqs);
 
-    // ratio
-    double score_ratio, unbounded_ratio;
-    if (opt_score == 0) {
-        score_ratio = (part_score == 0 ? 1.0 : 0.0);
-        unbounded_ratio = score_ratio;
+    // A reference that succeeds on every trial is a true performance maximum.
+    double score_ratio;
+    if (opt_score == t || opt_score == 0) {
+        score_ratio = double(part_score) / t;
     } else {
-        score_ratio = (double)part_score / (double)opt_score;
-        if (score_ratio < 0.0) score_ratio = 0.0;
-        unbounded_ratio = score_ratio;
-        if (score_ratio > 1.0) score_ratio = 1.0;
+        score_ratio = referenceScore(double(part_score) / opt_score);
     }
+    double unbounded_ratio = score_ratio;
+    score_ratio = natural_log_score(100.0 * score_ratio, part_score, (opt_score == 0 || opt_score == t) ? 0.6L*t : (long double)opt_score, false) / 100.0;
+    unbounded_ratio = score_ratio;
 
     long long participant_value = part_score; // match required message format
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", participant_value, score_ratio, unbounded_ratio);
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", participant_value, score_ratio, unbounded_ratio);
 }

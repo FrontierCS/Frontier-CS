@@ -15,7 +15,7 @@ More formally, let your answer be ans and the number of divisors of X be d, then
 You can make at most 100 queries. One query consists of one integer 1 ≤ Q ≤ 10^18. In response, you will get gcd(X, Q) — the greatest common divisor of X and Q.
 
 The number X is fixed before all queries. In other words, interactor is not adaptive.
-Let's call the process of guessing the number of divisors of number X a game. In one test you will have to play T independent games, that is, guess the number of divisors T times for T independent values of X. Let q be the maximum number of queries you asked among all games, your score will be (100 - q) / 100.
+Let's call the process of guessing the number of divisors of number X a game. In one test you will have to play T independent games, that is, guess the number of divisors T times for T independent values of X. The score uses the maximum query count across games, as defined in Scoring.
 
 Input
 
@@ -73,3 +73,17 @@ Let's look at the example.
 In the first game X = 998244353 is hidden. Would be hard to guess this, right? This number is prime, so the number of its divisors is 2. The solution has made several random queries, and all the responses turned out to be 1 (strange things, not even one of three random numbers is divisible by 998244353). It's fare to assume that the hidden number doesn't have many divisors, so the solution has answered 5. Why not. This answer will be considered correct since | 5 - 2 | = 3 ≤ 7.
 In the second game X = 4,194,304 = 2^22 is hidden, it has 23 divisors. The solution has made queries 1024 = 2^10, 1,048,576 =2^20, 1,073,741,824 = 2^30 and got responses 1024 = 2^10, 1,048,576 =2^20, 4,194,304 = 2^22, respectively. Then the solution got completely confused and answered the answer to The Ultimate Question of Life, the Universe, and Everything.
 This answer will be considered correct since 1/2 ≤ 42 / 23 ≤ 2.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the maximum query count across the games in this file; every answer must satisfy the allowed error. Define the objective x=Q, its physical reference a=A=40, and the lower-band calculation L=100*(1-Q/100).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. Use the maximum count across games, not an average. The checker reports P/100.

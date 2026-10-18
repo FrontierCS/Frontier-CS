@@ -27,17 +27,12 @@ Note that any points lying on the edges of the polygon are considered to be insi
 4. The polygon must not self-intersect: non-adjacent edges must not share any points, and adjacent edges must only meet at their endpoints.
 
 
-
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $a$ be the total number of mackerels inside the polygon and $b$ be the total number of sardines inside the polygon.
-Then, you will obtain the score of $\max(0, a - b + 1)$.
-
-There are $150$ test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
-
+The raw task reward V is $\max(0, a - b + 1)$.
 
 
 Input
@@ -81,9 +76,6 @@ If multiple solutions are output, only the last one is used for scoring.
 You can compare multiple solutions using the web version of the visualizer.
 
 
-
-
-
 Input Generation
 --------
 - $\mathrm{rand}(L, U)$: Generates a random integer uniformly distributed between $L$ and $U$ (inclusive).
@@ -107,7 +99,6 @@ Repeat the following process $N$ times to generate the coordinates of $N$ macker
 After generating the coordinates of mackerels, generate the coordinates of sardines in the same way.
 
 
-
 Tools (Input generator and visualizer)
 --------
 - <a href="https://img.atcoder.jp/ahc039/KNtTkgAy.html?lang=en">Web version</a>: This is more powerful than the local version providing animations.
@@ -115,3 +106,15 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc039/KNtTkgAy_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the number of desired fish inside the net minus the number of undesired fish inside it. The raw reward V=max(0,1+X) is used only for the lower-band gate. For L>60 and positive X and R-1, take x=X, a=R-1, and r=x/a; award min(100,60+ln(r)). Negative or zero net yield is not a perfect solution. Whenever L<=60 its lower-band score is preserved; exceptional nonpositive-reference cases follow the calibration fallback below. If the stored reference has R=1, use the zero-reference fallback defined below rather than divide by a zero anchor.
+
+When the physical reference a=R-1 is nonpositive, no ratio to a positive physical reference exists. Preserve L when L<=60; above that threshold use calibration improvement r0=(V-B)/(R-B)>1 and award 60+ln(r0) points. This explicit fallback has natural-log coefficient 1, but r0 measures calibrated reward improvement, not a physical target ratio.
+
+The checker reports points/100.

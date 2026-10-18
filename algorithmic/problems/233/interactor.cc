@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 // Snake interactor (Testlib)
 // Build: g++ -std=gnu++17 -O2 -pipe -static -s -o interactor interactor.cc
 // Run: ./interactor --inf=instance.txt --ans=best.txt -- ./solution
@@ -43,6 +59,8 @@
 #include <string>
 #include <climits>
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 
 // ---------- helpers ----------
 static inline bool parse_ll(const string& s, long long& x) {
@@ -84,38 +102,17 @@ int main(int argc, char* argv[]) {
 
     auto finalize_with_ratio = [&](double ratio, double unbounded_ratio, const string &fmt, auto... args) {
         string base = format(fmt.c_str(), args...);
-        quitp(ratio, "%s Ratio: %.6f, RatioUnbounded: %.6f", base.c_str(), ratio, unbounded_ratio);
+        quitp(ratio, "%s Ratio: %.12f, RatioUnbounded: %.12f", base.c_str(), ratio, unbounded_ratio);
     };
 
     auto compute_final_score = [&]() -> pair<double, double> {
-        double your_score;
-        if (total_cost <= COST_THRESHOLD_LOW) {
-            your_score = 100.0;
-        } else if (total_cost >= COST_THRESHOLD_HIGH) {
-            your_score = 0.0;
-        } else {
-            your_score = 100.0 * (COST_THRESHOLD_HIGH - total_cost) / (COST_THRESHOLD_HIGH - COST_THRESHOLD_LOW);
-        }
-
-        double best_score;
-        if (optimal_cost <= COST_THRESHOLD_LOW) {
-            best_score = 100.0;
-        } else if (optimal_cost >= COST_THRESHOLD_HIGH) {
-            best_score = 0.0;
-        } else {
-            best_score = 100.0 * (COST_THRESHOLD_HIGH - optimal_cost) / (COST_THRESHOLD_HIGH - COST_THRESHOLD_LOW);
-        }
-
-        double ratio, unbounded_ratio;
-        if (best_score <= 0.0) {
-            ratio = (your_score <= 0.0) ? 1.0 : 0.0;
-            unbounded_ratio = ratio;
-        } else {
-            ratio = your_score / best_score;
-            if (ratio < 0.0) ratio = 0.0;
-            unbounded_ratio = ratio;
-            if (ratio > 1.0) ratio = 1.0;
-        }
+        // The shipped zero reference costs are placeholders. Use the explicit
+        // 500-cost performance target; zero cost is the natural optimum.
+        double r = max(0.0, (COST_THRESHOLD_HIGH - total_cost) /
+                               (COST_THRESHOLD_HIGH - COST_THRESHOLD_LOW));
+        double ratio = referenceScore(r);
+        ratio = natural_log_score(100.0L * (ratio), total_cost, COST_THRESHOLD_LOW, true) / 100.0;
+        double unbounded_ratio = ratio;
         return {ratio, unbounded_ratio};
     };
 
@@ -285,10 +282,10 @@ int main(int argc, char* argv[]) {
         your_score = 100.0 * (COST_THRESHOLD_HIGH - total_cost) / (COST_THRESHOLD_HIGH - COST_THRESHOLD_LOW);
     }
 
+    your_score = 100.0 * ratio;
     finalize_with_ratio(ratio, unbounded_ratio,
-                        "Accepted. Total queries: %d. Total cost: %.6f. Your score: %.2f",
+                        "Accepted. Total queries: %d. Total cost: %.12f. Your score: %.2f",
                         total_queries, total_cost, your_score);
 
     return 0;
 }
-

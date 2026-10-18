@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <cassert>
 using namespace std;
 int q[1100];
@@ -26,7 +48,7 @@ int main(int argc, char* argv[]) {
     int ans_a=ans.readInt(),ans_b=ans.readInt();
     if(ans_a>ans_b) swap(ans_a, ans_b);
     assert(valid_pos(ans_a) && valid_pos(ans_b));
-    
+
     println(R,H);
     while(true){
         char ch=ouf.readChar();
@@ -60,8 +82,9 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-    double unbounded_ratio=cal_score(query_count);
-    double score_ratio = std::min(1.0, unbounded_ratio);
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", (long long)(score_ratio*100), score_ratio, unbounded_ratio);
+    double score_ratio = reference_score(cal_score(query_count));
+    score_ratio = natural_log_score(100.0 * score_ratio, query_count, 26.0L, true) / 100.0;
+    double unbounded_ratio = score_ratio;
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", (long long)(score_ratio*100), score_ratio, unbounded_ratio);
     return 0;
 }

@@ -1,6 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
+
+static double referenceScore(long long moves) {
+    const double r = max(0.0, double(moves) / 63000.0);
+    return 0.6 * r;
+}
 
 struct State {
     int px, py; // player
@@ -211,9 +231,9 @@ int main(int argc, char* argv[]) {
 
 
     long long score = bestMoves;
-    double score_ratio = bestMoves <= 0 ? 0.0 : (double)bestMoves / 63000.0;
+    double score_ratio = referenceScore(bestMoves);
+    score_ratio = natural_log_score(100.0 * score_ratio, bestMoves, 63000, false) / 100.0;
     double unbounded_ratio = score_ratio;
-    if (score_ratio > 1.0) score_ratio = 1.0;
 
-    quitp(score_ratio, "Value: %lld. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, unbounded_ratio);
+    quitp(score_ratio, "Value: %lld. Ratio: %.12f, RatioUnbounded: %.12f", score, score_ratio, unbounded_ratio);
 }

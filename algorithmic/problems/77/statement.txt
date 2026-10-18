@@ -19,9 +19,23 @@ must process m wagers. For each of them, the solution must ﬁrst read a string 
 in which the i-th character denotes the guess of the i-th participant. Then, the solution must print Izzy’s
 guess as 0 or 1. Don’t forget to ﬂush the output after printing it! Then, the solution must read the actual
 outcome, also as 0 or 1, and then proceed to the next wager, if this wasn’t the last one.
-Suppose your solution has c wrong predictions, your score will be min((2*b-c)/b, 1)*100, where b is the smallest
-number of mistakes made by any other participant. If you . Note that if a solution outputs anything except 0 or
-1 for a wager, it will be considered incorrect even if it made no other mistakes.
+## Scoring
+
+Let x be c, your number of wrong predictions. b is the smallest number of mistakes made by another participant. If b=0, award 100 for c=0 and 0 otherwise. The physical reference (the 60-point level) is a=b. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(2*b-x)/b).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
+Any prediction other than 0 or 1 is invalid, regardless of the other predictions.
 There are 200 test cases in this problem.
 Example
 standard input standard output
@@ -39,7 +53,5 @@ standard input standard output
 1
 1
 Note
-In the example, the participants made 1, 2, and 3 mistakes respectively, thereforeb= 1(the smallest of
-these numbers). Izzy made 3 mistakes, which were not more than 1.3 ·b + 100 = 101.3, so these outputs
-are good enough to pass this test case (as are any other valid outputs).
+In the example, the participants made 1, 2, and 3 mistakes respectively, so b = 1. Izzy made 3 mistakes, giving L(3)=60*max(0,(2-3)/1)=0 and a score of 0 points.
 Page 12 of 14

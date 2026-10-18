@@ -33,12 +33,6 @@ and read the response (no output, just toggle).
 Cow the Nerd wins if he guesses the value of every node correctly (the values of the final tree,
 after performing the queries) within Q total queries. Can you help him win?
 
-Scoring
-If your solution makes at most n queries, you will receive 100 points.
-If it makes more than n+1000 queries, you will receive 0 points.
-If it makes x queries where n < x ≤ n+1000, your score will be linearly interpolated
-from 100 down to 0.
-
 Input
 The first line of the input contains a single integer t (1 ≤ t ≤ 100), the number of test cases.
 
@@ -93,3 +87,21 @@ output
 ! -1 -1 -1 -1
 ? 1 1 1
 ! -1 1 1 1 1 1 -1
+
+## Scoring
+
+Let x be Q, the query count in a subcase. n is the subcase size. The physical reference (the 60-point level) is a=n. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(n+1000-x)/1000).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their minimum.
+
+Across test files, use the arithmetic mean of the file scores.

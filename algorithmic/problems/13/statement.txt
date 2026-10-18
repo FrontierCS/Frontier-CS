@@ -37,3 +37,19 @@ standard output
 6 2
 4 2
 5 2
+
+## Scoring
+
+Let x be q, the number of turns used. R is the comparison turn count stored with the test, R<3000. The first turn is numbered 1. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(3000-x)/(3000-R)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If a=0, the zero-cost rule still applies; positive x uses L(x). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -104,14 +126,9 @@ int main(int argc, char* argv[]) {
 
         double B = computeEnergy(r, eu, ev, ew, p, q, baseline);
 
-        // Per-case: clamp((F+1)/(B+1), 0, 2)
-        // Normalize to [0,1] by dividing by 2 for aggregation via quitp
-        double ratio = (F + 1.0) / (B + 1.0);
-        if (ratio < 0.0) ratio = 0.0;
-        if (ratio > 2.0) ratio = 2.0;
-
-        // score_ratio in [0,1]
-        double score_ratio = ratio / 2.0;
+        double r_normalized = (F + 1.0) / (2.0 * (B + 1.0));
+        double score_ratio = referenceScore(r_normalized);
+        score_ratio = natural_log_score(100.0L * (score_ratio), F, 2.0L*B+1.0L, false) / 100.0;
         total_score_ratio += score_ratio;
     }
 
@@ -123,7 +140,7 @@ int main(int argc, char* argv[]) {
     // avg_ratio in [0,1]; quitp requires value in [0,1]
     double avg_ratio = total_score_ratio / (double)t;
     if (avg_ratio < 0.0) avg_ratio = 0.0;
-    if (avg_ratio > 1.0) avg_ratio = 1.0;
 
-    quitp(avg_ratio, "Ratio: %f", avg_ratio);
+
+    quitp(avg_ratio, "Ratio: %.12f, RatioUnbounded: %.12f", avg_ratio, avg_ratio);
 }

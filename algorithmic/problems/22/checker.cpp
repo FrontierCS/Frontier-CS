@@ -1,4 +1,24 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -25,7 +45,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i <= N; ++i) if (deg[i] == 1) leaves.push_back(i);
     sort(leaves.begin(), leaves.end());
     int L = (int)leaves.size();
-//    for (auto x: leaves) cerr << x << " "; cerr << endl; 
+//    for (auto x: leaves) cerr << x << " "; cerr << endl;
     if (L >= 2) {
         for (int i = 0; i < L; ++i) {
             int u = leaves[i], v = leaves[(i+1) % L];
@@ -117,10 +137,11 @@ int main(int argc, char* argv[]) {
         if (cnt != (int)nodes.size()) quitf(_wa, "S_%d is not connected in new tree (%d of %d reachable)", j, cnt, (int)nodes.size());
     }
 
-	double ratio = max(0.0, min(1.0, 1.0 * (5 * N - K) / 2 * N));
-    double unbounded_ratio = max(0.0, 1.0 * (5 * N - K) / 2 * N);
+	double r = max(0.0, (5.0 * N - K) / (2.0 * N));
+	double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0 * ratio, K, 3.0L*N, true) / 100.0;
+    double unbounded_ratio = ratio;
 	char mes[128];
-	sprintf(mes, "Ratio: %lf, RatioUnbounded: %lf", ratio, unbounded_ratio);
+	sprintf(mes, "Ratio: %.12lf, RatioUnbounded: %.12lf", ratio, unbounded_ratio);
 	quitp(ratio, "%s", mes);
 }
-

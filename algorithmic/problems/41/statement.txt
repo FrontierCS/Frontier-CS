@@ -25,14 +25,20 @@ V \;=\; \text{length}(\text{BSU}) \times \sum_{i=1}^{k} a_i \;=\; k \times \Big(
 \]
 
 ## Scoring
-We compare your objective value \(V_{\text{you}}\) with a fixed baseline heuristic’s value \(V_{\text{base}}\) on the same test. There is **no** best/optimal reference in scoring.
 
-Your score for a test is:
-\[
-\text{score} \;=\; 100 \times \min\!\left(\frac{V_{\text{you}}}{1.05 \times V_{\text{base}}},\, 1\right).
-\]
+Let x be V=k*sum(a_i). B is k*sum(a_i) for the stored comparison construction. Its value is positive on valid tests. The physical reference (the 60-point level) is a=1.05*B. Define the lower-band continuation:
 
-Thus, reaching \(1.05 \times V_{\text{base}}\) yields a score of 100. Your final score is the average over all tests. Invalid outputs (violating constraints) receive 0 for that test.
+    L(x) = 60*x/a.
+
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 ## Time limit
 1 second

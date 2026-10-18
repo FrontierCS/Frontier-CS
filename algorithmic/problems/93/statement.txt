@@ -56,15 +56,6 @@ Protocol Requirements (binding)
 • Each query (“?” line) will be processed in O(n) time on the judge side.
 • The sequence in a “?” query can be any subset order (no duplicates required to cover all nodes).
 
-Scoring (0–100 scale based on number of queries)
-Let T be the number of queries you print (the number of lines beginning with “?”).
-• If T ≤ 45,000 → score = 100
-• If T > 200,000 → score = 0
-• Otherwise (45,000 < T ≤ 200,000) → use a smooth linear scale strictly inside (0, 100):
-    score = clamp(0.01, 99.99, 100 * (200000 - T) / 155000)
-  where clamp(a, b, x) = min(b, max(a, x)).
-  (This yields 99.99 when T is just above 45,000, and 0.01 when T is 200,000.)
-
 Constraints (single overall setting; no subtasks beyond the original hardest setting)
 • n ≤ 3000
 • Node labels are 1..n
@@ -84,3 +75,17 @@ Program → Judge:
 
 Explanation of the sample
 The query “? 2 2 3” returns 2, implying that nodes 2 and 3 can both be taken simultaneously by the greedy, so neither is an ancestor of the other; since every non-leaf has ≥ 2 children and n = 3, this suggests both 2 and 3 are children of 1. The final answer line “! 0 1 1” declares 1 as root (parent 0) and parents of 2 and 3 as 1, which the judge accepts.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of reconstruction queries. Define the objective x=Q, its physical reference a=A=45000, and the lower-band calculation L=60*max(0,(200000-Q)/155000).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

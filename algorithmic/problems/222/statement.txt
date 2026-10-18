@@ -36,24 +36,6 @@ Failure to handle this properly may result in unexpected behavior. You must flus
 
 The interactor is adaptive. The interactor does not necessarily start with a fixed graph at the beginning of the interaction. It only guarantees that there exists at least one hedgehog graph that satisfies all the provided responses and the input specification.
 
-Scoring
-
-The problem uses a continuous scoring system based on the number of queries Q used to solve each graph. The final score for a test is the average of the scores for each of the n graphs.
-
-For a single graph, let Q be the number of queries used. The score S(Q) is calculated as follows:
-
-1. If Q <= 500:
-   S(Q) = 100 points.
-
-2. If 500 < Q < 2500:
-   The score follows a quadratic curve (x^2), decreasing as Q increases:
-   S(Q) = floor( 100 * ( (2500 - Q) / 2000 )^2 )
-
-3. If Q >= 2500:
-   S(Q) = 0 points.
-
-Note: If you provide an incorrect cycle length, you will receive 0 points and a Wrong Answer verdict immediately.
-
 Example Input:
 1
 3
@@ -66,3 +48,18 @@ Example Output:
 ? 2 5
 ? 10 11
 ! 11
+
+Scoring
+
+The physical objective is per-graph query count Q_j; smaller is better. The physical reference is `a = 500`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(2500-Q_j)/2000)^2.
+
+A valid solution with `Q_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.

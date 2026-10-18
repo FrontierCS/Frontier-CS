@@ -94,14 +94,6 @@ The exact sequence of queries you make can differ; this is only an illustrative
 transcript of the format.
 
 -------------------------------------------------------------------------------
-Scoring
--------------------------------------------------------------------------------
-Let q be the number of queries you print (i.e., the number of lines of the form "? i").
-Your raw score for a test is:
-  5000 − q   (clamped below at 0 if needed).
-Your overall score is your average raw score divided by the best score.
-
--------------------------------------------------------------------------------
 Output
 -------------------------------------------------------------------------------
 Print exactly one final line of the form:
@@ -109,3 +101,17 @@ Print exactly one final line of the form:
 where i is the index (0 ≤ i < n) of the box containing the diamond.
 
 IMPORTANT NOTE: Make sure to print out answer at the end of your code. Even if you did not find the diamond, print any arbitrary index before exiting.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of prize queries and 0<=R<5000 is the stored reference query count. Define the objective x=Q, its physical reference a=A=R, and the lower-band calculation L=60*max(0,(5000-Q)/(5000-R)).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

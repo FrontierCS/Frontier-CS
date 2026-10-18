@@ -1,9 +1,29 @@
-#include "testlib.h"
 #include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Human reference earns 60 points; improvement remains uncapped.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
+#include "testlib.h"
 #include <vector>
 #include <array>
 #include <limits>
-#include <algorithm>
 #include <string>
 
 using namespace std;
@@ -104,17 +124,11 @@ int main(int argc, char* argv[]) {
     double r_geom = std::min(d_face, r_pair);
     if (!std::isfinite(r_geom) || r_geom < 0) r_geom = 0.0;
 
-    // Scoring
-    double score = 0.0, unbounded_score = 0.0;
-    const double EPS_DEN = 1e-15;
-    if (best <= baseline + EPS_DEN) {
-        score = (r_geom + 1e-18 >= best) ? 1.0 : 0.0;
-    } else {
-        score = (r_geom - baseline) / (best - baseline);
-        unbounded_score = std::max(0.0, score);
-        if (score < 0.0) score = 0.0;
-        if (score > 1.0) score = 1.0;
-    }
-
-    quitp(score, "Radius: %.12f. Ratio: %.6f, RatioUnbounded: %.6f", r_geom, score, unbounded_score);
+    // Radius above baseline, normalized to the human reference improvement.
+    double performance=0.0;
+    if(best<=baseline+1e-15) performance=(r_geom+1e-18>=best)?1.0:0.0;
+    else performance=std::max(0.0,(r_geom-baseline)/(best-baseline));
+    double score=calibrated(performance);
+    score = natural_log_score(100.0 * score, r_geom, best, false) / 100.0;
+    quitp(score,"Radius: %.12f. Ratio: %.12f, RatioUnbounded: %.12f",r_geom,score,score);
 }

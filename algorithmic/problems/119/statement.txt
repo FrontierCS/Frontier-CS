@@ -19,11 +19,11 @@ efficient enough, you cannot ask more than Qₘₐₓ = 600 queries.
 
 Implementation details
 
-This is an interactive problem. As usual, you should submit a source code file that can compile.  
+This is an interactive problem. As usual, you should submit a source code file that can compile.
 
 Initially, you should read an integer n, the number of operators.
 
-You may issue queries by writing to standard output lines of the form  
+You may issue queries by writing to standard output lines of the form
 
 ? a₀ a₁ … aₙ
 
@@ -42,9 +42,18 @@ Remember to flush after your output.
 Subtasks
 
 -   For all data, 1 ≤ n ≤ 600.
--   Let your program make Q queries:
-    -   If your program exceeds time limit, memory limit, or returns
-        incorrect answer → score=0.
-    -   Otherwise, your score depends on Q:
-        -   score(Q) = 41 / (Q + 1)
-        -   In other words, a solution with Q ≤ 40 is awarded the full score.
+-   Exceeding a time, memory, or query limit, or returning an incorrect answer, receives zero.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of queries. Define the objective x=Q, its physical reference a=A=40, and the lower-band calculation L=60*41/(Q+1).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The +1 shift is used only in L, not in the logarithm. The checker reports P/100.

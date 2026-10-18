@@ -29,11 +29,19 @@ Limits
 - Time limit: 5 seconds per test.
 - Memory limit: 1024 MB.
 
-Scoring
-- Let used be the number of QUERY calls you made for the current test.
-- Let correct be the true k-th smallest value among all 50000 entries.
-- If your final ans equals correct, your score is:
-    if used ≤ n: 1.0
-    else if used ≥ n*n: 0.0
-    else: (50000 - used) / (50000 - n)
-  Otherwise, your score is 0.0.
+
+## Scoring
+
+Let x be Q, the number of queries. B is the query limit for the instance and n is its matrix size. The physical reference (the 60-point level) is a=n. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(B-x)/(B-n)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

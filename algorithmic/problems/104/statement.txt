@@ -15,7 +15,7 @@ Mr. 1048576 is willing to mark at most 2 students as absent (though he knows tha
 Interaction
 First read a line containing a single integer t (1≤t≤2048) denoting the number of independent test cases that you must solve.
 For each test case, first read a line containing a single integer n (5≤n≤10^5). Then you may ask up to 2* ⌈log_{1.116}n⌉ queries.
-Your score is inversely linear related to the max number of queries.
+Your score depends on the query count as specified below.
 To ask a query, print a single line in the format "? l r" (without quotes) (1≤l≤r≤n). Then read a single line containing a single integer x (r−l≤x≤r−l+1) denoting the number of students who raised their hands corresponding to the query.
 To mark a student as absent, print a single line in the format "! a" (without quotes) (1≤a≤n). Then read a single integer y (y∈{0,1}). If the student with roll number a was absent, y=1, else, y=0. Note that this operation does not count as a query but you can do this operation at most 2 times.
 To end a test case, print a single line in the format "#" (without quotes). Then you must continue solving the remaining test cases.
@@ -71,4 +71,10 @@ output
 ! 4
 #
 
+## Scoring
 
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+For subcase j, let Q_j be its query count and L_j>1 its query limit. Define the per-subcase physical reference a_j=A_j=0.4*L_j+0.6 and B_j=100*min(1,max(0,(L_j-Q_j)/(L_j-1))). Guess actions are not queries.
+
+For a valid subcase, award 100 if Q_j=0; otherwise award B_j when B_j<=60, and min(100,60+ln(r_j)) when B_j>60, where x_j=Q_j and r_j=a_j/x_j. The file score is the minimum subcase award. A failed subcase gives zero for the file. The checker reports the file score divided by 100.

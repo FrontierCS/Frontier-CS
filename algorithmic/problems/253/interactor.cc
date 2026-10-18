@@ -1,3 +1,21 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
 #include "testlib.h"
 #include <iostream>
 #include <vector>
@@ -7,6 +25,12 @@
 #include <cmath>
 #include <algorithm>
 #include <queue>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 using namespace std;
 
 static inline string trim_str(const string &s) {
@@ -41,44 +65,44 @@ int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
     int t = inf.readInt();
-    
+
     // Store all test case data
     vector<int> all_n(t), all_m(t);
     vector<vector<pair<int,int>>> all_edges(t);
     vector<vector<int>> all_repaired(t); // which roads are repaired
-    
+
     for (int tc = 0; tc < t; tc++) {
         int n = inf.readInt();
         int m = inf.readInt();
         all_n[tc] = n;
         all_m[tc] = m;
-        
+
         all_edges[tc].resize(m);
         for (int i = 0; i < m; i++) {
             int a = inf.readInt();
             int b = inf.readInt();
             all_edges[tc][i] = {a, b};
         }
-        
+
         // Read repaired roads (1 = repaired, 0 = not)
         all_repaired[tc].resize(m);
         for (int i = 0; i < m; i++) {
             all_repaired[tc][i] = inf.readInt();
         }
     }
-    
+
     // Send t to contestant
     cout << t << endl;
     cout.flush();
-    
+
     double total_cost = 0.0;
-    
+
     for (int tc = 0; tc < t; tc++) {
         int n = all_n[tc];
         int m = all_m[tc];
         auto& edges = all_edges[tc];
         auto& repaired = all_repaired[tc];
-        
+
         // Send n, m
         cout << n << " " << m << endl;
         // Send edges
@@ -86,12 +110,12 @@ int main(int argc, char* argv[]) {
             cout << edges[i].first << " " << edges[i].second << endl;
         }
         cout.flush();
-        
+
         // Track blocked roads
         vector<bool> blocked(m, false);
         int request_count = 0;
         int max_requests = 100 * m;
-        
+
         // Process requests for this test case
         while (true) {
             string line;
@@ -103,7 +127,7 @@ int main(int argc, char* argv[]) {
                     quitf(_wa, "Unexpected EOF");
                 }
             } while (line.empty());
-            
+
             if (line[0] == '-') {
                 // Block road: - x
                 request_count++;
@@ -112,7 +136,7 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Too many requests");
                 }
-                
+
                 istringstream iss(line.substr(1));
                 int x;
                 if (!(iss >> x) || x < 1 || x > m) {
@@ -120,10 +144,10 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Invalid block request");
                 }
-                
+
                 blocked[x - 1] = true;
                 total_cost += 2.0;
-                
+
             } else if (line[0] == '+') {
                 // Unblock road: + x
                 request_count++;
@@ -132,7 +156,7 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Too many requests");
                 }
-                
+
                 istringstream iss(line.substr(1));
                 int x;
                 if (!(iss >> x) || x < 1 || x > m) {
@@ -140,16 +164,16 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Invalid unblock request");
                 }
-                
+
                 if (!blocked[x - 1]) {
                     cout << -1 << endl;
                     cout.flush();
                     quitf(_wa, "Unblocking non-blocked road %d", x);
                 }
-                
+
                 blocked[x - 1] = false;
                 total_cost += 2.0;
-                
+
             } else if (line[0] == '?') {
                 // Query: ? k y1 y2 ... yk
                 request_count++;
@@ -158,7 +182,7 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Too many requests");
                 }
-                
+
                 istringstream iss(line.substr(1));
                 int k;
                 if (!(iss >> k) || k < 1 || k > n) {
@@ -166,7 +190,7 @@ int main(int argc, char* argv[]) {
                     cout.flush();
                     quitf(_wa, "Invalid query k");
                 }
-                
+
                 vector<int> ys(k);
                 for (int i = 0; i < k; i++) {
                     if (!(iss >> ys[i]) || ys[i] < 1 || ys[i] > n) {
@@ -175,10 +199,10 @@ int main(int argc, char* argv[]) {
                         quitf(_wa, "Invalid query point");
                     }
                 }
-                
+
                 // Cost: 0.5 + log2(k + 1)
                 total_cost += 0.5 + log2((double)(k + 1));
-                
+
                 // Build connectivity using repaired AND unblocked roads
                 DSU dsu(n);
                 for (int i = 0; i < m; i++) {
@@ -186,21 +210,21 @@ int main(int argc, char* argv[]) {
                         dsu.unite(edges[i].first, edges[i].second);
                     }
                 }
-                
+
                 // Randomly select Y from ys
                 int Y = ys[rnd.next(0, k - 1)];
-                
+
                 // Select starting point s adversarially
                 // For adaptive behavior: choose s to minimize information given
                 // Simple strategy: check if all ys are in same component
                 // If so, return 1; otherwise, choose s from a different component
-                
+
                 // Find all components
                 set<int> y_components;
                 for (int y : ys) {
                     y_components.insert(dsu.find(y));
                 }
-                
+
                 // Choose s: if possible, from a component not containing any y
                 // Otherwise, from the component of Y
                 int s = Y; // default
@@ -211,12 +235,12 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                 }
-                
+
                 // Return reachability from s to Y
                 int result = dsu.connected(s, Y) ? 1 : 0;
                 cout << result << endl;
                 cout.flush();
-                
+
             } else if (line[0] == '!') {
                 // Answer: ! c1 c2 ... cm
                 istringstream iss(line.substr(1));
@@ -228,7 +252,7 @@ int main(int argc, char* argv[]) {
                         quitf(_wa, "Invalid answer format");
                     }
                 }
-                
+
                 // Check answer
                 bool correct = true;
                 for (int i = 0; i < m; i++) {
@@ -237,17 +261,17 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                 }
-                
+
                 if (!correct) {
                     cout << 0 << endl;
                     cout.flush();
                     quitf(_wa, "Wrong answer for test case %d", tc + 1);
                 }
-                
+
                 cout << 1 << endl;
                 cout.flush();
                 break; // Move to next test case
-                
+
             } else {
                 cout << -1 << endl;
                 cout.flush();
@@ -255,16 +279,17 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
+
     // Scoring
     const double BEST_COST = 50000.0;
     const double WORST_COST = 150000.0;
-    
-    double score_ratio = max(0.0, min(1.0, (WORST_COST - total_cost) / (WORST_COST - BEST_COST)));
-    double unbounded_ratio = max(0.0, (WORST_COST - total_cost) / (WORST_COST - BEST_COST));
-    
-    quitp(score_ratio, "Cost: %.2f. Ratio: %.4f, RatioUnbounded: %.4f",
+
+    double score_ratio = calibrated((WORST_COST - total_cost) / (WORST_COST - BEST_COST));
+    score_ratio = natural_log_score(100.0L * (score_ratio), total_cost, BEST_COST, true) / 100.0;
+    double unbounded_ratio = score_ratio;
+
+    quitp(score_ratio, "Cost: %.12f. Ratio: %.12f, RatioUnbounded: %.12f",
           total_cost, score_ratio, unbounded_ratio);
-    
+
     return 0;
 }

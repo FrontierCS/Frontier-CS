@@ -1,10 +1,9 @@
-```markdown
 # Sasha’s Smudged Multiplication Poster (Optimization)
 
 ## Problem
 To learn multiplication, Big Ben printed a gigantic poster of a multiplication table created from his favorite integers collected over CALICO's 5 year history. Unfortunately the poster was damaged and now he's very sad :( Many entries were lost, and many others were corrupted. Big Ben now has only a vague memory of his favorite off diagonal cells.
 
-Big Ben is working on a new multiplication table. He doesn't expect a perfect recreation of his old one, and he's happy tolerating a few different entries. Help Big Ben pick numbers for his new multiplication table! 
+Big Ben is working on a new multiplication table. He doesn't expect a perfect recreation of his old one, and he's happy tolerating a few different entries. Help Big Ben pick numbers for his new multiplication table!
 
 Your task is to construct a list of $\var{N}$ integers $a_1, a_2, \dots, a_{\var{N}}$, which defines a $\var{N} \times \var{N}$ multiplication table where the entry at row $i$ and column $j$ is $a_i a_j$.
 
@@ -22,7 +21,7 @@ Additionally, you may select a subset $S \subseteq \{1,2,\dots,\var{M}\}$ of $d$
 
 \subsection{Input Format}
 
-Each test file describes a single test case, which contains two lines:
+Each test file describes a single test case:
 \begin{itemize}
     \item The first line of the input contains three space-separated integers $\var{N}$ $\var{M}$ $\var{D}$ denoting the size of the table, the number of observed cells, and the number of observations we can discard, respectively.
     \item The next $\var{M}$ lines each describe a constraint and each contain four space-separated integers $\var{R_i}$ $\var{C_i}$ $\var{V_i}$ $\var{W_i}$ denoting the row index, column index, value, and weight respectively.
@@ -59,28 +58,21 @@ You must **minimize** `L`.
 ---
 
 ## Scoring
-Let:
 
-- `L_sub` be your loss.
-- `L_base` be the **baseline loss**, defined deterministically as the loss obtained by:
-  - outputting `ai = 1` for all `i`,
-  - discarding `t = 0` observations.
+The physical objective is weighted relative product error L_sub=sum w*|a_u*a_v-x|/x over retained observations; smaller is better. The physical reference is `a = 0.4*L_base`; matching a positive reference earns 60 points.
 
-The per-instance score is:
-\[
-S = 10^6 \cdot \text{clamp}\left(\frac{L_{base} - L_{sub}}{L_{base} - L_{ref}},\ 0,\ 1\right)
-\]
-where `clamp(z,0,1) = min(1, max(0, z))`.
+Define the historical low-score expression (in points):
 
-Notes:
-- `L_ref` is provided in the input and satisfies `0 < L_ref < L_base`.
-- Achieving `L_sub = L_ref` gives full score `1,000,000`.
-- Doing worse than baseline gives score `0`.
-- The final contest score is the **sum of S** over all test instances.
+    P_low = 100*max(0,1-L_sub/L_base) if L_base>0; 0 otherwise.
 
-All computations for judging use high-precision floating point; ties are broken by smaller `L_sub`.
+A valid solution with `L_sub=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
----
+    r = a / L_sub
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+L_base uses every a_i=1 with no observations discarded. Zero retained error receives 100 even if L_base=0.
 
 Time Limit: \textbf{10 Seconds}
 
@@ -111,7 +103,6 @@ $1 \leq S_i \leq \var{M}$
 ### Sample input
 ```
 4 5 1
-120.0
 1 2 6 5
 1 3 9 5
 2 3 18 2
@@ -135,5 +126,4 @@ Loss is computed over observations {1,2,3,5}:
 - (2,3): 2·6=12 vs 18 → contributes `2*|12-18|/18 = 0.666...`
 - (3,4): 6·2=12 vs 12 → error 0
 
-Total `L_sub = 5.666...`. The judge computes `L_base` from all-ones with no discards, then applies the scoring formula using the given `L_ref`.
-```
+Total `L_sub = 5.666...`. The judge computes `L_base` from all-ones with no discards, giving L_base=1031/84. Thus S=100*(1-L_sub/L_base)=55500/1031, approximately 53.831. Since S<60, the file receives P=S, approximately 53.831 points.

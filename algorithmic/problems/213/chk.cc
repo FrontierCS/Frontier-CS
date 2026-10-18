@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
 #include <iostream>
 #include <cstdio>
@@ -7,6 +23,8 @@
 #include <algorithm>
 
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 const int N=202018,mod=1e9+7;
 int cnt,root,top;
 int siz[N],fix[N],val[N],c[N][2];
@@ -51,7 +69,7 @@ int main(int argc,char* argv[])
 	for(i=1;i<=n;i++)
 		b[i]=inf.readInt();
 	m=ouf.readInt();
-	tot=ouf.readInt();
+	tot=ouf.readInt(0, 230*n, "operation count");
 	T=tot;
 	if(tot>230*n)
 		quitf(_wa,"The number of your move is beyond acception");
@@ -85,25 +103,21 @@ int main(int argc,char* argv[])
 		if(stk[i]!=i)
 			quitf(_wa,"Your answer is wrong %d %d",i,stk[i]);
 	}
-	
+
 	// Calculate score based on number of operations
 	// Operations count T ranges from optimal (around n) to maximum (23*n)
 	// Score decreases linearly as T increases
 	double baseline = 23.0 * n;  // Optimal number of operations
 	double max_ops = 230.0 * n;  // Maximum acceptable operations
-	
+
 	// Calculate score (0.0 to 1.0)
-	double score_ratio;
-	if (T <= baseline) {
-		score_ratio = 1.0;  // Full score for optimal or better
-	} else {
-		// Linear decrease from 1.0 to 0.0 as T goes from baseline to max_ops
-		score_ratio = max(0.0, 1.0 - (1.0 * (T - baseline) / (max_ops - baseline)));
-	}
-	
+	double performance = max(0.0, (max_ops - T) / (max_ops - baseline));
+	double score_ratio = referenceScore(performance);
+    score_ratio = natural_log_score(100.0L * (score_ratio), T, baseline, true) / 100.0;
+
 	double unbounded_ratio = score_ratio;  // In this case, score is already bounded
-	
-	quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f", T, score_ratio, unbounded_ratio);
-	
+
+	quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f", T, score_ratio, unbounded_ratio);
+
 	return 0;
 }

@@ -45,7 +45,6 @@ Notes and clarifications
 - If N < 10, no step index is a multiple of 10, so no 10% penalties occur.
 - 0 and 1 are not prime. The first prime city ID is 2.
 - Distances and sums are computed in double precision; no rounding beyond floating-point arithmetic.
-- The platform may display normalized scores in [0, 100]; the checker outputs [0, 1] (after remap).
 - Multiple tests of varying sizes are used; your final score is the average of per-test scores.
 
 Constraints and limits
@@ -71,3 +70,19 @@ Output
 0
 
 (The sample illustrates format only.)
+
+## Scoring
+
+Let x be L, the penalized length of the submitted tour. B is the penalized length of [0,1,...,N-1,0]. For B>0 and N>=2, define s=B/L, u=max(0,1-L/B), t=max(0,(ln(max(s,1))-ln(4/3))/(ln(N^0.6)-ln(4/3))), and h=0.2*min(1,u/0.25)+0.8*t^1.25. For h<=1, z is the piecewise-linear interpolation through (h,z)=(0,0),(.1,.05),(.3,.1),(.66,.3),(.75,.7),(.9,.8),(1,1); for h>1 let z=h. If B=0, the existing degenerate rule awards 100 when L<=1e-12, otherwise 0. The physical reference (the 60-point level) is a=B/N^0.6. Define the lower-band continuation:
+
+    L(x) = 60*z.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

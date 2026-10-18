@@ -1,4 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <vector>
 #include <iostream>
 #include <string>
@@ -30,7 +53,7 @@ bool valid(int r, int c) {
 bool solve(int r1, int c1, int r2, int c2) {
     // If characters don't match, this path isn't a palindrome
     if (grid[r1][c1] != grid[r2][c2]) return false;
-    
+
     // If paths have crossed or met
     // Exact meeting
     if (r1 == r2 && c1 == c2) return true;
@@ -47,11 +70,11 @@ bool solve(int r1, int c1, int r2, int c2) {
     // Try all valid next steps
     // Start moves: (r1+1, c1) OR (r1, c1+1)
     // End moves:   (r2-1, c2) OR (r2, c2-1)
-    
+
     // Option 1: Start Down, End Up
-    if (valid(r1 + 1, c1) && valid(r2 - 1, c2)) 
+    if (valid(r1 + 1, c1) && valid(r2 - 1, c2))
         if (solve(r1 + 1, c1, r2 - 1, c2)) res = true;
-    
+
     // Option 2: Start Down, End Left
     if (!res && valid(r1 + 1, c1) && valid(r2, c2 - 1))
         if (solve(r1 + 1, c1, r2, c2 - 1)) res = true;
@@ -74,7 +97,7 @@ int main(int argc, char* argv[]) {
 
     // The provided gen_data.py generates files with N then Grid.
     // It creates exactly ONE test case per file.
-    int n_graphs = 1; 
+    int n_graphs = 1;
 
     double total_score = 0.0;
     long long tot_moves = 0;
@@ -108,7 +131,7 @@ int main(int argc, char* argv[]) {
 
             if (type == "?") {
                 queries++;
-                
+
                 if (queries > hard_limit) {
                     cout << -1 << endl;
                     quitf(_wa, "Test case %d: Query limit exceeded (>%d)", g + 1, hard_limit);
@@ -133,7 +156,7 @@ int main(int argc, char* argv[]) {
                 // We check if a palindromic path exists from (x1,y1) to (x2,y2)
                 bool exists = solve(x1, y1, x2, y2);
                 cout << (exists ? 1 : 0) << endl;
-            } 
+            }
             else if (type == "!") {
                 // Read user's answer grid
                 bool correct = true;
@@ -151,7 +174,7 @@ int main(int argc, char* argv[]) {
                     // For this problem, if the answer is wrong, we should WA.
                     quitf(_wa, "Test case %d: output grid does not match expected grid.", g + 1);
                 }
-                break; 
+                break;
             }
         }
 
@@ -159,34 +182,12 @@ int main(int argc, char* argv[]) {
 
         // --- Calculate Score ---
         // Formula: Score = max(0, 100 * ((K_zero - Q) / (K_zero - K_base))^2)
-        
-        double raw_ratio = 0.0;
-        if (solved) {
-            // raw_ratio represents the term inside the square: (5000 - Q) / 2500
-            double q = (double)queries;
-            double term = (K_ZERO - q) / (K_ZERO - K_BASE);
-            
-            // Calculate squared score ratio
-            raw_ratio = term * term;
-        }
 
-        // Capped Score (0 to 1.0) for standard system compatibility
-        // If queries < 2500, score is still capped at 1.0 for "total_score"
-        // If queries > 5000, score is 0.
-        double capped_ratio = raw_ratio;
-        if (queries < K_BASE) capped_ratio = 1.0; 
-        if (queries >= K_ZERO) capped_ratio = 0.0;
-        if (!solved) capped_ratio = 0.0;
-
-        total_score += capped_ratio;
-
-        // Unbounded Score (allows > 1.0)
-        // Statement: "If your solution uses fewer than n * n queries... score will exceed 100 points"
-        double unbounded_ratio = raw_ratio;
-        if (queries >= K_ZERO) unbounded_ratio = 0.0;
-        if (!solved) unbounded_ratio = 0.0;
-
-        tot_unbounded_score += unbounded_ratio;
+        double r = max(0.0, (K_ZERO - queries) / (K_ZERO - K_BASE));
+        double score = referenceScore(r * r);
+        score = natural_log_score(100.0L * (score), queries, K_BASE, true) / 100.0;
+        total_score += score;
+        tot_unbounded_score += score;
     }
 
     // --- Final Verdict ---
@@ -194,7 +195,7 @@ int main(int argc, char* argv[]) {
     double unbounded_score_ratio = tot_unbounded_score / (double)n_graphs;
 
     // Use quitp exactly as requested in the example
-    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
+    quitp(score_ratio, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f", tot_moves, score_ratio, unbounded_score_ratio);
 
     return 0;
 }

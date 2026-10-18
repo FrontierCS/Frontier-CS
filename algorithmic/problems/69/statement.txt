@@ -76,7 +76,18 @@ Explanation of the example:
 • For the second student, the power p2 = 11 is read; the program answers with the indices "2 1".
 (Exact details of powers and indices depend on the judge’s random choices and the specific words you output.)
 
-Scoring:
-Your score for this problem is not just an AC or WA verdict. The scoring is based on the following formula:
-(30n^2 - Total length of your magic words)/(30n^2 - Optimal total length of magic words)
-Your goal is to maximize your score.
+## Scoring
+
+Let x be L, the total encoding length. C=30*n*n and R is the comparison total length stored with the test. If R=C, the existing degenerate branch awards 100 for L>=C and 0 otherwise. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(C-x)/(C-R)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If a=0, the zero-cost rule still applies; positive x uses L(x). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

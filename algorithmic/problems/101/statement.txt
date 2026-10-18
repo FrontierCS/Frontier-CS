@@ -1,58 +1,52 @@
 Problem Name: Circuit
 
 Description:
-You are given a circuit board consisting of N component slots and R external switches.  
-Each slot contains either an AND gate (&) or an OR gate (|). The actual type of each slot is hidden.  
+You are given a circuit board consisting of N component slots and R external switches.
+Each slot contains either an AND gate (&) or an OR gate (|). The actual type of each slot is hidden.
 Your task is to determine the true type of every slot by interacting with the judge.
 
 Specifications of the Circuit Board:
-- The board consists of 2N+1 switches numbered 0..2N, each with an ON/OFF state, outputting 0 or 1.  
-- The board also consists of N component slots numbered 0..N-1, each outputting 0 or 1.  
+- The board consists of 2N+1 switches numbered 0..2N, each with an ON/OFF state, outputting 0 or 1.
+- The board also consists of N component slots numbered 0..N-1, each outputting 0 or 1.
 - The outputs are determined from the highest index down to 0, according to the following rules:
-  * For j = 2N, 2N-1, ..., N:  
-    - If switch j is OFF, it outputs 0.  
-    - If switch j is ON, it outputs 1.  
-  * For j = N-1, N-2, ..., 0:  
-    - Let the output of slot j be x.  
-    - If switch j is OFF, it outputs x.  
-    - If switch j is ON, it outputs 1-x.  
-  * For i = N-1, N-2, ..., 0:  
-    - Slot i is connected to two switches Ui, Vi (i < Ui < Vi ≤ 2N).  
-    - If slot i is AND, it outputs min(output(Ui), output(Vi)).  
-    - If slot i is OR, it outputs max(output(Ui), output(Vi)).  
+  * For j = 2N, 2N-1, ..., N:
+    - If switch j is OFF, it outputs 0.
+    - If switch j is ON, it outputs 1.
+  * For j = N-1, N-2, ..., 0:
+    - Let the output of slot j be x.
+    - If switch j is OFF, it outputs x.
+    - If switch j is ON, it outputs 1-x.
+  * For i = N-1, N-2, ..., 0:
+    - Slot i is connected to two switches Ui, Vi (i < Ui < Vi ≤ 2N).
+    - If slot i is AND, it outputs min(output(Ui), output(Vi)).
+    - If slot i is OR, it outputs max(output(Ui), output(Vi)).
 
-- For each j = 1..2N, exactly one slot i satisfies Ui=j or Vi=j.  
+- For each j = 1..2N, exactly one slot i satisfies Ui=j or Vi=j.
 - The output of the circuit is defined as the output of switch 0.
 
 Interaction:
-At the beginning of the interaction, the judge prints N and R, followed by N lines each containing Ui Vi.  
+At the beginning of the interaction, the judge prints N and R, followed by N lines each containing Ui Vi.
 This describes the wiring of the board. Then your program must interact as follows:
 
-1. Query:  
-   You may print a line of the form: "? s"  
-   where s is a binary string of length 2N+1. Each character sets the ON/OFF state of the corresponding switch.  
+1. Query:
+   You may print a line of the form: "? s"
+   where s is a binary string of length 2N+1. Each character sets the ON/OFF state of the corresponding switch.
    The judge replies with a single line containing 0 or 1, the output of the circuit (switch 0).
 
-2. Answer:  
-   When you have determined the types of all slots, you must print a line of the form: "! t"  
-   where t is a string of length N, each character being & or |, representing your guess of the hidden circuit.  
+2. Answer:
+   When you have determined the types of all slots, you must print a line of the form: "! t"
+   where t is a string of length N, each character being & or |, representing your guess of the hidden circuit.
    If your guess is completely correct, the judge accepts. Otherwise, you receive Wrong Answer.
 
 Constraints:
-- 1 ≤ N ≤ 8000  
-- 1 ≤ R ≤ min(N, 120)  
-- i < Ui < Vi ≤ 2N for all 0 ≤ i < N  
-- For each j=1..2N, exactly one i satisfies Ui=j or Vi=j  
+- 1 ≤ N ≤ 8000
+- 1 ≤ R ≤ min(N, 120)
+- i < Ui < Vi ≤ 2N for all 0 ≤ i < N
+- For each j=1..2N, exactly one i satisfies Ui=j or Vi=j
 - At most 5000 queries may be made. Exceeding this limit results in Wrong Answer.
 
 Special Requirement:
 - Your program must be written in C++.
-
-Scoring:
-- If the number of queries ≤ 900, you receive full score (100 points).  
-- If the number of queries ≥ 5000, you receive 0 points.  
-- Otherwise, the score is computed by linear interpolation:  
-  Score = (5000 - queries) / (5000 - 900) * 100
 
 Sample Interaction:
 
@@ -86,3 +80,17 @@ Then the interaction may proceed as follows (lines beginning with '#' are explan
 ! &&|
 # Player outputs the final answer.
 # The hidden circuit matches the answer, so the judge accepts.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of circuit queries. Define the objective x=Q, its physical reference a=A=900, and the lower-band calculation L=60*max(0,(5000-Q)/4100).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

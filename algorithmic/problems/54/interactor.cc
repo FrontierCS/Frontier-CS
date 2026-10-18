@@ -1,8 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <vector>
 #include <iostream>
-#include <algorithm>
-#include <cmath>
 #include <iomanip>
 
 using namespace std;
@@ -64,7 +83,7 @@ int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
     int n = inf.readInt(3, 75000, "n");
-    
+
     for (int i = 0; i < n - 1; ++i) {
         int u = inf.readInt(1, n, "u");
         int v = inf.readInt(1, n, "v");
@@ -78,7 +97,7 @@ int main(int argc, char* argv[]) {
 
     cout << n << endl;
 
-    int safety_limit = LIMIT_ZERO + 10000; 
+    int safety_limit = LIMIT_ZERO + 10000;
     bool solved = false;
 
     while (!solved) {
@@ -92,10 +111,10 @@ int main(int argc, char* argv[]) {
 
             int u = ouf.readInt(1, n, "query_u");
             int v = ouf.readInt(1, n, "query_v");
-            
+
             int dist = get_dist(u, v);
             cout << dist << endl;
-        } 
+        }
         else if (type == "!") {
             int user_ans = ouf.readInt(1, n, "user_answer");
 
@@ -109,23 +128,14 @@ int main(int argc, char* argv[]) {
 
     double L = (double)LIMIT_ZERO;
     double O = (double)LIMIT_BASE;
-    
-    double bounded_score = 0.0;
-    
-    if (queries <= LIMIT_BASE) {
-        bounded_score = 1.0;
-    } else if (queries >= LIMIT_ZERO) {
-        bounded_score = 0.0;
-    } else {
-        double ratio = (L - queries) / (L - O);
-        bounded_score = ratio * ratio;
-    }
 
-    double ratio_unbounded = max(0.0, (L - queries) / (L - O));
-    double unbounded_score = ratio_unbounded * ratio_unbounded;
+    double r = max(0.0, (L - queries) / (L - O));
+    double bounded_score = reference_score(r * r);
+    bounded_score = natural_log_score(100.0 * bounded_score, queries, O, true) / 100.0;
+    double unbounded_score = bounded_score;
 
-    quitp(bounded_score, 
-          "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", 
+    quitp(bounded_score,
+          "Queries: %d. Ratio: %.12f, RatioUnbounded: %.12f",
           queries, bounded_score, unbounded_score);
 
     return 0;

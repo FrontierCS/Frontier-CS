@@ -51,18 +51,17 @@ Example Output
 ..BB.P
 ......
 
-Scoring
-Your program must output a valid and solvable grid according to the above format.
-Your solution will be evaluated by a checker program that computes the minimum number of moves required to solve your grid.
+## Scoring
 
-Scoring rule:
-- 63,000 moves → 100 points
-- 0 moves → 0 points
-- Linear scaling between them.
+Let x be d, the shortest solution length of the constructed puzzle. A larger shortest solution length is better. The physical reference (the 60-point level) is a=63000. Define the lower-band continuation:
 
-Formula:
-score = min(100, max(0, moves / 630))
+    L(x) = 60*x/63000.
 
-Task
-Write a C++ program that outputs one valid grid satisfying the above conditions to standard output.
-Your goal is to maximize the minimum number of moves needed to solve the puzzle.
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

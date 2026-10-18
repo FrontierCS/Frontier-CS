@@ -1,9 +1,29 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <iostream>
 #include <vector>
-#include <algorithm>
 #include <string>
 #include <map>
+
+// Reference calibration: 60 points at r=1, logarithmic rewards above it.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 
 using namespace std;
 
@@ -52,11 +72,10 @@ int main(int argc, char *argv[]) {
     else if(operation[0] == '!'){
       long long answer = ouf.readLong();
       if(answer == d){
-        double score = (30000.0-1.0*(i-1.0))/(30000.0-4000.0);
-        double unbounded_ratio = max(0.0, (30000.0-1.0*(i-1.0))/(30000.0-4000.0));
-        score = min(score, 1.0);
-        score = max(score, 0.0);
-        quitp(score, "Ratio: %.3lf, RatioUnbounded: %.3lf", score, unbounded_ratio);
+        double score = calibrated((30000.0-(i-1.0))/26000.0);
+    score = natural_log_score(100.0 * score, i-1, 4000, true) / 100.0;
+        double unbounded_ratio = score;
+        quitp(score, "Ratio: %.12lf, RatioUnbounded: %.12lf", score, unbounded_ratio);
       }
       else{
         quitf(_wa, "Incorrect d");

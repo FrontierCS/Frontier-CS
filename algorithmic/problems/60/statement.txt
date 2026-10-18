@@ -1,4 +1,3 @@
-```markdown
 # Problem K: Probing the Disk
 
 **Time Limit: 2 seconds**
@@ -60,3 +59,19 @@ query 0 10000 100000 10000
 query 60000 60000 80000 80000
 answer 40000 60000 30000
 ```
+
+## Scoring
+
+Let x be q, the query count. The physical reference (the 60-point level) is a=409.6. Define the lower-band continuation:
+
+    L(x) = 100*max(0,1-x/1024).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

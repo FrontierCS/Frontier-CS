@@ -25,20 +25,17 @@ Starting with an empty string $S$, the goal is to make $S$ a **lucky string** by
 
 Find a sequence of operations that makes $S$ a **lucky string** with as little cost as possible.
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $K$ be the number of $t_k$ contained in $S$ as (contiguous) substrings, and $T$ be the total cost of the operations.
-Then you will obtain the following score.
+The raw task reward V is defined as follows.
 
 * If $K\lt M$, $\mathrm{round}(1000 \times (K+1)/M)$.
 * If $K=M$, $\mathrm{max}(10000-T, 1001)$.
 
 If the number of operations exceeds $5000$, or if a square outside the $N\times N$ grid is specified, it will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span>.
-
-There are 150 test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
 
 
 Input
@@ -108,3 +105,13 @@ Tools (Input generator and visualizer)
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. Each logarithmic branch has its own original quantity x and physical 60-point reference a: r=a/x for the completed-task minimizing cost, or r=x/a for the maximizing composite quality. The upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+When all target strings occur and 1001<=R<10000, let C be the total typing movement cost, including the cost of typing each character, and A=10000-R. At R=1001, completed costs C>=8999 form the old 60-point plateau; choose its improvement-side boundary A=8999 and preserve the old lower band. In this completed-task cost branch, take x=C, a=A, and r=a/x; L>60 earns min(100,60+ln(r)). A completed construction with exactly zero C earns 100, even when the reference lies at another stage; an incomplete zero-operation output does not. In all other branches, retain the original ordered composite objective V: take x=V, a=T, and r=x/a; when L>60, award min(100,60+ln(r)). This retains completion priority rather than treating incomplete low-cost outputs as good solutions.
+
+The checker reports points/100.

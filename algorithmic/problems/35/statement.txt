@@ -51,13 +51,24 @@ In C++, you can use:
 fflush(stdout);
 cout.flush();
 
-Scoring
+## Scoring
 
-If you solve the problem with at most 500 queries, you get 100 points.
+Let x be Q, the query count in a subcase. The physical reference (the 60-point level) is a=500. Define the lower-band continuation:
 
-If you solve it with 5000 queries, you get 0 points.
+    L(x) = 60*max(0,(5000-x)/4500).
 
-For values in between, the score decreases linearly.
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their minimum.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Example
 Input

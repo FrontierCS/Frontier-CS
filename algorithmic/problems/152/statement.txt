@@ -19,11 +19,12 @@ the total travel time for the delivery route is $T=\sum_{i=1}^{n-1} |x_i - x_{i+
 Please optimize $S$ and delivery routes so that the total travel time is as short as possible.
 
 
-Scoring
+Raw task objective
 --------
-For the total travel time $T$ of the output delivery route, you will get a score of $\mathrm{round}(10^8/(1000+T))$.
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
 
-There are 100 test cases, and the score of a submission is the total score for each test case. If you get a result other than <span class='label label-success' data-toggle='tooltip' data-placement='top' title="Accepted">AC</span> for one or more test cases, the score of the submission will be zero. The highest score obtained during the contest time will determine the final ranking, and there will be no system test after the contest. If more than one participant gets the same score, the ranking will be determined by the submission time of the submission that received that score.
+For the total travel time $T$ of the output delivery route, the raw task reward V is $\mathrm{round}(10^8/(1000+T))$.
+
 
 Input
 --------
@@ -69,3 +70,15 @@ Tools (Input generator and visualizer)
 **Sharing visualization results is not allowed until the end of the contest. **
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Here E is the actual total Manhattan route length. Use physical reference a=A=1e8/R-1000. A valid E=0 earns 100 before testing L. For E>0 and L>60, take x=E, a=A, and r=a/x; award min(100,60+ln(r)). A nonpositive anchor has no defined positive-cost logarithmic comparison, so retain the existing nonzero-cost branch.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

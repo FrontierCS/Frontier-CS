@@ -1,5 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
-#include <bits/stdc++.h> 
+
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
+#include <bits/stdc++.h>
 using namespace std;
 
 const int maxn = 35;
@@ -33,7 +53,7 @@ int main(int argc, char **argv){
 	sr = inf.readInt(), sc = inf.readInt(), er = inf.readInt(), ec = inf.readInt();
 	--sr, --sc, --er, --ec;
 	op = ouf.readString();
-	
+
 	if (op == "-1") {
 		dfs(sr, sc);
 		for (int i = 0; i < n; ++i) for (int j = 0; j < m; ++j)
@@ -41,7 +61,7 @@ int main(int argc, char **argv){
 				quitf(_ok, "Correct.");
 		quitp(0.0, "Answer exists but -1 found.");
 	}
-	
+
 	if (!isPalin(op)) {
 		quitp(0.0, "Not palindrome.");
 	}
@@ -66,21 +86,14 @@ int main(int argc, char **argv){
 				quitp(0.0, "Blank cells unvisited");
 			}
 		}
-		double pnt = 1.0, unbounded_pnt = 1.0;
 		int bound = 12 * blank * max(n, m);
-		if (op.size() <= bound) {
-			// quitf(_ok, "Correct.");
-			unbounded_pnt -= 1.0 * (op.size() - bound) / bound;
-		}
-		else {
-			pnt -= 1.0 * (op.size() - bound) / bound;
-			pnt = max(pnt, 0.0);
-			unbounded_pnt = pnt;
-		}
+		double r = max(0.0, 2.0 - (double)op.size() / bound);
+		double pnt = referenceScore(r), unbounded_pnt = pnt;
+    pnt = natural_log_score(100.0 * pnt, op.size(), bound, true) / 100.0;
+		unbounded_pnt = pnt;
 		char mes[128];
-		sprintf(mes, "Ratio: %lf, RatioUnbounded: %lf", pnt, unbounded_pnt);
+		sprintf(mes, "Ratio: %.12lf, RatioUnbounded: %.12lf", pnt, unbounded_pnt);
 		quitp(pnt, "%s", mes);
 	}
 	return 0;
 }
-

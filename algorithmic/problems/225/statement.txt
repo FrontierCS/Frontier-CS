@@ -25,8 +25,7 @@ There are $q$ requirements, each of which contains two integers $l_i, r_i$, whic
 a set $S_{k_i}$ (where $k_i$ is the ID of the set, you should determine it) which equals
 $\{a_u \mid l_i \le u \le r_i\}$, i.e. the set consisting of all $a_u$ with indices between $l_i$ and $r_i$.
 
-In the end you must ensure that $\mathrm{cnt} \le 2.2 \times 10^6$. Note that you don't have to minimize
-$\mathrm{cnt}$. It is guaranteed that a solution under given constraints exists.
+In the end you must ensure that $\mathrm{cnt} \le 2.2 \times 10^6$. Using fewer sets improves the score as specified below. It is guaranteed that a solution under given constraints exists.
 
 ## Input format
 - The first line contains two integers $n, q$ ($1 \le n \le 2^{12}$, $1 \le q \le 2^{16}$) — the length of
@@ -48,9 +47,19 @@ $\mathrm{cnt}$. It is guaranteed that a solution under given constraints exists.
   that set $S_{k_i}$ is the $i$-th required set.
 
 
-## Scoring 
-- It is guaranteed that a solution under given constraints exists.
-- If the output is invalid, your score is 0.
-- Otherwise, your score is calculated as follows:
-  - Let $cnt_E$ be the number of sets after all operations.
-  - Your score is $\frac{cnt_E}{2.2 \times 10^6}$.
+## Scoring
+
+The physical objective is total constructed set/node count cnt_E; smaller is better. The physical reference is `a = 880000`; matching a positive reference earns 60 points.
+
+cnt_E includes the n initial singleton sets and all newly constructed sets.
+
+Define the historical low-score expression (in points):
+
+    P_low = 100*(1-cnt_E/2200000).
+
+A valid solution with `cnt_E=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / cnt_E
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.

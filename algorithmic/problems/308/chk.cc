@@ -1,3 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+
+#include <algorithm>
+// Historical bounded base ratio; only its <=60-point branch is retained.
+static double bounded_base_ratio(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -142,8 +165,10 @@ int main(int argc, char* argv[]) {
     // round to nearest 1/1,000,000 as stated in problem
     double rounded_ratio = round(raw_ratio * 1000000.0) / 1000000.0;
 
+    rounded_ratio = bounded_base_ratio(rounded_ratio);
+    rounded_ratio = natural_log_score(100.0L * (rounded_ratio), O, 0.4L*B, true) / 100.0;
     quitp(rounded_ratio,
-          "B=%lld O=%lld improvement=%lld Ratio: %.9f",
+          "B=%lld O=%lld improvement=%lld Ratio: %.12f",
           B, O, (B - O), rounded_ratio);
 
     return 0;

@@ -1,16 +1,16 @@
 SphereSpread
 
-You are given an integer n. You need to place n points in 3D space such that all points lie within or on 
+You are given an integer n. You need to place n points in 3D space such that all points lie within or on
 a unit sphere centered at the origin (i.e., the distance from each point to the origin is at most 1).
 
-Your goal is to maximize the minimum pairwise distance between any two points. In other words, you want 
+Your goal is to maximize the minimum pairwise distance between any two points. In other words, you want
 to spread the points out as much as possible, maximizing the distance between the closest pair.
 
 Input
 The first line contains a single integer n — the number of points to place.
 
 Output
-On the first line, print a single real number min_dist — the minimum pairwise distance achieved by your 
+On the first line, print a single real number min_dist — the minimum pairwise distance achieved by your
 point placement.
 The next n lines should each contain three real numbers xi, yi, zi — the coordinates of the i-th point.
 
@@ -23,11 +23,6 @@ Your answer will be accepted if:
 - All points are within or on the unit sphere (with absolute or relative error at most 10^-9)
 - The actual minimum pairwise distance matches your claimed min_dist (with absolute or relative error at most 10^-6)
 
-Scoring
-You will be graded based on the minimum pairwise distances you achieve.
-To be more specific, your answer will be compared to a reference solution ref_answer.
-Your final score will be calculated as the average of 100 * min(your_answer / ref_answer, 1) across all test cases.
-
 Time limit: 2 seconds
 
 Memory limit: 512 MB
@@ -39,3 +34,16 @@ Sample Output:
 2
 0 0 1
 0 0 -1
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+X is the submitted minimum pairwise distance, checked against the actual placement using the stated tolerance, and R>0 is the stored reference distance. Define the objective x=X, its physical reference a=A=R, and the lower-band calculation L=60*X/R.
+
+```text
+P = L,                           if L <= 60
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero value of a maximizing objective is not a perfect solution and earns no special full-score award. The checker reports P/100.

@@ -47,18 +47,18 @@ Otherwise, you will get Idleness limit exceeded. To do this, use:
 
 Scoring
 
-Your score depends on the number of queries Q you use to determine the grid.
+The physical objective is per-case grid query count Q_j; smaller is better. The physical reference is `a = floor(n_j*n_j/2)`; matching a positive reference earns 60 points.
 
-Let K_base = n ^ 2 and K_zero = n ^ 3.
+Define the historical low-score expression (in points):
 
-The score is calculated using the following quadratic formula:
-Score = max(0, 100 * ((K_zero - Q) / (K_zero - K_base))^2)
+    P_low = 60*max(0,(2*n_j*n_j-Q_j)/(2*n_j*n_j-floor(n_j*n_j/2)))^2.
 
-Specifically:
-- Base Score (100 pts): If you use Q <= K_base queries, you will receive at least 100 points.
-- Partial Score: If you use between K_base and K_zero queries, your score will decrease quadratically.
-- Zero Score: If you use Q >= K_zero queries, you will receive 0 points.
-- Bonus Score: This problem supports unbounded scoring. If your solution uses fewer than K_base queries, your score will follow the same curve and exceed 100 points.
+A valid solution with `Q_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Example Input:
 3

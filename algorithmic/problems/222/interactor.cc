@@ -1,17 +1,41 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
 #include "testlib.h"
 #include <vector>
 #include <iostream>
 #include <cmath>
 #include <algorithm>
 
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 using namespace std;
 
 // Maximum number of vertices as per problem constraints (10^6)
 const int MAXN = 1000005;
 // Logarithm bound for max X. 2^62 > 5 * 10^18.
-const int LOGK = 63; 
+const int LOGK = 63;
 
-// Binary lifting table. 
+// Binary lifting table.
 // up[k][u] stores the node reached starting from u after 2^k steps.
 // Memory usage: 63 * 10^6 * 4 bytes ≈ 252 MB, well within 1024 MB limit.
 int up[LOGK][MAXN];
@@ -23,7 +47,7 @@ int main(int argc, char* argv[]) {
 
     // Read the number of graphs (n) from the test input file
     int n_graphs = inf.readInt(1, 10, "n");
-    
+
     // Send n to the user's standard input
     cout << n_graphs << endl;
 
@@ -36,7 +60,7 @@ int main(int argc, char* argv[]) {
         // --- Read Graph Data ---
         // The user does not see this part directly, they only query it.
         int nodes = inf.readInt(1, 1000000, "num_vertices");
-        
+
         // Read the functional graph structure
         // Format: nodes integers, where the i-th integer is the destination of vertex i
         for (int i = 1; i <= nodes; ++i) {
@@ -63,7 +87,7 @@ int main(int argc, char* argv[]) {
              if ((nodes >> k) & 1) curr = up[k][curr];
         }
         // Just to be absolutely safe against edge cases, jump another large block
-        curr = up[20][curr]; 
+        curr = up[20][curr];
 
         // Now 'curr' is guaranteed to be in the cycle. Measure the length.
         int start_node = curr;
@@ -77,22 +101,22 @@ int main(int argc, char* argv[]) {
         // --- Interaction Loop ---
         int queries = 0;
         bool solved = false;
-        
+
         // We set a hard limit slightly above the 0-point threshold to prevent infinite loops.
         // At 2500 queries, score is 0.
-        int hard_limit = 2500; 
+        int hard_limit = 2500;
 
         while (true) {
             // Read query type from user output
             string type = ouf.readToken("[?!]");
-            
+
             if (type == "?") {
                 queries++;
-                
+
                 // Read v and x
                 int v = ouf.readInt(1, nodes, "v");
                 long long x = ouf.readLong(1, 5000000000000000000LL, "x");
-                
+
                 // Enforce query limit
                 if (queries > hard_limit) {
                     // Tell user they failed (optional protocol, usually implicit by verdict)
@@ -108,11 +132,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 cout << res << endl;
-            } 
+            }
             else if (type == "!") {
                 // Read user's answer
                 long long user_ans = ouf.readLong(1, (long long)nodes, "answer");
-                
+
                 if (user_ans == true_cycle_len) {
                     cout << 1 << endl; // Protocol: 1 means Correct, proceed
                     solved = true;
@@ -127,24 +151,10 @@ int main(int argc, char* argv[]) {
         tot_base_move_count += 900;
 
         // --- Calculate Score for this Graph ---
-        double case_score = 0.0;
-        if (solved) {
-            if (queries <= 500) {
-                case_score = 1.0;
-            } else if (queries >= 2500) {
-                case_score = 0.0;
-            } else {
-                // Quadratic Curve: 100% * ( (2500 - Q) / 2000 )^2
-                // Closer to 500 => Higher score.
-                double q = (double)queries;
-                double ratio = (2500.0 - q) / 2000.0;
-                case_score = 1.0 * ratio * ratio;
-            }
-        }
-        
-        double unbounded_case_score = 1.0 * (2500.0 - queries) / 2000.0;
-        unbounded_case_score = unbounded_case_score * unbounded_case_score;
-        tot_unbounded_score += unbounded_case_score;
+        double raw = std::max(0.0, (2500.0 - queries) / 2000.0);
+        double case_score = solved ? calibrated(raw * raw) : 0.0;
+        if (solved) case_score = natural_log_score(100.0L * (case_score), queries, 500.0L, true) / 100.0;
+        tot_unbounded_score += case_score;
         total_score += case_score;
     }
 
@@ -152,7 +162,7 @@ int main(int argc, char* argv[]) {
     double score_ratio = total_score / (double)n_graphs;
     double unbounded_score_ratio = tot_unbounded_score / (double)n_graphs;
     // Output final score using quitp for partial scoring support
-    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
+    quitp(score_ratio, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f", tot_moves, score_ratio, unbounded_score_ratio);
 
     return 0;
 }

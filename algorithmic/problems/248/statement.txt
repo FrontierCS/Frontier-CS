@@ -26,7 +26,7 @@ Your k value is 0.6.
 
 ## Input Format
 
-Line 1: A real number `base`, representing the optimal solution cost that can achieve full score.
+Line 1: A real number `base`, representing the reference solution cost.
 
 Line 2: The number of cities M.
 
@@ -50,6 +50,7 @@ The city ID refers to the order in which the city appears in the input (starting
 ### Input
 
 ```
+100
 3
 3 2
 1 3 8
@@ -76,24 +77,20 @@ The city ID refers to the order in which the city appears in the input (starting
 
 ## Scoring
 
-Your solution will be evaluated based on the combined consumption cost of your route. The score is calculated as follows:
+The physical objective is route cost C=0.4*total_dist/D+0.6*total_slope/S, where D and S are the normalization constants in the input; smaller is better. The physical reference is `a = base from input`; matching a positive reference earns 60 points.
 
-Let `base` be the optimal solution cost (provided in the input), and let `userCost` be the combined consumption cost of your solution, calculated as:
+Define the historical low-score expression (in points):
 
-$$\text{userCost} = \text{total\_dist} \times D + \text{total\_slope} \times S$$
+    P_low = 60*max(0,(U-C)/(U-base)), U=base*(1+base/100000).
 
-where:
-- `total_dist` is the sum of Euclidean distances between consecutive points in your route (including the return to the starting city)
-- `total_slope` is the sum of climbing slopes between consecutive points (slope = 0 if descending or level)
-- `D = (1 - k) / D_original` and `S = k / S_original` (preprocessed normalization constants)
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-The score ratio is determined by:
+    r = a / C
+    P = min(100, 60 + ln(r)).
 
-- If `userCost ≤ base`: score ratio = 1.0 (full score)
-- If `userCost > base × (1 + base / 100000)`: score ratio = 0.0 (zero score)
-- Otherwise: score ratio = `(upperBound - userCost) / (upperBound - base)`, where `upperBound = base × (1 + base / 100000)`
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
-The score decreases linearly from 1.0 to 0.0 as the cost increases from `base` to `upperBound`.
+If base=0, a valid zero-cost route receives 100 and a positive cost receives 0.
 
 ## Time Limit
 

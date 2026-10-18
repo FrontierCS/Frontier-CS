@@ -2,7 +2,7 @@
 # Metallic Pink Resonator Layout
 
 ## Problem
-The Martians have built a circular relay with ports labeled `0,1,…,M-1`.  
+The Martians have built a circular relay with ports labeled `0,1,…,M-1`.
 Some ports will be equipped with **pink emitters**; the rest remain **plain reflectors**.
 
 If port `a` is an emitter and port `b` is a reflector, then together they can generate the frequency
@@ -18,7 +18,7 @@ For each frequency `r`, the Martians know:
 
 You must choose which ports become emitters, subject to a budget.
 
-Let `A` be the set of chosen emitters, and `B = {0,1,…,M-1} \ A` be the reflectors.  
+Let `A` be the set of chosen emitters, and `B = {0,1,…,M-1} \ A` be the reflectors.
 For each residue `r`, define
 
 \[
@@ -85,32 +85,27 @@ Higher is better.
 ---
 
 ## Scoring
+
 For each official test instance, the judge also computes a deterministic **baseline** solution:
 
 1. Sort all ports by `(cost_i, i)` ascending.
 2. Traverse this order once.
 3. Add port `i` to the emitter set iff doing so keeps the total cost at most `B`.
 
-Let the baseline objective value be `U_base`, and your objective value be `U`.
+The physical objective is selected-set utility U=compute_objective; larger is better. The physical reference is `a = U_base after affordable-singleton fallback`; matching a positive reference earns 60 points.
 
-The score for that test is:
+Define the historical low-score expression (in points):
 
-- `0`, if `U = 0` and `U_base = 0`;
-- otherwise
+    P_low = 60*U/R.
 
-\[
-100 \cdot \frac{U}{U + U_{base}}.
-\]
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
 
-So:
-- matching the baseline gives `50`,
-- worse than the baseline gives less than `50`,
-- better than the baseline gives more than `50`,
-- the score approaches `100` as `U` becomes much larger than `U_base`.
+    r = U / a
+    P = min(100, 60 + ln(r)).
 
-Your final score is the arithmetic mean of your per-test scores over all official test instances.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
----
+R is the greedy baseline objective; if zero, use the cheapest affordable singleton (ties by port index), as in the checker.
 
 ## Constraints
 - `2 ≤ M ≤ 200000`
@@ -163,9 +158,4 @@ After applying saturation limits `d = [1,2,1,1,2,1]`, the objective is:
 5\cdot1 + 1\cdot2 + 4\cdot1 + 2\cdot1 + 3\cdot2 + 6\cdot1 = 25.
 \]
 
-For this instance, the baseline picks the same set, so `U = U_base = 25`, and the test score is
-
-\[
-100 \cdot \frac{25}{25+25} = 50.
-\]
-```
+For this instance, the baseline picks the same set, so r = U / R = 1 and the test score is 60 points.

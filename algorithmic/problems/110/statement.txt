@@ -22,9 +22,6 @@ There is no input. DO NOT TRY TO READ INPUT. WE WILL GIVE YOU THE WRONG ANSWER V
 Output
 Print an 8 × 14 grid consisting only of digits 0–9.
 
-Scoring
-If every integer from 1 up to X (inclusive) can be read from your printed grid, but X+1 cannot, then your score is X.
-
 Sample Output
 10203344536473
 01020102010201
@@ -36,6 +33,19 @@ Sample Output
 00000789000077
 
 Explanation of Sample
-For the grid above, all integers from 1 through 112 can be read, but 113 cannot, so the score is 112.
+For the grid above, all integers from 1 through 112 can be read, but 113 cannot, so the raw objective is 112.
 
 NOTE: THE CODE IS REQUIRED, NOT THE ACTUAL OUTPUT, AND YOU CODE HAS 1 MINUTE TO GENERATE AN 8X14 GRID. AND DO NOT JUST HAVE THE CODE PRINT OUT A GRID YOU PREDETERMINED.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+X is the largest integer such that every number 1 through X can be read from the submitted grid, and R>0 is this same quantity for the stored reference grid. Define the objective x=X, its physical reference a=A=R, and the lower-band calculation L=60*X/R.
+
+```text
+P = L,                           if L <= 60
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero value of a maximizing objective is not a perfect solution and earns no special full-score award. The checker reports P/100.

@@ -8,7 +8,7 @@ You may perform operations of the following kind:
 * Replace $A_i$ with $A_j - 1$ and $A_j$ with $A_i + 1$.
 
 Your goal is to make $A = B$ using the minimum number of operations.
-Determine whether the goal is achievable. If it is, output a sequence of operations with the minimum length that achieves it.
+Determine whether the goal is achievable. If it is, output a feasible sequence of operations; shorter sequences receive better scores as defined below.
 
 ## Constraints
 
@@ -26,7 +26,7 @@ A1 A2 ... AN
 B1 B2 ... BN
 
 Output
-If it is possible to make $A = B$, output Yes; 
+If it is possible to make $A = B$, output Yes;
 otherwise, output No.
 If you output Yes, also output an operation sequence in the following format:
 M
@@ -85,10 +85,21 @@ Yes
 4 5
 
 Scoring:
-Your score is calculated based on the number of operations $m$, and $m_0$(number of operations by std):
-if $m \leq m_0$, you receive full score (1.0).
-if $m>2 * m_0$, you receive 0 score.
-otherwise Score = $(2 * m_0 - m) / (m_0)$, linearly decreasing from 1.0 to 0.0.
+
+The physical objective is number of transformation operations m; smaller is better. The physical reference is `a = m_std`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(2*m_std-m)/m_std).
+
+A valid solution with `m=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / m
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+A correct No answer receives 100. If m_std=0, a valid zero-operation sequence receives 100 and a positive count receives 0.
 
 Time limit:
 2 seconds

@@ -1,3 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+
+#include <algorithm>
+// Historical bounded base ratio; only its <=60-point branch is retained.
+static double bounded_base_ratio(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -190,10 +213,12 @@ int main(int argc, char* argv[]) {
         if (score_ratio > 1.0) score_ratio = 1.0;
     }
 
+    score_ratio = bounded_base_ratio(score_ratio);
+    score_ratio = natural_log_score(100.0L * (score_ratio), F, 0.4L*F_base, true) / 100.0;
     long long int_score = (long long)floor(1000000.0 * score_ratio);
 
     quitp(score_ratio,
-          "F_base=%lld F=%lld retuner_cost=%lld q=%d score=%lld Ratio: %.6f",
+          "F_base=%lld F=%lld retuner_cost=%lld q=%d score=%lld Ratio: %.12f",
           F_base, F, retuner_cost, q, int_score, score_ratio);
 
     return 0;

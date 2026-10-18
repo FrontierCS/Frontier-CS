@@ -13,7 +13,7 @@ The satisfaction level $p_i$ of company $i$ is determined as follows.
 - If the ad space for company $i$ contains the point $(x_i+0.5, y_i+0.5)$ and the area is $s_i$, then $p_i = 1 - (1 - \min(r_i,s_i) / \max(r_i, s_i))^2$.
 
 Your task is to determine the placement of the ads so that the sum of the satisfaction levels is maximized.
-You will get a score of $10^9 \times \sum_{i=0}^{n-1} p_i / n$ rounded to the nearest integer.
+The raw task reward V is $10^9 \times \sum_{i=0}^{n-1} p_i / n$ rounded to the nearest integer. This is the raw reward V; final benchmark points are defined in Scoring.
 
 ![](./images/dbec47df66576ff9e5b5ace9df6d9110.png "Visualization of Sample Output")
 
@@ -59,18 +59,21 @@ Let $q_0=0$ and $q_n=100000000$.
 Then $r_i=q_{i+1}-q_i$.
 
 
-Number of test cases
---------
-- Provisional test: 50
-- System test: 1000. We will publish seeds.txt (md5=8fc1ce3f4beabac6abc1bdb4206d7f7e) after the contest is over.
-
-The score of a submission is the total scores for each test case.
-In the provisional test, if your submission produces illegal output or exceeds the time limit for some test cases, the submission itself will be judged as WA or TLE, and the score of the submission will be zero.
-In the system test, if your submission produces illegal output or exceeds the time limit for some test cases, only the score for those test cases will be zero.
-
 Tools
 --------
 You can download an input generator and visualizer <a href="https://img.atcoder.jp/ahc001/ded8fd3366b4ff0b0d7d053f553cdb84.zip">here</a>.
 To use them, you need a compilation environment of <a href="https://www.rust-lang.org/ja">Rust language</a>.
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Here E is the mean advertisement loss: each correctly placed advertisement contributes (1-min(area,target_area)/max(area,target_area))^2, and an advertisement missing its required point contributes 1. Use physical reference a=A=1-R/1e9. A valid E=0 earns 100 before testing L. For E>0 and L>60, take x=E, a=A, and r=a/x; award min(100,60+ln(r)). A nonpositive anchor has no defined positive-cost logarithmic comparison, so retain the existing nonzero-cost branch.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

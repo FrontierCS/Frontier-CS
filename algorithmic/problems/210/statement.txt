@@ -52,15 +52,22 @@ Refueling/reloading time is ignored; multiple such commands in a frame are allow
 - `attack <id> <dir> <count>` consumes exactly `count` missiles from the fighter.
 - Each red base has an integer defense `d`. When cumulative missiles received reaches `d`, the base is destroyed.
 
-### Scoring
+## Scoring
 
-Each red base has a military value `v`. When a red base is **destroyed**, you gain **+v** points (only once per base).
+The physical objective is simulation reward V=score_value; larger is better. The physical reference is `a = 0.6*best_possible`; matching a positive reference earns 60 points.
 
-Your goal is to **maximize the total score** after up to **15000 frames**.
+W=best_possible is the total military value of all red bases; V counts each destroyed base once.
 
-Invalid commands are ignored (the simulation continues).
+Define the historical low-score expression (in points):
 
----
+    P_low = 100*V/W if W>0; 0 otherwise.
+
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
+
+    r = V / a
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Malformed, unknown, or infeasible action lines are ignored by the simulator; they do not by themselves force the file score to zero. Only actions that successfully execute affect the world and its reward. Ending output early leaves subsequent frames idle. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Input Format
 
@@ -119,5 +126,3 @@ There are at most **15000 frames**. Your output may end early (remaining frames 
 ## Sample Input
 
 See `testdata/1.in`.
-
-

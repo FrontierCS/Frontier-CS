@@ -22,5 +22,16 @@ There is only **one test case**, with \( n = 10^6 \).
 
 ## Scoring
 
-Let your output be `out`, and the standard answer be `ans`.  
-Your score is computed based on the difference between `out` and `ans` (exact formula not specified in the statement).
+Let x be M=max_i abs(sum_{j=1}^i f(j)). R is this same maximum absolute prefix sum for the comparison function stored with the test. A valid function always has M>=1. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*R/x.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

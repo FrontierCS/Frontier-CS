@@ -35,23 +35,22 @@ Otherwise, you will get Idleness limit exceeded. To do this, use:
 - stdout.flush() in Python;
 - see documentation for other languages.
 
-Scoring
+## Scoring
 
-Your score depends on the number of queries Q you use to identify the centroid.
+Let x be Q, the query count. The physical reference (the 60-point level) is a=100000. Define the lower-band continuation:
 
-Let K_base = 100000 and K_zero = 400000.
+    L(x) = 60*max(0,(400000-x)/300000)^2.
 
-The score is calculated using the following quadratic formula:
-Score = max(0, 100 * ((K_zero - Q) / (K_zero - K_base))^2)
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
 
-Specifically:
-- Base Score (100 pts): If you use Q <= 100000 queries, you will receive at least 100 points.
-- Partial Score: If you use between 100000 and 400000 queries, your score will decrease quadratically. For example, using 250000 queries yields 25 points.
-- Zero Score: If you use Q >= 400000 queries, you will receive 0 points.
-- Bonus Score: This problem supports unbounded scoring. If your solution uses fewer than 100000 queries, your score will follow the same curve and exceed 100 points.
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
 
-Hacks are disabled in this problem.
-It's guaranteed that there are at most 500 tests in this problem.
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Example Input:
 5
