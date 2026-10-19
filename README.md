@@ -10,6 +10,8 @@
 
 <p align="center">
   <a href="https://frontier-cs.org"><img src="https://img.shields.io/badge/Website-frontier--cs.org-orange?logo=googlechrome" alt="Website"></a>
+    <a href="https://join.slack.com/t/frontiercs-org/shared_invite/zt-4dnz0xq9i-ifOETjXu_VFAPZKxZ26dnA">
+  <img src="https://img.shields.io/badge/Slack-Join_Community-4A154B?style=flat&logo=slack&logoColor=white" alt="Slack"></a>  
   <a href="https://discord.gg/Mhd6CZeQa"><img src="https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://deepwiki.com/FrontierCS/Frontier-CS"><img src="https://img.shields.io/badge/DeepWiki-Documentation-blue?logo=bookstack&logoColor=white" alt="DeepWiki"></a>
   <br>
