@@ -28,20 +28,3 @@ submissions or `trace_regeneration` for a submission reconstructed from recorded
 templates and regenerated data. The reconstructed rows are GPT-6 Astra / 48 and
 Sonnet 5.5 / 48, 143; they are not byte-identical recoveries of the original submissions.
 
-Problems 121 and 133 treat relative error at most `1e-9` and absolute error at
-most `1e-9`, respectively, as zero. Replaying 186 archived test-file records
-for these two problems changed 38 case scores. Contestant failures remain zero.
-The [replay evidence](float-score-replay-2026-10-18.json.gz) contains source and
-input/answer hashes, original outputs, failure records, and before/after scores.
-Verify the scores and CSVs without rerunning model generation or contestant programs:
-
-```bash
-python3 scripts/recheck_float_scores.py
-```
-
-All 34 modified evaluators compiled successfully. The cleanup of dead scoring
-branches was also checked against 11,806 archived test-file records across
-26 noninteractive problems and 157 submissions; their scores did not change.
-The six modified interactive evaluators also compiled successfully.
-The problem 85 query-limit correction changes
-only the statement.
