@@ -25,6 +25,7 @@
 </p>
 
 ## News
+- **Oct 20, 2026:** FrontierCS 2 is live: 48 research tasks in 13 domains, each built from a published paper and the code its authors released, where agents must beat the original code. See [frontier-cs.org](https://frontier-cs.org) and the [FrontierCS 2 repository](https://github.com/FrontierCS/FrontierCS-2).
 - **Sep 28, 2026:** [FrontierSmith](https://arxiv.org/abs/2605.14445) was selected as a NeurIPS 2026 Spotlight (top 0.95%).
 - **Sep 28, 2026:** We released [200 FrontierSmith problems](https://github.com/FrontierCS/FrontierSmith) to support community research on training models for open-ended problem solving.
 - **Jun 25, 2026:** FrontierCS was selected as one of 13 projects for [Slingshots // THREE](https://www.laude.org/updates/slingshots-three).
