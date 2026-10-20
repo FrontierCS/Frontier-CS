@@ -231,6 +231,10 @@ Apply the formula at each evaluator's scoring unit before aggregation, preservin
 
 [Per-problem results for six models](results/README.md) are available under these scoring rules. Their means use the same 179 problems, excluding problem 61 whose output format changed; runs without a submission count as zero.
 
+For previously generated algorithmic solutions, see
+[Rescoring Existing Solutions for v1.1](algorithmic/README.md#rescoring-existing-solutions-for-v11),
+including the manual exclusion of old problem 61 solutions whose output format changed.
+
 ### Raw Score
 
 Frontier-CS supports unbounded scoring, enabling open-ended evaluation compatible with algorithm evolution frameworks such as OpenEvolve.
