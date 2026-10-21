@@ -1,37 +1,11 @@
 Story
 --------
-A map like in the figure below is given.
-Takahashi's home is located in the square with the red circle, and AtCoder's office is located in the square with the blue circle.
+Takahashi commutes from his home to AtCoder's office on a grid map.
 He memorizes his commuting route to the office as a string of characters such as DRDR, which means Down, Right, Down, and Right.
 Because he is quite forgetful, he sometimes forgets some parts of the string he has memorized.
-For example, if he forgets the third character, he will move down, right, and right, and will be lost without reaching the office.
+For example, if he forgets the third character of DRDR, he will move down, right, and right instead, and may fail to reach the office.
 Therefore, he decided to memorize a robust string that would allow him to reach the office with a high probability even if he forgets some parts of the string.
-For example, if he memorizes a string DRDRDR, he can reach the office even if he forgets any one of the characters.
 Your task is to find a string that will allow Takahashi to reach the office quickly and with a high probability.
-
-
-<table>
-<tr>
-<td>
-<figure style="text-align:center">
-<img src="./images/f29506fb2_1.svg">
-<figcaption>DRDR</figcaption>
-</figure>
-</td>
-<td>
-<figure style="text-align:center">
-<img src="./images/f29506fb2_2.svg">
-<figcaption>DR<del>D</del>R</figcaption>
-</figure>
-</td>
-<td>
-<figure style="text-align:center">
-<img src="./images/f29506fb2_3.svg">
-<figcaption>DR<del>D</del>RDR</figcaption>
-</figure>
-</td>
-</tr>
-</table>
 
 Problem Statement
 --------
