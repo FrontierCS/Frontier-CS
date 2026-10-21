@@ -9,8 +9,6 @@ The trouble is, Takahashi had thrown away the instruction manual, so he lost the
 According to his memory, the target picture was a <a href="https://en.wikipedia.org/wiki/Tree_(graph_theory)">tree</a>.
 By repeating the sliding operation, please complete a tree.
 
-![example](./images/example.gif)
-
 Problem Statement
 --------
 There are $N^2-1$ tiles on an $N \times N$ board.

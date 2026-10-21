@@ -16,9 +16,7 @@ We define that a road square $(i',j')$ is visible from $(i,j)$ if and only if th
 - $i=i'$ and for every $j''$ with $\min(j,j')\leq j''\leq\max(j,j')$, $(i,j'')$ is a road square, or
 - $j=j'$ and for every $i''$ with $\min(i,i')\leq i''\leq\max(i,i')$, $(i'',j)$ is a road square.
 
-For example, in the figure below, the gray squares represent obstacles, the white and light yellow squares represent roads, and the road squares that are visible from the green circle are colored light yellow.
-
-![](./images/1bc7c896310a65486d0ce3aa275f41b7.png "Example of visible squares")
+In other words, visibility extends along the same row or column until an obstacle or the edge of the map is reached.
 
 Your task is to find a route starting from a specified square $(si,sj)$, moving up, down, left, or right on road squares, and returning to $(si,sj)$, such that all the road squares become visible at least once.
 The shorter the route, the higher the score.
