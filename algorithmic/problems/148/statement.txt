@@ -12,21 +12,7 @@ Takahashi starts from $(si, sj)$ and walks along a path satisfying the following
 Each square has an integer value, and the score of a path is the sum of the values of the visited squares, including the square at the initial position.
 Your goal is to find a path with as high a score as possible.
 
-Examples
---------
-<img src="./images/out1.svg" width=200>
-<img src="./images/out2.svg" width=200>
-<img src="./images/out3.svg" width=200>
-
-Of the above three figures, only the path in the left figure satisfies the conditions.
-In the middle figure, the same tile is stepped on twice in a row.
-In the right figure, he left a tile once and then came back to the same tile.
-
-<img src="./images/out.min.svg" width=1002>
-
-Visualization result of the sample output.
-The red circle represents the initial position, and the green circle represents the final position.
-The tiles stepped on are painted in light blue.
+Moving between two squares of the same tile is invalid, as is returning to a tile after leaving it.
 
 Raw task objective
 --------

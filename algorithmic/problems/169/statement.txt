@@ -16,7 +16,7 @@ There is an $N\times N$ square board.
 Let $(0, 0)$ be the coordinates of the top-left square, and $(i, j)$ be the coordinates of the square located $i$ squares down and $j$ squares to the right from there.
 The set of squares $(i,0), (i,1), \dots, (i,N-1)$ is referred to as **row $i$**, and the set of squares $(0,j), (1,j), \dots, (N-1,j)$ is referred to as **column $j$**.
 
-Initially, there are **Oni (demons)** <img src="./images/oni.png" width="25"> and **Fukunokami (fortune gods)** <img src="./images/fuku.png" width="25"> pieces on the board, with $2N$ pieces of each type, all placed on distinct squares.
+Initially, there are **Oni (demons)** and **Fukunokami (fortune gods)** pieces on the board, with $2N$ pieces of each type, all placed on distinct squares.
 
 You can select one row or column in a single operation and shift the chosen row/column by one square in either the left/right or up/down direction.
 

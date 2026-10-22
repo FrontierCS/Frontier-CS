@@ -6,17 +6,6 @@ He commissioned a contractor to create a draft of an accurate map, but the numbe
 Mayor Takahashi, who loves graphs, is only interested in the adjacencies between the wards and thinks that the map could be drawn with fewer tiles if information other than adjacencies, such as the shape and size of each ward, is ignored.
 Please create a map using as few tiles as possible.
 
-<div style="display: flex; width: 100%;">
-  <div style="flex-basis: 40%; text-align: center; margin-right: 10%;">
-    <img src="./images/input.png" style="max-width: 100%; max-height: 100%; vertical-align: middle;">
-	<p>Accurate map</p>
-  </div>
-  <div style="flex-basis: 50%; text-align: center;">
-    <img src="./images/output.png" style="max-width: 100%; max-height: 100%; vertical-align: middle;">
-	<p>Small map correctly representing adjacencies</p>
-  </div>
-</div>
-
 Problem Statement
 --------
 Given a map of Takahashi City represented on a grid of $n\times n$ squares.

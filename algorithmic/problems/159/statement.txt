@@ -2,8 +2,6 @@ Problem Statement
 --------
 RectJoin is the following single-player game played with square grid paper and pencil.
 
-![example](./images/example.gif)
-
 Let $(0, 0)$ be the coordinates of the lower left corner of the grid paper, with the $x$-axis to the right and the $y$-axis to the top.
 The coordinates of the upper right corner of the grid paper are $(N-1, N-1)$.
 Initially, $M$ dots are placed on grid points, and you can repeat the following operations as many times as possible to place dots and draw rectangles on the grid paper.

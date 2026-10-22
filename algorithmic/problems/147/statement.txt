@@ -15,8 +15,6 @@ The satisfaction level $p_i$ of company $i$ is determined as follows.
 Your task is to determine the placement of the ads so that the sum of the satisfaction levels is maximized.
 The raw task reward V is $10^9 \times \sum_{i=0}^{n-1} p_i / n$ rounded to the nearest integer. This is the raw reward V; final benchmark points are defined in Scoring.
 
-![](./images/dbec47df66576ff9e5b5ace9df6d9110.png "Visualization of Sample Output")
-
 Input
 --------
 Input is given from Standard Input in the following format:
