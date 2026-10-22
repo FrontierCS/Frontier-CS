@@ -135,3 +135,27 @@ class Solution:
 
 Check each problem's `readme` for the specific `solve()` signature and return type.
 
+
+## Formal Conjectures (Lean) Problems
+
+`formal_conjectures/<source>/<theorem>` problems ask for a Lean 4 proof of a
+formalized conjecture from
+[google-deepmind/formal-conjectures](https://github.com/google-deepmind/formal-conjectures).
+Problem directories are generated from the `third_party/formal-conjectures`
+submodule and are not committed — the framework materializes them
+automatically on first access (list/eval/show):
+
+```bash
+# List them (generates the problem dirs on first run)
+uv run frontier list research | grep formal_conjectures
+
+# Evaluate a proof (Docker backend; the image bundles Lean + Mathlib prebuilt)
+uv run frontier eval research formal_conjectures/erdos_problems/Erdos1.erdos_1 \
+    proof.lean --backend docker
+```
+
+A submission is a single Lean file declaring a top-level
+`theorem solution : <exact statement> := <proof>` (see each problem's readme).
+Score is binary: 1.0 iff the proof compiles without `sorry`, the statement
+matches the conjecture up to definitional equality, and no axioms beyond
+`propext`, `Classical.choice`, `Quot.sound` are used.
