@@ -214,7 +214,11 @@ namespace test_gen{
 
 		vf.push_back(
 			[&](){
-
+				// Test set 0 (Tid % 100 == 0) used to be empty, and the checker accepted
+				// any parseable program on it without running it (#205). It now runs
+				// the fixed samples plus the seeded random cases.
+				(vf[1])();
+				(vf[2])();
 			}
 		);
 		vf.push_back(
@@ -368,7 +372,6 @@ namespace test_gen{
 }
 void check_Tid(){
 	test_gen::Tid=inf.readInteger();
-	if (test_gen::Tid%100==0) quitf(_ok,"Test 0.");
 }
 void read_test(){
 	test_gen::gao();
