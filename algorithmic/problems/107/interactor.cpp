@@ -43,12 +43,13 @@ int main(int argc, char* argv[]) {
 			if (op == 0) {
 				i64 y = ouf.readLong();
 				if (y < 1 || y > 1000000000000000000) {
-					quitf(_wa, "Invalid query: element %d is out of range [1, 1000000000000000000]", y);
+					quitf(_wa, "Invalid query: element %lld is out of range [1, 1000000000000000000]", y);
 				}
 
 				println(std::gcd(x, y));
 			} else if (op == 1) {
-				int a = ans.readInt(), d = ouf.readInt();
+				// The guess may be any int, so 2 * d and a - d need 64 bits.
+				i64 a = ans.readInt(), d = ouf.readInt();
 				if (std::abs(a - d) <= 7 || (2 * a >= d && 2 * d >= a)) {
 					max = std::max(max, q);
 					break;
