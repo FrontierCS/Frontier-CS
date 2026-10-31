@@ -4,6 +4,13 @@
 >
 > For model evaluation workflow, see [SUBMIT.md](../SUBMIT.md).
 
+### Scoring
+
+The active bank contains 180 problems. See the [scoring principles](../README.md#scoring-principles)
+for reference selection, the natural-log improvement bonus, and aggregation.
+Each problem's statement defines its objective, scoring units, lower-band rule,
+and degenerate cases.
+
 ### Problem Structure
 
 Each problem in `problems/{id}/` contains:
@@ -75,6 +82,7 @@ frontier eval algorithmic 1 solution.cpp --unbounded
 ### Batch Evaluation
 
 For batch evaluation of multiple solutions, see [SUBMIT.md](../SUBMIT.md#step-2-run-evaluation).
+To rescore solutions generated before v1.1, follow the [migration instructions below](#rescoring-existing-solutions-for-v11).
 
 ```bash
 frontier batch algorithmic                    # Evaluate all in solutions/
@@ -83,6 +91,30 @@ frontier batch algorithmic --status           # Check progress
 ```
 
 **Note:** For algorithmic track, `--clusters` is not used. All workers share a single go-judge server (local Docker or SkyPilot).
+
+### Rescoring Existing Solutions for v1.1
+
+With the updated problem set and checkers, reuse your existing C++ solutions
+through the batch evaluation workflow above; no new model generation is needed.
+
+- Problems **64, 140, 179, 180, 181, 184, 185, and 228** were removed and are
+  automatically skipped when scanning the solutions directory.
+- **Manually skip old solutions for problem 61 because its output format has
+  changed.** Move `algorithmic/solutions/61/` outside the scanned directory
+  before rescoring. The problem now requires a concrete schedule instead of a
+  claimed objective value and is not automatically excluded.
+- Use the updated test cases: **23 and 303** have fewer cases and new numbering;
+  **82** has a repaired input.
+
+Run from the repository root, using a new results directory:
+
+```bash
+frontier batch algorithmic \
+  --results-dir results/rescore-v1.1 \
+  --no-resume
+```
+
+Results are saved under `results/rescore-v1.1/algorithmic/`.
 
 ### Cloud Evaluation (SkyPilot)
 

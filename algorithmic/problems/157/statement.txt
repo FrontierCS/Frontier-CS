@@ -9,8 +9,6 @@ The trouble is, Takahashi had thrown away the instruction manual, so he lost the
 According to his memory, the target picture was a <a href="https://en.wikipedia.org/wiki/Tree_(graph_theory)">tree</a>.
 By repeating the sliding operation, please complete a tree.
 
-![example](./images/example.gif)
-
 Problem Statement
 --------
 There are $N^2-1$ tiles on an $N \times N$ board.
@@ -367,28 +365,21 @@ Your task is to find a short sequence of operations such that the size of the la
 It is guaranteed that within $T$ operations you can construct a tree of size $N^2-1$ with the empty square in $(N-1,N-1)$.
 Note that the final position of the empty square is arbitrary and you do not have to move it to $(N-1,N-1)$.
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $K$ be the number of operations and $S$ be the size of the largest tree painted on the board after applying the sequence of operations.
-Then, you will get the following score.
+The raw task reward V is defined as follows.
 
 - If $S<N^2-1$, $\mathrm{round}\left(500000\times \frac{S}{N^2-1}\right)$
 - If $S=N^2-1$, $\mathrm{round}\left(500000\times (2-\frac{K}{T})\right)$
 
 If the number of operations exceeds $T$ or you perform an illegal operation to move a non-existent tile to the empty square, it will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> .
 
-#### Number of test cases
-- Provisional test: 50
-- System test: 3000. We will publish <a href="https://img.atcoder.jp/ahc011/seeds.txt">seeds.txt</a> (sha256=041256f962c6ba1a60294ad7a575684d6e401163cba316cf978f2e66a4f7b0e3) after the contest is over.
-- Both provisional and system tests contain the same number of inputs for each $N=6,7,8,9,10$.
-
-The score of a submission is the total scores for each test case.
-In the provisional test, if your submission produces illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-In the system test, if your submission produces illegal output or exceeds the time limit for some test cases, only the score for those test cases will be zero.
 
 #### About execution time
 Execution time may vary slightly from run to run.
-In addition, since system tests simultaneously perform a large number of executions, it has been observed that execution time increases by several percent compared to provisional tests.
 For these reasons, submissions that are very close to the time limit may result in <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> in the s
 ystem test.
 Please measure the execution time in your program to terminate the process, or have enough margin in the execution time.
@@ -464,3 +455,15 @@ Do not share GIFs, output itself, scores for other seeds or mention solutions or
 <a href="https://twitter.com/search?q=%23AHC011%20%23visualizer&src=typed_query&f=live">List of shared images</a>
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. Each logarithmic branch has its own original quantity x and physical 60-point reference a: r=a/x for the completed-task minimizing cost, or r=x/a for the maximizing composite quality. The upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+When the largest tree covers all n^2-1 tiles and 500000<=R<1000000, let C be the number of moves, H the allowed move count, and A=2*H*(1-R/1e6). In this completed-task cost branch, take x=C, a=A, and r=a/x; L>60 earns min(100,60+ln(r)). A completed construction with exactly zero C earns 100, even when the reference lies at another stage; an incomplete zero-operation output does not. In all other branches, retain the original ordered composite objective V: take x=V, a=T, and r=x/a; when L>60, award min(100,60+ln(r)). This retains completion priority rather than treating incomplete low-cost outputs as good solutions.
+
+The stored reference reward is rounded. Its physical anchor is chosen by analytically inverting the unrounded reward at the center R (or T for a special branch). The lower-band condition keeps every result with the original 60-point reward at exactly 60. A rounded reward is not evidence of zero physical error or cost.
+
+The checker reports points/100.

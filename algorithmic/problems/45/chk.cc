@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the original checker's 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -37,8 +53,14 @@ int main(int argc,char* argv[]){
     for(int p=0;p<G.k;++p){ if(sz[p]>cap) quitf(_wa,"Balance violated: part %d has size %d > %d",p+1,sz[p],cap); }
     long long myEC=edgeCut(G,part), myCV=commVolume(G,part);
     long long bestEC=ans.readLong(), bestCV=ans.readLong(), baseEC=ans.readLong(), baseCV=ans.readLong();
-    auto norm=[&](long long best,long long base,long long val){ if(base<=best) return (val<=best)?1.0:0.0; 
-        double den=(double)(base-best); double r=((double)(base-val))/den; if(r<0) r=0; if(r>1) r=1; return r; };
+    auto norm=[&](long long best,long long base,long long val){
+        if (val == 0) return 1.0;
+        if(base<=best) return (val<=best)?1.0:0.0;
+        const long double den = (long double)base - best;
+        const long double r = ((long double)base - val) / den;
+        const double original_points = (double)(100.0L * std::clamp(r, 0.0L, 1.0L));
+        const long double cost_anchor = 0.4L * base + 0.6L * best;
+        return natural_log_score(original_points, val, cost_anchor, true) / 100.0; };
     double sEC=norm(bestEC,baseEC,myEC), sCV=norm(bestCV,baseCV,myCV), score=0.5*(sEC+sCV);
-    quitp(score, "EC=%lld (best=%lld base=%lld), CV=%lld (best=%lld base=%lld). Ratio: %.6f", myEC,bestEC,baseEC,myCV,bestCV,baseCV,score);
+    quitp(score, "EC=%lld (best=%lld base=%lld), CV=%lld (best=%lld base=%lld). Ratio: %.12f RatioUnbounded: %.12f", myEC,bestEC,baseEC,myCV,bestCV,baseCV,score,score);
 }

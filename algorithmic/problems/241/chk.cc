@@ -1,11 +1,33 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
 #include <string>
 #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 using namespace std;
+
+// Calibrate a feasible performance reference to 60 percent.
+static double referenceScore(double ratio) {
+    return ratio <= 1.0 ? 0.6 * ratio : (0.6 + 0.02 * std::log(ratio));
+}
 
 // Use unsigned long long for bit compression, storing 64 bits per block
 typedef unsigned long long u64;
@@ -89,16 +111,16 @@ Node* parse() {
         node = new Node(idx);
         pos++;
     } else if (c == '(') {
-        pos++; 
+        pos++;
         Node* left = parse();
         if (pos >= exprStr.length()) parseError("Missing operator");
         char op = exprStr[pos];
         if (op != '&' && op != '|') parseError("Expected & or |");
         opCount++;
-        pos++; 
+        pos++;
         Node* right = parse();
         if (pos >= exprStr.length() || exprStr[pos] != ')') parseError("Missing closing parenthesis");
-        pos++; 
+        pos++;
         node = new Node(op, left, right);
     } else {
         parseError("Unexpected character");
@@ -125,7 +147,7 @@ BitVector evaluate_parallel(Node* node) {
     } else {
         BitVector l = evaluate_parallel(node->left);
         BitVector r = evaluate_parallel(node->right);
-        
+
         // Parallel bitwise operations
         for (size_t i = 0; i < res.blocks.size(); i++) {
             if (node->opType == '&') {
@@ -149,11 +171,11 @@ void precomputeVarMasks(int n) {
     varMasks.clear();
     varMasks.resize(n);
     int totalLen = 1 << n;
-    
+
     for (int i = 0; i < n; i++) {
         varMasks[i].init(n);
         // Variable i has period 2^(i+1), with first 2^i being 0, next 2^i being 1
-        int interval = 1 << i; 
+        int interval = 1 << i;
         for (int k = 0; k < totalLen; k++) {
             // Check if the i-th bit of k is 1
             bool val = (k >> i) & 1;
@@ -165,22 +187,26 @@ void precomputeVarMasks(int n) {
 int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
 
-    int T = inf.readInt(); 
-    double minScoreRatio = 1.0; 
+    int T = inf.readInt();
+    double minScoreRatio = numeric_limits<double>::infinity();
 
     for (int t = 1; t <= T; t++) {
         setTestCase(t);
         N = inf.readInt();
-        string truthTable = inf.readToken(); 
+        string truthTable = inf.readToken();
 
-        string userAns = ouf.readToken(); 
-        string juryAns = ans.readToken(); 
+        string userAns = ouf.readToken();
+        string juryAns = ans.readToken();
 
         if (userAns != juryAns) {
             quitf(_wa, "Test case %d: Verdict mismatch.", t);
         }
 
-        if (userAns == "No") continue; 
+        if (userAns == "No") {
+            // This is a correctness-only case, not a performance reference.
+            minScoreRatio = min(minScoreRatio, 1.0);
+            continue;
+        }
 
         string userExpr = ouf.readToken();
         string juryExpr = ans.readToken();
@@ -188,7 +214,7 @@ int main(int argc, char* argv[]) {
         // 1. Parse expression
         exprStr = userExpr;
         pos = 0; maxDepth = 0; currentDepth = 0; opCount = 0;
-        
+
         Node* root = nullptr;
         try {
             root = parse();
@@ -228,28 +254,23 @@ int main(int argc, char* argv[]) {
         int userOps = opCount;
         int juryOps = countOps(juryExpr);
         double caseScore = 0.0;
-        
+
         if (juryOps == 0) {
             caseScore = (userOps == 0) ? 1.0 : 0.0;
         } else {
-            if (userOps <= juryOps) {
-                caseScore = 1.0;  // Full score for optimal or better
-            } else if (userOps > 2 * juryOps) {
-                caseScore = 0.0;  // Zero score if exceeds 2 * juryOps
-            } else {
-                // Linear decrease: when userOps = juryOps, score = 1.0; when userOps = 2*juryOps, score = 0.0
-                caseScore = 1.0 - (double)(userOps - juryOps) / (double)juryOps;
-            }
+            double ratio = max(0.0, (2.0 * juryOps - userOps) / juryOps);
+            caseScore = referenceScore(ratio);
         }
+        caseScore = natural_log_score(100.0L * (caseScore), userOps, juryOps, true) / 100.0;
         minScoreRatio = min(minScoreRatio, caseScore);
     }
 
     // Calculate final score ratio (minimum across all test cases)
     double score_ratio = minScoreRatio;
     double unbounded_ratio = score_ratio;
-    
+
     // Use standard quitp format
-    quitp(score_ratio, "Value: %.4f. Ratio: %.4f, RatioUnbounded: %.4f", score_ratio, score_ratio, unbounded_ratio);
+    quitp(score_ratio, "Value: %.4f. Ratio: %.12f, RatioUnbounded: %.12f", score_ratio, score_ratio, unbounded_ratio);
 
     return 0;
 }

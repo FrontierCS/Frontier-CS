@@ -1,5 +1,22 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
 #include <vector>
+#include <cmath>
 #include <set>
 #include <map>
 
@@ -57,7 +74,12 @@ int main(int argc, char* argv[]) {
     int k = cliques.size();
 
     //Optimal Solution:
-    int K_optimal = ans.readInt();
+    int K_reference = ans.readInt();
 
-    quitf(_ok, "Valid clique cover found. Used %d cliques, Optimal: %d, Ratio: %.4f", k, K_optimal, (double)K_optimal/k);
+    if (K_reference <= 0) quitf(_fail, "Reference count must be positive.");
+    const double r = (double)K_reference / k;
+    const double old_ratio = r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+    const double ratio = natural_log_score(100.0L*old_ratio, k, K_reference, true)/100.0;
+    quitf(_ok, "Valid clique cover. Used %d cliques, Reference: %d, Performance: %.12f, Ratio: %.12f, RatioUnbounded: %.12f",
+          k, K_reference, r, ratio, ratio);
 }

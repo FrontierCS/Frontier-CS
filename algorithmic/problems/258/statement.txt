@@ -26,7 +26,7 @@ To locate the anomalies, you can perform a series of probes. In each probe:
 2. Response: Read two integers $x$ (the selected node) and $d$ (the total latency).
    - If you receive $x = -1$ and $d = -1$, your query limit is exceeded or the query was invalid. Terminate immediately.
 3. Guess: When you have identified the anomalies, print "!" followed by the two node indices in any order.
-4. Feedback: Read a single string. 
+4. Feedback: Read a single string.
    - If it is "Correct", move to the next test case or exit.
    - If it is "Incorrect", terminate immediately.
 
@@ -49,3 +49,22 @@ To locate the anomalies, you can perform a series of probes. In each probe:
 (System) 3 1
 (User)   ! 1 3
 (System) Correct
+
+Scoring
+
+The physical objective is per-case hidden-pair query count Q_j; smaller is better. The physical reference is `a = floor(ceil(log2(n_j))/4)`; matching a positive reference earns 60 points.
+
+B=floor(ceil(log2(n_j))/4) is computed separately for each case.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(16*B-Q_j)/(15*B))^2 for B>0.
+
+A valid solution with `Q_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+For B=0, a correct zero-query answer receives 100 and a positive query count receives 0.

@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
 #include <iostream>
 #include <map>
@@ -79,6 +95,7 @@ int main(int argc, char *argv[]) {
   int score = lis_a + lds_b + lis_c + lds_d;
 
   double score_ratio = (double)score / (double)n;
+  score_ratio = natural_log_score(100.0L * (score_ratio), score, 0.6L*n, false) / 100.0;
   // printf("score: %d, score_ratio: %.4f\n", score, score_ratio);
   // cerr << "score: " << score << ", score_ratio: " << score_ratio << endl;
   // quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f", score, score_ratio, score_ratio);

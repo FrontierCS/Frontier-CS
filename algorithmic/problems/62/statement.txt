@@ -12,7 +12,7 @@ Pillar y has at most (m - 1) balls.
 
 Only the top ball of pillar x can be moved, and it must be placed on top of pillar y.
 
-The task itself is not too difficult, so Xiao C adds a restriction for himself: the total number of operations must not exceed 10^7. In other words, Xiao C needs to complete the goal using at most 10^7 operations. Specifically, your score will be (10^7 - k) / 10^7, where k is the number of operations.
+The task itself is not too difficult, so Xiao C adds a restriction for himself: the total number of operations must not exceed 10^7. In other words, Xiao C needs to complete the goal using at most 10^7 operations. Fewer operations improve the score as defined in Scoring.
 
 Although Xiao C feels stuck, he believes you can solve it. Please output a valid sequence of operations to achieve the goal. Multiple correct solutions may exist; you only need to output one. It is guaranteed that at least one valid solution exists.
 
@@ -55,3 +55,19 @@ Explanation of Sample 1
 
 Pillars are shown as stacks from bottom to top.
 After performing the operations step by step, all balls of the same color are gathered on the same pillar.
+
+## Scoring
+
+Let x be M, the number of moves. The physical reference (the 60-point level) is a=4000000. Define the lower-band continuation:
+
+    L(x) = 100*max(0,min(1,1-x/10000000)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

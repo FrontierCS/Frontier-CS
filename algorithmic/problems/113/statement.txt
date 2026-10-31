@@ -12,7 +12,21 @@ Input
 The first line contains the number of balls $N$. ($1 \le N \le 30$)
 
 Output
-The first line should output the number of moves $M$. 
+The first line should output the number of moves $M$.
 The next $M$ lines should each contain two integers $a$ and $b$, separated by a space. ($1 \le a, b \le 3; a \ne b$) This indicates that the $i$-th operation moves a ball from basket $a$ to basket $b$ according to the problem's rules.
 
 After the output, all balls originally in basket $1$ must be moved to basket $3$.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of valid basket moves and R>0 is the stored reference move count. Define the objective x=Q, its physical reference a=A=R, and the lower-band calculation L=60*max(0,(2*R-Q)/R).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

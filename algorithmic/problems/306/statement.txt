@@ -26,7 +26,7 @@ The first line contains two integers:
 - `n` — number of islands
 - `e` — number of bridges
 
-Islands are numbered from `1` to `n`.  
+Islands are numbered from `1` to `n`.
 Bridges are numbered from `1` to `e` in input order.
 
 The next `e` lines each contain five integers:
@@ -40,7 +40,7 @@ Then follows one integer:
 
 - `m` — number of forecast days
 
-The next `m` lines describe the days.  
+The next `m` lines describe the days.
 Line `i` contains:
 
 - `r_i` — number of energy depots on day `i`
@@ -61,10 +61,10 @@ meaning island `h_t` has a depot worth `v_t` energy on day `i`.
 Your output must describe one campaign plan.
 
 - First line: one integer `x` — number of rigged bridges.
-- Second line: `x` distinct integers — the IDs of the rigged bridges, in any order.  
+- Second line: `x` distinct integers — the IDs of the rigged bridges, in any order.
   If `x = 0`, this line should be empty.
 
-Then output `m` lines.  
+Then output `m` lines.
 On day `i`, output:
 
 - `d_i` — number of bridges detonated on day `i`
@@ -115,19 +115,20 @@ Its objective value is
 
 `B = sum of all depot values on all days`.
 
-For a feasible submission with objective value `F`, the test score is
+The physical objective is total cost F=InstallCost+BlastCost+Harvested; smaller is better. The physical reference is `a = B/10`; matching a positive reference earns 60 points.
 
-`Score_test = min(1000, 100 * B / max(1, F))`
+Define the historical low-score expression (in points):
 
-An infeasible submission receives `Score_test = 0`.
+    P_low = 60*B/(10*max(1,F)).
 
-The final score is the arithmetic mean of `Score_test` over all test files.
+A valid solution with `F=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-Notes:
+    r = a / F
+    P = min(100, 60 + ln(r)).
 
-- The baseline always scores exactly `100` on every test.
-- Better solutions score higher than `100`.
-- A solution at least `10` times better than the baseline is capped at `1000` on that test.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+B is the sum of all depot values over all days (no bridges rigged or detonated).
 
 ## Constraints
 
@@ -190,5 +191,5 @@ Baseline value:
 
 Therefore this output gets
 
-`Score_test = 100 * 35 / 15 = 233.333...`
+`r = 35/(10*15)`, giving 14 points.
 ```

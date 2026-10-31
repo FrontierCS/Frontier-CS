@@ -32,15 +32,22 @@ To flush your output, you can use:
     System.out.flush() in Java.
     stdout.flush() in Python.
 
-Scoring
-Your solution will be scored based on the efficiency of your queries and swaps, with limits l_1 for operation 1 and l_2 for operation 2.
-Let s_1 be the number of queries (operation 1) you use, and s_2 be the number of swaps (operation 2) you use.
-Let r_1 be the number of queries (operation 1) the reference solution uses, and r_2 be the number of swaps (operation 2) the reference solution uses.
-Your score for each test case is calculated as follows:
-1. If s_1 > l_1 or s_2 > l_2, you receive 0 points for that test case.
-2. Otherwise, your score for this test case is calculated as:
-   score = 100 * min((r_1 + r_2 + 1) / (s_1 + s_2 + 1), 1)
-Your final score is the average of your scores across all test cases.
+## Scoring
+
+Let x be s_1+s_2, the total query and swap count. r_1 and r_2 are the query and swap counts of the comparison solution stored with the test. The separate operation limits l_1 and l_2 still apply. The physical reference (the 60-point level) is a=r_1+r_2. Define the lower-band continuation:
+
+    L(x) = 60*(a+1)/(x+1).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If a=0, the zero-cost rule still applies; positive x uses L(x). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Time limit: 2 seconds
 Memoriy limit: 512 MB
@@ -69,7 +76,7 @@ Example input:
 
 1 1 5
 
-3 3 5 4 1 2 
+3 3 5 4 1 2
 
 Example output:
 5 100 50

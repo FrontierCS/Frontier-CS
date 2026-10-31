@@ -16,23 +16,11 @@ This is a heuristic optimization problem.
 You are NOT required to find an optimal solution.
 Instead, you should try to minimize the total number of cliques used.
 
-Let:
-  K*  = the minimum clique cover number (optimal solution),
-  K   = the number of cliques used by your solution.
+The judge stores a reference solution's objective value. This is the physical
+reference, not a certified optimum. Matching it earns 60 points; improvements
+beyond it continue to earn points according to the scoring rule below.
 
-The score is defined as:
-  Score = K* / K * 100
-
-Thus:
-- Score = 100.0 means optimal clique cover.
-- Using more cliques yields a smaller score.
-- Invalid solutions receive score = 0.
-
-The value K* is known to the judge but not to the contestant.
-
-Note:
-This task is equivalent to vertex coloring on the complement graph:
-a clique partition in G corresponds to a proper coloring in the complement of G.
+A clique partition in G is a proper coloring of its complement.
 
 ## Task
 
@@ -68,17 +56,20 @@ Requirements:
 
 ## Scoring
 
-Let:
-  K   = max_i id[i]
-  K*  = optimal minimum clique cover number (hidden)
+The physical objective is number of cliques in vertex partition K; smaller is better. The physical reference is `a = R`; matching a positive reference earns 60 points.
 
-If the solution is invalid:
-  Score = 0
+R is the positive stored reference number of cliques.
 
-Otherwise:
-  Score = K* / K * 100
+Define the historical low-score expression (in points):
 
-Higher score is better.
+    P_low = 60*R/K.
+
+A valid solution with `K=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / K
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Example
 
@@ -102,7 +93,7 @@ Explanation:
 Vertices {1,2,5} share ID 1 and form a clique (all pairs are edges).
 Vertices {3,4} share ID 2 and form a clique.
 The solution uses K = 2 cliques.
-If the optimal value is K* = 2, then Score = 2 / 2 * 100 = 100.0.
+If the reference count is R = 2, then r = 2/2 = 1 and S(r) = 60 points.
 
 ## Constraints
 

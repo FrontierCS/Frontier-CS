@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+// Performance anchor: 60 points; logarithmic credit above it.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -113,10 +135,8 @@ int main(int argc, char* argv[]) {
     double score;
     const double L = 10000.0;
     const double R = 500000.0;
-    double unbounded_score = max(0.0, R - r) / (R - L) * 100.0;
-    if (r <= (long long)L) score = 100.0;
-    else score = max(0.0, 100.0 * (R - r) / (R - L));
-
-    double res = score / 100.0;
-    quitp(res, "Ratio: %.4f, RatioUnbounded: %.4f", res, unbounded_score / 100.0);
+    double res = reference_score(max(0.0, R-r)/(R-L));
+    res = natural_log_score(100.0 * res, r, 10000.0L, true) / 100.0;
+    double unbounded_score = 100.0 * res;
+    quitp(res, "Ratio: %.12f, RatioUnbounded: %.12f", res, unbounded_score / 100.0);
 }

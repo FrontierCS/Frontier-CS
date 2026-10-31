@@ -45,7 +45,7 @@ The testing system writes “treasure” when all the passages are visited.
 
 If Dr. Jones does not find the treasure room after 50 000 passages are taken, he starves to death,
 and your solution receives the “Wrong Answer” outcome.
-You also receive this outcome if your solution terminates before all passages are taken. Let q be the number of passages you have taken, your score will be (50000 - q) / 50000.
+You also receive this outcome if your solution terminates before all passages are taken. Points depend on the total passage traversals as defined in Scoring.
 
 The total number of chambers in the cave is unknown,
 but you may assume that it does not exceed 20,
@@ -77,3 +77,19 @@ This passage leads to the second chamber.
 He marks it by placing the stone to the right of some passage and takes another one.
 He is in the first chamber again, so he returns to the second chamber and takes the remaining passage.
 This passage leads to the treasure.
+
+## Scoring
+
+Let x be q, the total passage traversals. The physical reference (the 60-point level) is a=20000. Define the lower-band continuation:
+
+    L(x) = 100*max(0,min(1,1-x/50000)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

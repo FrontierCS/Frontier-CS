@@ -98,28 +98,20 @@ You must **minimize `F`**.
 
 ## Scoring
 
-For each test case, define the **baseline solution** as:
+The physical objective is retuning plus query penalty F; smaller is better. The physical reference is `a = 0.4*F_base`; matching a positive reference earns 60 points.
 
-- install no retuners
+Define the historical low-score expression (in points):
 
-Let its objective value be `F_base`.
+    P_low = 100*clamp((F_base-F)/F_base,0,1) if F_base>0.
 
-Your score for the test is:
+A valid solution with `F=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-- if `F_base = 0`:
-  - score = `1,000,000` if `F = 0`
-  - score = `0` otherwise
-- else:
+    r = a / F
+    P = min(100, 60 + ln(r)).
 
-  `score = floor(1,000,000 * max(0, (F_base - F) / F_base))`
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
-So:
-
-- matching the baseline gets score `0`
-- improving on the baseline gives a positive score
-- reaching objective `0` gets score `1,000,000`
-
-The final score is the average of test-case scores, rounded down to the nearest integer.
+F_base is the no-retuner baseline. If F_base=0, a valid F=0 receives 100 and F>0 receives 0.
 
 ## Constraints
 

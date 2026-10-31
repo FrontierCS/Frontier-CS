@@ -39,11 +39,18 @@ where c is an integer 0, 1, or 2, which represent red, yellow and blue respectiv
 
 "query"
 
-The interactor will return the distance between your current node and the exit. The number of times you make a query will determine your score. Details are shown below.
+The interactor will return the distance between your current node and the exit. You may make at most 100000 distance queries; exceeding this limit receives zero points. This limit is separate from the limit of 100000 moves. The number of times you make a query will determine your score. Details are shown below.
 
-3.6 Grading Method
+## Scoring
 
-The the number of queries exceed 10^5, you will get a score of zero. Otherwise, the less queries, the higher score you will get.
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
 
-The time and memory limits given in the problem statement are the total resources available for your code and the interaction library combined.
-We guarantee that for any legal data and calls within the limits, any version of the interaction library (including those distributed to contestants and those used for final evaluation) will not use more than 0.1 seconds of CPU time or more than 10MB of memory. This means contestants have at least 1.9 seconds of CPU time and at least 502MB of memory available for their code.
+Q is the number of distance queries. Define the objective x=Q, its physical reference a=A=5000, and the lower-band calculation L=60*5001/(Q+1).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The +1 shift is used only in L, not in the logarithm. The checker reports P/100.

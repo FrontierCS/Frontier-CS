@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
 #include <vector>
 #include <iostream>
@@ -6,6 +22,8 @@
 #include <string>
 
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 
 // Calculate the base limit for full score (100 pts / 1.0 ratio)
 // Based on the problem statement: 2n^2 - 2n + 1 races are sufficient.
@@ -37,13 +55,13 @@ int main(int argc, char* argv[]) {
         // --- Read Test Case Data ---
         // Format: "n manual"
         int n = inf.readInt(2, 20, "n");
-        inf.readToken("manual"); 
-        
+        inf.readToken("manual");
+
         // Read hidden speeds permutation
         int num_pepes = n * n;
         vector<int> speeds(num_pepes + 1);
         vector<pair<int, int>> sorted_pepes; // Stores {speed, label}
-        
+
         for (int i = 1; i <= num_pepes; ++i) {
             speeds[i] = inf.readInt(1, num_pepes, "speed");
             sorted_pepes.push_back({speeds[i], i});
@@ -57,16 +75,16 @@ int main(int argc, char* argv[]) {
         long long queries_count = 0;
         long long K_base = get_base_limit(n);
         long long K_zero = get_zero_limit(n);
-        
+
         // Hard limit to prevent infinite loops (well above zero score threshold)
-        long long hard_limit = K_zero + 2000; 
+        long long hard_limit = K_zero + 2000;
 
         while (true) {
             string type = ouf.readToken("[?!]");
-            
+
             if (type == "?") {
                 queries_count++;
-                
+
                 // Safety check for excessive queries
                 if (queries_count > hard_limit) {
                     quitf(_wa, "Test case %d: Query limit exceeded reasonable bound (>%lld)", tc + 1, hard_limit);
@@ -79,7 +97,7 @@ int main(int argc, char* argv[]) {
 
                 for (int i = 0; i < n; ++i) {
                     race[i] = ouf.readInt(1, num_pepes, "pepe_index");
-                    
+
                     // Validate index range
                     if (race[i] < 1 || race[i] > num_pepes) {
                         quitf(_wa, "Test case %d: Invalid pepe label %d", tc + 1, race[i]);
@@ -89,14 +107,14 @@ int main(int argc, char* argv[]) {
                         quitf(_wa, "Test case %d: Duplicate pepe %d in race", tc + 1, race[i]);
                     }
                     used[race[i]] = true;
-                    
+
                     // Find the fastest in this race
                     if (speeds[race[i]] > max_speed) {
                         max_speed = speeds[race[i]];
                         winner = race[i];
                     }
                 }
-                
+
                 // Return winner
                 cout << winner << endl;
 
@@ -106,27 +124,27 @@ int main(int argc, char* argv[]) {
                 int count_needed = num_pepes - n + 1;
                 for (int i = 0; i < count_needed; ++i) {
                     int p = ouf.readInt(1, num_pepes, "ans_index");
-                    
+
                     // Check if the i-th printed pepe is indeed the i-th fastest
                     if (p != sorted_pepes[i].second) {
-                        quitf(_wa, "Test case %d: Wrong answer at position %d. Expected label %d (speed %d), got label %d (speed %d)", 
+                        quitf(_wa, "Test case %d: Wrong answer at position %d. Expected label %d (speed %d), got label %d (speed %d)",
                               tc + 1, i + 1, sorted_pepes[i].second, sorted_pepes[i].first, p, speeds[p]);
                     }
                 }
                 // If we pass the loop, the answer is correct.
                 // Move to next test case.
-                break; 
+                break;
             }
         }
-        
+
         total_queries += queries_count;
 
         // --- Calculate Score for this Test Case ---
         // Formula: Score = ((K_zero - Q) / (K_zero - K_base))^2
         // If Q >= K_zero, Score = 0.
-        
+
         double raw_score = 0.0;
-        
+
         if (queries_count < K_zero) {
             double term = (double)(K_zero - queries_count) / (double)(K_zero - K_base);
             raw_score = term * term;
@@ -134,18 +152,10 @@ int main(int argc, char* argv[]) {
             raw_score = 0.0;
         }
 
-        // Unbounded score accumulates the raw result (can be > 1.0 if Q < K_base)
-        total_unbounded_score += raw_score;
+        double capped_score = referenceScore(raw_score);
+        capped_score = natural_log_score(100.0L * (capped_score), queries_count, K_base, true) / 100.0;
+        total_unbounded_score += capped_score;
 
-        // Capped score for standard grading (max 1.0)
-        double capped_score = raw_score;
-        if (queries_count <= K_base) {
-            capped_score = 1.0;
-        } else if (queries_count >= K_zero) {
-            capped_score = 0.0;
-        }
-        // If between base and zero, capped_score equals raw_score (which is < 1.0)
-        
         total_score += capped_score;
     }
 
@@ -154,7 +164,7 @@ int main(int argc, char* argv[]) {
     double avg_unbounded = total_unbounded_score / (double)t;
 
     // Output formatted exactly as requested
-    quitp(avg_score, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", total_queries, avg_score, avg_unbounded);
+    quitp(avg_score, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f", total_queries, avg_score, avg_unbounded);
 
     return 0;
 }

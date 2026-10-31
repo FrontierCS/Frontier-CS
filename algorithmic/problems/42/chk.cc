@@ -1,3 +1,18 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -180,84 +195,21 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Passed validity checks. Compute score per new statement with s(n).
+    // Area is a genuine geometric bound; sRef is a construction/reference scale.
     const double LB = sqrt((double)n);
     const double L0 = ceil(LB);
-
-    // Validate sRef against [LB, L0] to avoid ill-defined bands
-    if (!isFinite(sRef)) {
-        quitf(_fail, "Bad answer file: s(n) is not finite.");
-    }
-    // Strictly speaking, statement requires LB ≤ s ≤ L0. Treat violation as problem config error.
-    // if (sRef < LB - 1e-9 || sRef > L0 + 1e-9) {
-    //     quitf(_fail, "Bad answer file: s(n)=%.12f outside [LB=%.12f, L0=%.12f].", sRef, LB, L0);
-    // }
-    // Clamp tiny numeric drift
-    double s = min(max(sRef, LB), L0);
-
-    const double epsScore = 1e-12;
-    double score100 = 0.0;
-    const char* band = "baseline-or-worse";
-
-    // Degenerate case: perfect square n (LB == L0)
+    if (sRef <= 0.0) quitf(_fail, "Reference side must be positive.");
+    double ratio;
     if (fabs(L0 - LB) <= 1e-15) {
-        // Only two sensible outcomes: exactly LB (==L0) -> 100; else (>= L0) -> 0.
-        if (L <= LB + 1e-12) {
-            score100 = 100.0;
-            band = "degenerate:LB==L0";
-        } else {
-            score100 = 0.0;
-            band = "degenerate:LB==L0";
-        }
+        // Preserve the exact grid optimum for square n.
+        ratio = (L <= LB + 1e-12) ? 1.0 : 0.0;
     } else {
-        if (L > L0 + epsScore) {
-            score100 = 0;
-            band = ">L0";
-        } else if (fabs(L - L0) <= epsScore){
-            score100 = 1;
-            band = "=L0";
-        } else if (L <= LB + epsScore) {
-            score100 = 100.0;
-            band = "LB-band";
-        } else if (L <= s + epsScore) {
-            // Lower band: LB < L ≤ s
-            double denom = s - LB;
-            // denom > 0 ensured by earlier checks unless s==LB (nearly)
-            if (denom <= 1e-15) {
-                // s == LB numerically -> you reached/are above s; only give 100 if L <= LB
-                score100 = 100.0 * (L <= LB + 1e-12);
-            } else {
-                double p2 = (s - L) / denom; // in (0, 1]
-                if (p2 < 0.0) p2 = 0.0;
-                if (p2 > 1.0) p2 = 1.0;
-                double amp = min(1.0, 1.1 * p2);
-                score100 = 95.0 + 5.0 * amp;
-            }
-            band = "lower(LB..s]";
-        } else {
-            // Upper band: s < L < L0
-            double denom = L0 - s;
-            if (denom <= 1e-15) {
-                // s == L0 numerically -> being strictly < L0 should already imply meeting s, give 95
-                score100 = 95.0;
-            } else {
-                double p1 = (L0 - L) / denom; // in (0, 1)
-                if (p1 < 0.0) p1 = 0.0;
-                if (p1 > 1.0) p1 = 1.0;
-                double amp = min(1.0, 1.1 * p1);
-                score100 = 94.0 * amp + 1;
-            }
-            band = "upper(s..L0)";
-        }
+        // Use the actual reference, even when its recursive construction is
+        // worse than the integer grid. Clamping it to L0 changes the anchor.
+        const double performance = sRef / L;
+        ratio = 0.6 * performance;
+        ratio = natural_log_score(100.0 * ratio, L, sRef, true) / 100.0;
     }
-
-    // Ensure [0, 100]
-    if (score100 < 0.0) score100 = 0.0;
-    double unbounded_ratio = std::max(0.0, score100 / 100.0);
-    if (score100 > 100.0) score100 = 100.0;
-
-    // quitp expects a value in [0, 1]. Platforms typically scale by 100.
-    double Ratio = score100 / 100.0;
-    quitp(Ratio, "Ratio: %.4f, RatioUnbounded: %.4f", Ratio, unbounded_ratio);
+    quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f", ratio, ratio);
     return 0;
 }

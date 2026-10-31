@@ -1,4 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -130,23 +153,12 @@ int main(int argc, char* argv[]) {
             quitf(_wa, "Trail %d is never traversed by any team", i);
     }
 
-    // ---- Compute score ----
-    // score = 100000 * min(2, B/A)
-    // ratio for quitp = min(1, B/(2*A))  (since max score = 200000 corresponds to ratio=1)
-    double ratio;
-    if (A == 0) {
-        // This shouldn't happen if m >= 1, but guard
-        ratio = 1.0;
-    } else {
-        double bOverA = (double)B / (double)A;
-        ratio = min(1.0, bOverA / 2.0);
-    }
-
-    // Clamp to [0,1]
-    if (ratio < 0.0) ratio = 0.0;
-    if (ratio > 1.0) ratio = 1.0;
-
-    quitp(ratio, "Feasible. A=%lld B=%lld ratio=%.6f Ratio: %.6f", A, B, ratio, ratio);
+    // Positive trail lengths and full coverage imply A>0.
+    ensuref(A > 0 && B > 0, "Positive route and baseline costs required");
+    double r = (double)B / (2.0 * (double)A);
+    double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0L * (ratio), A, (long double)B/2.0L, true) / 100.0;
+    quitp(ratio, "Feasible. A=%lld B=%lld Ratio: %.12f, RatioUnbounded: %.12f", A, B, ratio, ratio);
 
     return 0;
 }

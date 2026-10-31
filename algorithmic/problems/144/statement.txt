@@ -6,7 +6,7 @@ There is a hidden permutation p of length n, where n is even.
 You are allowed to make queries by choosing a subsequence of indices with even length k (where 4 ≤ k ≤ n). For a chosen subsequence, the interactor will return the two median values.
 For a subsequence of even length k, the two medians are defined as the k/2-th and (k/2+1)-th smallest values in that subsequence.
 
-Your goal is to find the index of the two medians in permutation p. This problem is graded based on the number of queries you use. In order to receive any points, you must use no more than 500 queries. After that, your answer will be compared to a solution ref_queries. Your final score will be calculated as the average of 100 * min(ref_queries / your_queries, 1) across all cases.
+Your goal is to find the index of the two medians in permutation p. This problem is graded based on the number of queries you use. In order to receive any points, you must use no more than 500 queries and give the correct answer.
 
 Input
 
@@ -58,3 +58,17 @@ Output:
 
 Time limit: 4 seconds
 Memory limit: 512 MB
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of median queries and R>=0 is the stored reference query count. Define the objective x=Q, its physical reference a=A=R, and the lower-band calculation L=60*(R+1)/(Q+1).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The +1 shift is used only in L, not in the logarithm. The checker reports P/100.

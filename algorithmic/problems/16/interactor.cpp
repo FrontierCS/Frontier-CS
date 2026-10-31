@@ -1,3 +1,24 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Preserve the bounded base ratio for the unchanged low-score branch.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 #include <bits/stdc++.h>
 #include "testlib.h"
 using namespace std;
@@ -74,5 +95,7 @@ int main(int argc, char* argv[])
 		}
 	}
 	cerr << "[Interactor] used=" << mx << "\n";
-	quitp(score, "Correct Guess. Ratio: %.4f", score);
+	score=penalized(score);
+    score = natural_log_score(100.0 * score, mx, 40.0L + std::log(72.0L/40.0L)/0.0329013504337L, true) / 100.0;
+	quitp(score, "Correct Guess. Ratio: %.12f", score);
 }

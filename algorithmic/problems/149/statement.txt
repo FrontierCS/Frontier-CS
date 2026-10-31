@@ -67,20 +67,16 @@ Examples
 </table>
 
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $a_k$ and $b_k$ be the lengths of the shortest path and the output path for the $k$-th query ($1\leq k\leq 1000$), respectively.
-Then the score for the test case is
+The raw task reward V is
 
 $\mathrm{round}(2312311\times \sum_{k=1}^{1000}0.998^{1000-k} \frac{a_k}{b_k})$
 
-The score of a submission is the total score for each test case.
 If your program outputs an illegal path (visiting the same vertex multiple times, going outside of 30x30, or not a path from $s$ to $t$), it is judged as `WA`.
-After the contest is over, the final ranking will be determined by system tests against the last submission.
-
-- Provisional tests consist of 100 test cases. If you get a result other than `AC` for one or more test cases, the score of the submission will be zero.
-- System tests consist of 3000 test cases. If you get a result other than `AC` for some test cases, only the score for those test cases will be zero. We will publish seeds.txt (md5=0cf5051d586e7f62c0b3527f6f7fbb1c) after the contest is over.
-
 
 
 Input Generation
@@ -104,7 +100,6 @@ Let $h_{i,j}$ be the length of the edge between $(i, j)$ and $(i,j+1)$, and let 
 #### Generation of $s_k$, $t_k$
 The vertices $s_k$ and $t_k$ given in the query are chosen uniformly at random among all the vertices.
 If the Manhattan distance between $s_k$ and $t_k$ ($|si_k-ti_k|+|sj_k-tj_k|$) is strictly less than 10, we repeat the random selection until the distance becomes at least 10.
-
 
 
 Tools
@@ -159,3 +154,13 @@ int main() {
 	return 0;
 }
 ~~~
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the unrounded weighted sum of shortest-path length divided by submitted-path length, with the task’s 0.998 time weights. Its physical reference is a=A=R/2312311. When L>60, take x=X, a=A, and r=x/a; award min(100,60+ln(r)).
+
+The checker reports points/100.

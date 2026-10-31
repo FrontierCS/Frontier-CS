@@ -10,7 +10,9 @@
 
 <p align="center">
   <a href="https://frontier-cs.org"><img src="https://img.shields.io/badge/Website-frontier--cs.org-orange?logo=googlechrome" alt="Website"></a>
-  <a href="https://discord.gg/k4hd2nU4UE"><img src="https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://join.slack.com/t/frontiercs-org/shared_invite/zt-4dnz0xq9i-ifOETjXu_VFAPZKxZ26dnA">
+  <img src="https://img.shields.io/badge/Slack-Join_Community-4A154B?style=flat&logo=slack&logoColor=white" alt="Slack"></a>  
+  <a href="https://discord.gg/Mhd6CZeQa"><img src="https://img.shields.io/badge/Discord-Join_Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://deepwiki.com/FrontierCS/Frontier-CS"><img src="https://img.shields.io/badge/DeepWiki-Documentation-blue?logo=bookstack&logoColor=white" alt="DeepWiki"></a>
   <br>
   <a href="https://arxiv.org/abs/2512.15699"><img src="https://img.shields.io/badge/arXiv-2512.15699-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
@@ -18,11 +20,12 @@
     <img src="https://img.shields.io/badge/Hugging_Face-🤗%20Datasets-orange" alt="Hugging Face">
   </a>
   <img src="https://img.shields.io/badge/Research_Problems-68-blue" alt="Research Problems">
-  <img src="https://img.shields.io/badge/Algorithmic_Problems-188-green" alt="Algorithmic Problems">
+  <img src="https://img.shields.io/badge/Algorithmic_Problems-180-green" alt="Algorithmic Problems">
   <img src="https://img.shields.io/badge/2.0_Problems-20-purple" alt="2.0 Problems">
 </p>
 
 ## News
+- **Oct 20, 2026:** FrontierCS 2 is live: 48 research tasks in 13 domains, each built from a published paper and the code its authors released, where agents must beat the original code. See [frontier-cs.org](https://frontier-cs.org) and the [FrontierCS 2 repository](https://github.com/FrontierCS/FrontierCS-2).
 - **Sep 28, 2026:** [FrontierSmith](https://arxiv.org/abs/2605.14445) was selected as a NeurIPS 2026 Spotlight (top 0.95%).
 - **Sep 28, 2026:** We released [200 FrontierSmith problems](https://github.com/FrontierCS/FrontierSmith) to support community research on training models for open-ended problem solving.
 - **Jun 25, 2026:** FrontierCS was selected as one of 13 projects for [Slingshots // THREE](https://www.laude.org/updates/slingshots-three).
@@ -195,6 +198,43 @@ frontier eval algorithmic 1 <your_solution.cpp> --backend skypilot
 ```
 
 See [algorithmic/README.md](algorithmic/README.md) for full documentation.
+
+#### Scoring principles
+
+The reference defines the performance worth **60 points**. We choose it in two ways:
+
+- **For problems with a human reference, use that reference.** Matching human performance earns 60, and improving on it earns more.
+- **For other open-ended problems with continuous scoring, preserve the original 0–60 scoring curve.** Use the underlying cost or reward that earned 60 under the original rule as the reference. In other words, choose $`a`$ such that $`S_{\mathrm{old}}(a) = 60`$.
+
+For example, if the original rule is $`S_{\mathrm{old}}(x) = 100(1-x/B)`$ for costs between 0 and B, the reference is $`a = 0.4B`$. Costs at or above this reference keep their original scores; positive costs below it enter the logarithmic range.
+
+Let $`x`$ be the actual cost or reward and $`a`$ its reference. For positive values, the improvement factor is:
+
+```math
+r(x) = \begin{cases}
+\dfrac{a}{x}, & \text{for minimization}, \\
+\dfrac{x}{a}, & \text{for maximization}.
+\end{cases}
+```
+
+Let $`L(x)`$ be the lower-band scoring rule, calibrated to give 60 at the reference. For human-reference problems, this is the task-specific normalization with the human reference set to 60. For the other continuous-scoring problems, it is the original scoring curve. The revised score is:
+
+```math
+S(x) = \begin{cases}
+L(x), & L(x) \leq 60, \\
+\min\left(100,\,60 + \ln r(x)\right), & L(x) > 60.
+\end{cases}
+```
+
+Here $`\ln`$ is the natural logarithm of the improvement in the actual objective. It rewards progress beyond the reference while limiting the influence of exceptionally large improvements. Scores remain capped at 100, and valid zero-cost optima retain their explicit full-score treatment. For floating-point answers, problems 121 and 133 treat errors within their stated numerical tolerance as zero: relative error at most $`10^{-9}`$ for 121 and absolute error at most $`10^{-9}`$ for 133.
+
+Apply the formula at each evaluator's scoring unit before aggregation, preserving its subcase and multi-objective structure. Then average test files equally and problems equally.
+
+[Per-problem results for six models](results/README.md) are available under these scoring rules. Their means use the same 179 problems, excluding problem 61 whose output format changed; runs without a submission count as zero.
+
+For previously generated algorithmic solutions, see
+[Rescoring Existing Solutions for v1.1](algorithmic/README.md#rescoring-existing-solutions-for-v11),
+including the manual exclusion of old problem 61 solutions whose output format changed.
 
 ### Raw Score
 

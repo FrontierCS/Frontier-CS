@@ -1,3 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
+
+// Human reference earns 60 points; improvement remains uncapped.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include "testlib.h"
 #include <vector>
 
@@ -59,9 +81,11 @@ namespace {
 void succe(){
     println(0,0);
     full_score = 1;
-    double score=full_score*std::min(1.0,std::max(0.0,1.0*(T-cnt_query)/(T-best_score)));
-    double unbounded_score=full_score*std::max(0.0,1.0*(T-cnt_query)/(T-best_score));
-    quitp(score, "cnt_query=%d, Ratio: %.4f, RatioUnbounded: %.4f",  cnt_query,score, unbounded_score);
+    if(best_score>=T) quitf(_fail,"Reference turns must be below the limit");
+    double score=calibrated(std::max(0.0,(T-cnt_query)*1.0/(T-best_score)));
+    score = natural_log_score(100.0 * score, cnt_query, best_score, true) / 100.0;
+    double unbounded_score=score;
+    quitp(score, "cnt_query=%d, Ratio: %.12f, RatioUnbounded: %.12f",  cnt_query,score, unbounded_score);
     exit(0);
 }
 int main(int argc, char* argv[]) {

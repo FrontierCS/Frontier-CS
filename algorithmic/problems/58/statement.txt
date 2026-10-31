@@ -4,7 +4,7 @@ Walk Alone is an expert in dynamic programming, but he gets bored with tradition
 
 On a 2-dimension grid of size n*n, originally you are on grid (1,1). The grid consists of 0 and 1, and you can only walk on the grid with number 1 in it. You can only go down or right, i.e. you can only increase your x or y by one. Also you cannot walk outside the grid.
 
-Given the number x of ways to walk from (1,1) to (n,n), you need to construct a grid of n*n so that the ways to walk is exactly x. However, since Walk Alone's brain is too small to memorize such a big grid, you need to guarantee that the size of the grid n is equal to or smaller than 300. Specifically, your score will be (300 - n) / 300.
+Given the number x of ways to walk from (1,1) to (n,n), you need to construct a grid of n*n so that the ways to walk is exactly x. However, since Walk Alone's brain is too small to memorize such a big grid, you need to guarantee that the size of the grid n is equal to or smaller than 300. Smaller grids improve the score as defined in Scoring.
 
 Input
 
@@ -38,3 +38,19 @@ Example Output 2:
 1 1 1 1
 1 0 1 1
 1 1 1 1
+
+## Scoring
+
+Let x be n, the side length of the constructed grid. The objective is side length, not area. The physical reference (the 60-point level) is a=120. Define the lower-band continuation:
+
+    L(x) = 100*max(0,min(1,1-x/300)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

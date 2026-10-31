@@ -1,8 +1,7 @@
-```markdown
 # Cascading Flip Schedule on a Power Grid Tree
 
 ## Problem
-You operate a power grid shaped as a tree with **N** substations (vertices) and **N−1** transmission lines (edges).  
+You operate a power grid shaped as a tree with **N** substations (vertices) and **N−1** transmission lines (edges).
 Each substation has a reversible breaker with two states:
 
 - `W` (white) = **safe to service**
@@ -23,7 +22,7 @@ Serviced substations are removed from the system:
 - Their breakers are no longer flipped.
 
 ### Feasibility
-Any permutation of vertices is a valid schedule (you may service a `B` substation; it just tends to be expensive).  
+Any permutation of vertices is a valid schedule (you may service a `B` substation; it just tends to be expensive).
 Your goal is not feasibility but **minimizing total instability cost**.
 
 ## Input
@@ -68,32 +67,21 @@ Notes:
 - Only **unserviced neighbors** are flipped.
 
 ## Scoring
-This is an **optimization** problem; lower cost is better.
 
-For each test case, the judge computes:
-- `C_out`: cost of your output schedule.
-- `C_base`: cost of a deterministic internal reference schedule computed from that test case.
+The physical objective is graph recoloring simulation cost C_out; smaller is better. The physical reference is `a = 0.4*C_base`; matching a positive reference earns 60 points.
 
-Your per-test ratio is:
-\[
-s =
-\begin{cases}
-0 & \text{if } C_{\text{base}} = 0 \\
-\mathrm{clamp}\!\left(\frac{C_{\text{base}} - C_{\text{out}}}{C_{\text{base}}},\, 0,\, 1\right) & \text{otherwise}
-\end{cases}
-\]
-where `clamp(x,0,1)=min(1,max(0,x))`.
+Define the historical low-score expression (in points):
 
-Special cases:
-- Invalid output: `s = 0`.
+    P_low = 100*max(0,1-C_out/C_base) if C_base>0; 0 otherwise.
 
-### Reference cost `C_base`
-`C_base` is the cost of a deterministic internal reference schedule computed by the judge from the same test case.
+A valid solution with `C_out=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-The exact construction of this internal reference schedule is intentionally not part of the contestant-facing specification. For solving the problem, you should optimize `C_out` directly according to the objective above.
+    r = a / C_out
+    P = min(100, 60 + ln(r)).
 
-### Total score
-The per-test ratio `s` is scaled to the total points configured for this problem in the judge configuration; the final score is the sum of these scaled per-test contributions across all test cases.
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+C_base is the cost of the deterministic BFS baseline schedule.
 
 ## Why this is hard
 The cascade flips create long-range dependencies: choosing a vertex changes future states of its neighbors, which changes future costs. Minimizing the integral of “how many unsafe breakers remain over time” is closely related to difficult sequencing problems on graphs; under these constraints, exact optimization is computationally infeasible in practice, so heuristics matter.
@@ -131,5 +119,4 @@ One possible output:
 Explanation (high level):
 - The judge simulates your order.
 - Each round adds the current count of `B` among remaining vertices, then flips unserviced neighbors of the chosen vertex.
-- The resulting total `C_out` is compared against the judge's deterministic reference cost `C_base`, producing a ratio `s ∈ [0, 1]` for this test which is then scaled to the configured per-test point budget.
-```
+- The resulting total `C_out` is compared against the judge's deterministic reference cost `C_base`, giving the per-file points P defined in Scoring.

@@ -6,17 +6,6 @@ He commissioned a contractor to create a draft of an accurate map, but the numbe
 Mayor Takahashi, who loves graphs, is only interested in the adjacencies between the wards and thinks that the map could be drawn with fewer tiles if information other than adjacencies, such as the shape and size of each ward, is ignored.
 Please create a map using as few tiles as possible.
 
-<div style="display: flex; width: 100%;">
-  <div style="flex-basis: 40%; text-align: center; margin-right: 10%;">
-    <img src="./images/input.png" style="max-width: 100%; max-height: 100%; vertical-align: middle;">
-	<p>Accurate map</p>
-  </div>
-  <div style="flex-basis: 50%; text-align: center;">
-    <img src="./images/output.png" style="max-width: 100%; max-height: 100%; vertical-align: middle;">
-	<p>Small map correctly representing adjacencies</p>
-  </div>
-</div>
-
 Problem Statement
 --------
 Given a map of Takahashi City represented on a grid of $n\times n$ squares.
@@ -33,16 +22,12 @@ Your task is to create a map represented on a grid of $n\times n$ squares that s
 - For every pair of colors $c$ and $d$ ($0\leq c<d\leq m$), the adjacency of a set of squares of color $c$ and a set of squares of color $d$ in the original map and the created map must be identical. That is, if and only if there exist adjacent squares of color $c$ and $d$ in the original map, there exist adjacent squares of color $c$ and $d$ in the created map. Note that since the outside of the $n\times n$ squares is colored $0$, the squares on the boundary are considered to be adjacent to squares of color $0$.
 
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $E$ be the total number of squares of color $0$ in the created map.
-Then you will obtain a score of $E+1$.
-
-There are 150 test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
-
+Then the raw task reward V is $E+1$.
 
 
 Input
@@ -99,3 +84,15 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc024/AU5KcDyn_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the number of zero cells in the map. The raw task reward is V=1+X, but the upper band compares X itself with A=R-1. When L>60 and A>0, take x=X, a=A, and r=x/a; award min(100,60+ln(r)); if A=0, use the zero-reference fallback defined below.
+
+When the physical reference a=R-1 is nonpositive, no ratio to a positive physical reference exists. Preserve L when L<=60; above that threshold use calibration improvement r0=(V-B)/(R-B)>1 and award 60+ln(r0) points. This explicit fallback has natural-log coefficient 1, but r0 measures calibrated reward improvement, not a physical target ratio.
+
+The checker reports points/100.

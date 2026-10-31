@@ -73,29 +73,6 @@ If you receive -1, terminate immediately.
 After printing any query or answer, print a newline and flush.
 
 --------------------------------------------------
-Scoring (modified version)
---------------------------------------------------
-
-Your submission is evaluated over the whole input consisting of t test cases.
-
-Let:
-- Q = total number of queries ("? i j") you asked across all test cases.
-- c = number of test cases for which your final answer "! x" was wrong.
-
-Your total cost (to be minimized) is:
-   cost = Q + (4^c - 1)
-
-Scoring:
-- If cost ≤ 15000: full score (100 points)
-- If cost ≥ 100000: zero score (0 points)
-- Otherwise: linearly interpolated between 0 and 100 points
-
-Notes:
-- You are allowed to be wrong on some test cases; this increases c and thus adds a penalty (4^c - 1).
-- The final "! x" outputs do NOT count as queries (only lines starting with "?" count toward Q).
-- Since the grader is adaptive, you must ask enough questions to uniquely determine the Impostor.
-
---------------------------------------------------
 Example (format demonstration)
 --------------------------------------------------
 
@@ -136,3 +113,22 @@ Output (to interactor)
 The numbers in "Input" after each n are the interactor's replies to the queries (lines starting with "?").
 Note that there is no reply from the interactor after answer lines (starting with "!").
 Since the grader is adaptive, the shown answers may differ from what you receive.)
+
+Scoring
+
+The physical objective is query-plus-mistake cost C=Q+4^c-1; smaller is better. The physical reference is `a = 15000`; matching a positive reference earns 60 points.
+
+Q is the total query count and c is the number of incorrect final guesses.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(100000-C)/85000).
+
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / C
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. A wrong final guess increments c and is charged through 4^c-1; it does not automatically invalidate the whole file. Invalid protocol commands or arguments are rejected. The zero-cost bonus requires Q=0 and c=0 after completing every case. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
+
+Wrong final guesses contribute through4^c-1; a protocol violation still receives 0.

@@ -80,3 +80,21 @@ Example Output:
 ? 1 2 5 4 3
 ? 2 1 4 3 5
 ! 3 1 2 5 4
+
+## Scoring
+
+Let x be Q, the query count in a subcase. n is the subcase size. The physical reference (the 60-point level) is a=n. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(20*n-x)/(19*n))^2.
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their arithmetic mean.
+
+Across test files, use the arithmetic mean of the file scores.

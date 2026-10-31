@@ -41,3 +41,19 @@ standard input standard output
 1 8 1
 0
 Page 1 of 1
+
+## Scoring
+
+Let x be n, the number of constructed graph vertices. The physical reference (the 60-point level) is a=50. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(100-x)/50).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

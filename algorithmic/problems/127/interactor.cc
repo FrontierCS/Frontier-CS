@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 // The Big Prize interactor (stdout version; 0-based indices; Testlib)
 // Time limit and memory limit are enforced by the judge runner, not here.
 //
@@ -25,6 +41,12 @@
 //          ratio = your_score / best_score  (with special-casing best_score == 0)
 
 #include "testlib.h"
+
+// Continuous reference calibration; the performance anchor earns 60 points.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -144,7 +166,7 @@ int main(int argc, char* argv[]) {
 
     auto finalize_with_ratio = [&](double ratio, double unbounded_ratio, const string &fmt, auto... args) {
         string base = format(fmt.c_str(), args...);
-        quitp(ratio, "%s Ratio: %.6f, RatioUnbounded: %.6f", base.c_str(), ratio, unbounded_ratio);
+        quitp(ratio, "%s Ratio: %.12f, RatioUnbounded: %.12f", base.c_str(), ratio, unbounded_ratio);
     };
 
     while (true) {
@@ -197,17 +219,11 @@ int main(int argc, char* argv[]) {
             double your_score = (double)your_raw_nonneg;
             double best_score = (double)best_raw_nonneg;
 
-            double ratio;
-            double unbounded_ratio;
-            if (best_score <= 0.0) {
-                ratio = (your_score <= 0.0) ? 1.0 : 0.0;
-                unbounded_ratio = ratio;
-            } else {
-                ratio = your_score / best_score;
-                if (ratio < 0.0) ratio = 0.0;
-                unbounded_ratio = ratio;
-                if (ratio > 1.0) ratio = 1.0;
-            }
+            ensuref(optimal_queries < 5000, "Reference queries must be below the zero-score baseline");
+            double r = max(0.0, double(5000 - queries) / (5000 - optimal_queries));
+            double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0 * ratio, queries, optimal_queries, true) / 100.0;
+            double unbounded_ratio = ratio;
 
             finalize_with_ratio(ratio, unbounded_ratio,
                                 "Accepted. Queries used: %d. Your score = 5000 - %d = %d. "

@@ -70,15 +70,22 @@ The second line: Set of communication links (each link is represented as "device
 1-3#2-3#3-4
 ```
 
-## Scoring
+Scoring
 
-Your solution will be evaluated based on the total energy consumption cost of the network you construct. The score is calculated as:
+The physical objective is relay network actual total cost C; smaller is better. The physical reference is `a = 8*D/9`; matching a positive reference earns 60 points.
 
-- Base score: The minimum spanning tree (MST) cost of all non-relay nodes (without using any relay stations).
-- Your score: The actual total cost of your network.
-- Final score ratio: min(1.0, base_cost / actual_cost)
+D is the minimum-spanning-tree cost without relay nodes.
 
-If your network cost is less than or equal to the base MST cost, you receive full score (1.0). Otherwise, your score decreases proportionally.
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(D-C)/(D/9)) for D>0; 0 for D=0 and C>0.
+
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / C
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Constraints
 

@@ -1,10 +1,29 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <vector>
-#include <algorithm>
-#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <random>
+
+// Reference calibration: 60 points at r=1, logarithmic rewards above it.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 
 using namespace std;
 
@@ -41,10 +60,10 @@ int main(int argc, char* argv[]) {
             int v = inf.readInt(1, n, "v");
             adj[u].push_back(v);
             adj[v].push_back(u);
-            
+
             cout << u << " " << v << endl;
         }
-        
+
         for(int i = 1; i <= n; ++i) {
             degrees[i] = adj[i].size();
         }
@@ -55,8 +74,8 @@ int main(int argc, char* argv[]) {
         visited[curr] = true;
         int visited_count = 1;
         int moves = 0;
-        
-        long long limit = 2LL * base_move_count; 
+
+        long long limit = 2LL * base_move_count;
         bool success = false;
 
         while (moves <= limit) {
@@ -64,13 +83,13 @@ int main(int argc, char* argv[]) {
                 success = true;
                 break;
             }
-            
+
             if (moves == limit) {
-                break; 
+                break;
             }
 
             vector<int> neighbors = adj[curr];
-            
+
             std::shuffle(neighbors.begin(), neighbors.end(), gen);
 
             int d = neighbors.size();
@@ -96,29 +115,12 @@ int main(int argc, char* argv[]) {
 
         if (success) {
             cout << "AC" << endl;
-            
-            double current_score = 0.0;
-            double moves_dbl = (double)moves;
-            double base_dbl = (double)base_move_count;
-        
-            if (moves <= base_move_count) {
-                current_score = 1.0; 
-            } else if (moves <= 2 * base_move_count) {
-                double numerator = (2.0 * base_dbl) - moves_dbl;
-                double ratio = numerator / base_dbl;
-                current_score = ratio * ratio;
-            } else
-                current_score = 0.0;
 
-            double unbounded_score = ((2.0 * base_dbl) - moves_dbl) / base_dbl;
-            unbounded_score = unbounded_score * unbounded_score;
-            tot_unbounded_score += unbounded_score;
-        
-            if (current_score < 0)
-                current_score = 0.0;
-            if (current_score > 1.0)
-                current_score = 1.0;
-        
+            double r = std::max(0.0, (2.0 * base_move_count - moves) / base_move_count);
+            double current_score = calibrated(r * r);
+    current_score = natural_log_score(100.0 * current_score, moves, base_move_count, true) / 100.0;
+            tot_unbounded_score += current_score;
+
             tot_score += current_score;
         } else {
             cout << "F" << endl;
@@ -127,7 +129,7 @@ int main(int argc, char* argv[]) {
 
     double score_ratio = tot_score / t;
     double unbounded_score_ratio = tot_unbounded_score / t;
-    quitp(score_ratio, "Queries: %lld. Ratio: %.4f, RatioUnbounded: %.4f", tot_moves, score_ratio, unbounded_score_ratio);
+    quitp(score_ratio, "Queries: %lld. Ratio: %.12f, RatioUnbounded: %.12f", tot_moves, score_ratio, unbounded_score_ratio);
 
     return 0;
 }

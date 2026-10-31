@@ -1,10 +1,9 @@
-```markdown
 # Quadratic Witness Packing
 
 ## Problem
 You are building a small library of reusable **quadratic witnesses**.
 
-A witness is a pair of integers \((A,B)\).  
+A witness is a pair of integers \((A,B)\).
 For a query \((p,x)\), the witness **matches** the query if
 
 \[
@@ -76,50 +75,21 @@ V = \sum_{i \in C} w_i.
 You must **maximize** \(V\).
 
 ## Scoring
-For each test file, the judge also computes a fixed **baseline solution**:
 
-- it outputs exactly \(K\) witnesses
-  \[
-  (0,0), (1,0), (2,0), \dots, (K-1,0),
-  \]
-- this is always feasible because \(B \ge K-1\).
+The physical objective is covered total query weight V; larger is better. The physical reference is `a = V_base+0.6*(W-V_base) if V_base<W; 0.6*W if V_base=W`; matching a positive reference earns 60 points.
 
-Let:
+Define the historical low-score expression (in points):
 
-- \(W = \sum_{i=1}^n w_i\) be the total weight,
-- \(V_{\text{base}}\) be the baseline objective value,
-- \(U = W - V\) be your uncovered weight,
-- \(U_{\text{base}} = W - V_{\text{base}}\) be the baseline uncovered weight.
+    P_low = 100*max(0,(V-V_base)/(W-V_base)) if V_base<W; 100*V/W if V_base=W.
 
-The per-file score is:
+If `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference and objective, award:
 
-- if \(U_{\text{base}} = 0\), then every feasible submission gets **1,000,000** points;
-- otherwise,
-  \[
-  \text{score} =
-  \left\lfloor
-  10^6 \cdot
-  \max\left(0,\ \min\left(1,\ \frac{U_{\text{base}} - U}{U_{\text{base}}}\right)\right)
-  \right\rfloor.
-  \]
+    r = V / a
+    P = min(100, 60 + ln(r)).
 
-Equivalently,
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
-\[
-\text{score} =
-\left\lfloor
-10^6 \cdot
-\max\left(0,\ \min\left(1,\ \frac{V - V_{\text{base}}}{W - V_{\text{base}}}\right)\right)
-\right\rfloor
-\quad\text{when } V_{\text{base}} < W.
-\]
-
-So:
-- matching the baseline gives score \(0\),
-- covering all queries gives score \(1{,}000{,}000\),
-- intermediate improvements give proportionally higher scores.
-
-The final contest score is the sum of per-file scores over all test files.
+W is the total query weight. The baseline uses witnesses (0,0),...,(K-1,0). V_base is its covered weight. Full physical coverage follows the logarithmic formula rather than an automatic 100 endpoint.
 
 ## Constraints
 - \(1 \le n \le 2 \times 10^5\)
@@ -173,13 +143,13 @@ So the covered total weight is
 
 The only uncovered query is \((5,1)\) with weight \(8\), so \(W=44\) and \(U=8\).
 
-The baseline witnesses are \((0,0)\) and \((1,0)\), whose sums are \(0\) and \(1\).  
+The baseline witnesses are \((0,0)\) and \((1,0)\), whose sums are \(0\) and \(1\).
 They cover only the first two queries, so \(V_{\text{base}}=18\), hence \(U_{\text{base}}=26\).
 
-Therefore the score for this file is
-\[
-\left\lfloor 10^6 \cdot \frac{26-8}{26} \right\rfloor
-=
-692307.
-\]
-```
+Therefore the points for this file are
+
+    S = 100*(1-8/26) = 900/13
+    a = 18 + 0.6*(44-18) = 33.6
+    P = 60 + ln(36/33.6), approximately 60.068993.
+
+The base score is above 60, so the upper branch applies.

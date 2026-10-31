@@ -32,3 +32,19 @@ AC??A?
 A??A?T
 output
 0.0302734375
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+p is the output probability and p_ref is the stored reference probability. When p_ref is nonzero, E=abs(p/p_ref-1). Define the objective x=E, its physical reference a=A=0.04, and the lower-band calculation L=100*max(0,1-10*E).
+
+If p_ref=0, output p=0 receives 100 and every nonzero p receives zero; the following rule applies only when p_ref is nonzero.
+
+```text
+P = 100,                         if x <= 1e-9
+P = L,                           if L <= 60 and x > 1e-9
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Relative error at most 1e-9 is treated as zero before the lower-band test. This numerical tolerance avoids requiring the exact rounding of the stored floating-point reference. For example, the stored value 0.0052510053510665894 and the rounded output 0.005251005351 both receive 100 points. The tolerance is relative, so outputting zero for a small nonzero reference does not receive full credit. Errors above this tolerance retain the scoring curve above. The checker reports P/100.

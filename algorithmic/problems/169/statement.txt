@@ -16,7 +16,7 @@ There is an $N\times N$ square board.
 Let $(0, 0)$ be the coordinates of the top-left square, and $(i, j)$ be the coordinates of the square located $i$ squares down and $j$ squares to the right from there.
 The set of squares $(i,0), (i,1), \dots, (i,N-1)$ is referred to as **row $i$**, and the set of squares $(0,j), (1,j), \dots, (N-1,j)$ is referred to as **column $j$**.
 
-Initially, there are **Oni (demons)** <img src="./images/oni.png" width="25"> and **Fukunokami (fortune gods)** <img src="./images/fuku.png" width="25"> pieces on the board, with $2N$ pieces of each type, all placed on distinct squares.
+Initially, there are **Oni (demons)** and **Fukunokami (fortune gods)** pieces on the board, with $2N$ pieces of each type, all placed on distinct squares.
 
 You can select one row or column in a single operation and shift the chosen row/column by one square in either the left/right or up/down direction.
 
@@ -29,19 +29,15 @@ You can perform up to $4N^2$ operations.
 
 Your goal is to remove all the Oni from the board using as few moves as possible, without removing any Fukunokami.
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 Let $T$ be the number of operations in the output sequence, $X$ be the number of Oni remaining on the board, and $Y$ be the number of Fukunokami removed from the board.
-Then, you will obtain the following score.
+The raw task reward V is defined as follows.
 
-- If $X=0$ and $Y=0$, the score is $8N^2 - T$.
-- If $X>0$ or $Y>0$, the score is $4N^2 - N (X+Y)$.
-
-There are $150$ test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time.
-
+- If $X=0$ and $Y=0$, the raw task reward V is $8N^2 - T$.
+- If $X>0$ or $Y>0$, the raw task reward V is $4N^2 - N (X+Y)$.
 
 
 Input
@@ -91,9 +87,7 @@ The number of operations $T$ must not exceed $4N^2$.
 If the limit is exceeded, the output will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span>.
 
 
-
 <a href="https://img.atcoder.jp/ahc042/cnhLtdRT.html?lang=en&seed=0&output=sample">Show example</a>
-
 
 
 Input Generation
@@ -119,3 +113,13 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc042/cnhLtdRT_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. Each logarithmic branch has its own original quantity x and physical 60-point reference a: r=a/x for the completed-task minimizing cost, or r=x/a for the maximizing composite quality. The upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+When all demons are removed and no fortunes are lost, and 4*n^2<=R<8*n^2, let C be the action count and A=8*n^2-R, where n is the board size. In this completed-task cost branch, take x=C, a=A, and r=a/x; L>60 earns min(100,60+ln(r)). A completed construction with exactly zero C earns 100, even when the reference lies at another stage; an incomplete zero-operation output does not. In all other branches, retain the original ordered composite objective V: take x=V, a=T, and r=x/a; when L>60, award min(100,60+ln(r)). This retains completion priority rather than treating incomplete low-cost outputs as good solutions.
+
+The checker reports points/100.

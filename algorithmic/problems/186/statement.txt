@@ -12,19 +12,9 @@ This is a heuristic optimization problem.
 You are NOT required to find an optimal coloring.
 Instead, you should try to minimize the total number of colors used.
 
-Let:
-  C*  = the chromatic number of the graph (optimal solution),
-  C   = the number of colors used by your solution.
-
-The score is defined as:
-  Score = C* / C * 100
-
-Thus:
-- Score = 100.0 means optimal coloring.
-- Using more colors yields a smaller score.
-- Invalid colorings receive score = 0.
-
-The value C* is known to the judge but not to the contestant.
+The judge stores a reference solution's objective value. This is the physical
+reference, not a certified optimum. Matching it earns 60 points; improvements
+beyond it continue to earn points according to the scoring rule below.
 
 ## Task
 
@@ -58,17 +48,20 @@ Requirements:
 
 ## Scoring
 
-Let:
-  C   = max_i color[i]
-  C*  = optimal chromatic number (hidden)
+The physical objective is number of colors K; smaller is better. The physical reference is `a = R`; matching a positive reference earns 60 points.
 
-If the coloring is invalid:
-  Score = 0
+R is the positive stored reference number of colors.
 
-Otherwise:
-  Score = C* / C * 100
+Define the historical low-score expression (in points):
 
-Higher score is better.
+    P_low = 60*R/K.
+
+A valid solution with `K=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / K
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Example
 
@@ -90,7 +83,7 @@ Output:
 
 Explanation:
 The solution uses 3 colors.
-If the optimal chromatic number is C* = 3, then Score = 3 / 3 * 100 = 100.0.
+If the reference count is R = 3, then r = 3/3 = 1 and S(r) = 60 points.
 
 ## Constraints
 

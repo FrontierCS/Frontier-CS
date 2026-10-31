@@ -8,12 +8,6 @@ He knows which flavor of candy each employee will put in by preliminary survey, 
 Since he is a clean freak, he will move the pieces of candy by tilting the box forward, backward, left, or right, just once for each piece of candy received, and eventually wants to make sure that the same type of candy is clustered together as much as possible.
 Please help him by writing a program to determine the direction to tilt.
 
-<figure>
-	<img src="./images/b639c75d_1.gif">
-	<figcaption>Example for $5\times 5$</figcaption>
-</figure>
-
-
 Problem Statement
 --------
 There is a box that can contain $10\times 10$ pieces of candy in a grid pattern.
@@ -24,31 +18,21 @@ You cannot change the order in which the pieces of candy are received.
 
 Each time you receive one piece of candy, you must tilt the box forward, backward, left, or right exactly once.
 When you tilt the box, each piece of candy moves in that direction simultaneously until it reaches the edge or hits another candy.
-For example, if you tilt the box forward in the state shown in the left figure, the box will be in the state shown in the right figure.
+For example, tilting the box forward packs the candies toward the front of each column while preserving their order within that column.
 
-![](./images/b639c75d_2.png)
-![](./images/b639c75d_3.png)
-
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 We define the connectivity of pieces of candy as follows and consider the connected components.
 > Two pieces of candy are connected if and only if they are of the same flavor and can reach each other through only pieces of candy of the same flavor in the four directions (front, back, left, right).
 
-For example, the state in the figure below consists of $7$ connected components of size $\\{1, 1, 2, 2, 4, 6, 9\\}$.
-
-![](./images/b639c75d_4.png)
-
 Let $n_1,\cdots,n_k$ be the list of sizes of connected components in the final state after receiving 100 pieces of candy, and let $d_i$ be the total number of pieces of candy of flavor $i$.
-Then the score for the test case is
+The raw task reward V is
 
 \\[\mathrm{round}\left(10^6\times\frac{\sum_{i=1}^k n_i^2}{\sum_{i=1}^3 d_i^2}\right)\\]
 
 Your task is to write a program to determine the tilting directions so that you can get as high a score as possible.
-
-There are 200 test cases, and the score of a submission is the total score for each test case.
-If your submission produces an illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-The highest score obtained during the contest will determine the final ranking, and there will be no system test after the contest.
-If more than one participant gets the same score, they will be ranked in the same place regardless of the submission time (note that this is changed from previous short-term AHCs).
 
 
 Input and Output
@@ -63,10 +47,8 @@ Each $f_t$ is an integer value between $1$ and $3$, representing the flavor of t
 After reading the above information, repeat the following process $100$ times.
 
 In the $t$-th process ($1\leq t\leq 100$), a single integer $p_t$ between $1$ and $101-t$ is given from Standard Input.
-Let us number the empty cells from $1$ to $101-t$ in front-to-back and left-to-right priority, as shown in the example figure below.
+Number the empty cells from $1$ to $101-t$ by scanning rows from front to back and, within each row, from left to right, skipping occupied cells.
 Then the $t$-th piece of candy is placed in the $p_t$-th empty cell.
-
-![](./images/b639c75d_5.png)
 
 After reading $p_t$, by representing forward, backward, left, and right by `F`, `B`, `L`, and `R`, respectively, output a single character to Standard Output to indicate which direction to tilt the box.
 
@@ -132,3 +114,13 @@ Tools (Input generator and visualizer)
 	- <a href="https://img.atcoder.jp/ahc015/b639c75d_windows.zip">Pre-compiled binary for Windows</a>: If you are not familiar with the Rust language environment, please use this instead.
 
 Please be aware that sharing visualization results or discussing solutions/ideas during the contest is prohibited.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. If R<=B, set U=1000000, L=100*max(0,(V-B)/(U-B)), and T=B+0.6*(U-B). Otherwise set L=60*max(0,(V-B)/(R-B)) and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the integer sum of squared same-color connected-component sizes, and D the sum of squared total populations of each color. Its physical reference is a=A=T*D/1e6. When L>60, take x=X, a=A, and r=x/a; award min(100,60+ln(r)).
+
+The checker reports points/100.

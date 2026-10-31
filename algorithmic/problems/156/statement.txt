@@ -346,13 +346,14 @@ For example, the loop line below consists of 7 tiles, but its length is 8 becaus
 
 Your task is to determine the number of times to rotate each tile.
 
-Scoring
+Raw task objective
 --------
-Let $L_1$ be the length of the longest loop line obtained by rotating the tiles according to the output, and $L_2$ be the length of the second longest one ($L_1=L_2$ if there is more than one longest one).
-Then, you will get a score of $L_1\times L_2$.
-If the number of loop lines is less than or equal to $1$, the score for that test case is $0$.
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
 
-There are 100 test cases, and the score of a submission is the total score for each test case. If you get a result other than <span class='label label-success' data-toggle='tooltip' data-placement='top' title="Accepted">AC</span> for one or more test cases, the score of the submission will be zero. The highest score obtained during the contest time will determine the final ranking, and there will be no system test after the contest. If more than one participant gets the same score, the ranking will be determined by the submission time of the submission that received that score.
+Let $L_1$ be the length of the longest loop line obtained by rotating the tiles according to the output, and $L_2$ be the length of the second longest one ($L_1=L_2$ if there is more than one longest one).
+The raw task reward V is $L_1\times L_2$.
+If the number of loop lines is less than or equal to $1$, the raw task reward V is $0$.
+
 
 Hints on how to compute the length of a loop line.
 <details>
@@ -448,3 +449,13 @@ Tools (Input generator and visualizer)
 <font color="red">**Sharing visualization results is not allowed until the end of the contest. **</font>
 
 {sample example}
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+The original objective is the task reward V itself, including any task-defined composite weighting, rather than the calibrated improvement (V-B)/(R-B). When L>60, take x=V, a=T, and r=x/a; award min(100,60+ln(r)). V=0 is not a perfect solution and receives no special full-score award.
+
+The checker reports points/100.

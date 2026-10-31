@@ -24,12 +24,16 @@ There are no multiple edges or self-loops.
 
 ## Scoring
 
-Let:
-- m be the number of edges
-- b be the number of conflicting edges
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
 
-Score is defined as:
-- If m > 0:  score = 1 − b / m
-- If m = 0:  score = 1
+E is the number of edges whose endpoints have the same color, and m is the number of graph edges. Define the objective x=E, its physical reference a=A=0.4*m, and the lower-band calculation L=100*(1-E/m) when m>0.
 
-The score is clamped to [0, 1].
+If m=0, every valid coloring receives 100; the following rule otherwise applies.
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The checker reports P/100.

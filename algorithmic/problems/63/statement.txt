@@ -22,7 +22,7 @@ Allow travel only from V_i to U_i.
 
 Then ask whether it is possible to travel from the star containing the key to the star containing the treasure box under these directed conditions.
 
-Your goal is to identify the star A containing the key and the star B containing the treasure box while minimizing the number of questions. Let q be the number of queries you asked, your score will be (600 - q) / 600.
+Your goal is to identify the star A containing the key and the star B containing the treasure box while minimizing the number of questions. Points are defined in Scoring.
 
 Constraints
 
@@ -63,3 +63,19 @@ To flush your output, you can use:
 Time limit: 2 seconds
 
 Memory Limit: 1024 MB
+
+## Scoring
+
+Let x be q, the query count. The physical reference (the 60-point level) is a=240. Define the lower-band continuation:
+
+    L(x) = 100*max(0,min(1,1-x/600)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

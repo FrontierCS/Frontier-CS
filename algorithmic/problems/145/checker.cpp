@@ -1,3 +1,25 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+
+// Legacy base ratio, retained only to decide and preserve the lower band.
+static double penalized(double s) {
+    return std::max(0.0, std::min(1.0, s));
+}
+
 // checker.cpp
 // C++11 testlib special judge for the Slitherlink-like problem.
 // Fully reproduces behavior of the original Python+Z3 checker.
@@ -581,11 +603,12 @@ int main(int argc, char **argv){
 
     const int ones = count_ones();
     const int clues = clue_cell_count();
-    const double score = score_percent(cnt);
+    double score = 100.0 * penalized(score_percent(cnt) / 100.0);
+    if (cnt == 1) score = natural_log_score(score, clues - ones, 0.8L * clues, true);
     const string count_label = cnt >= 6 ? "six or more" : to_string(cnt);
     quitp(
         score / 100.0,
-        "Ratio: %.10f RatioUnbounded: %.10f Score: %.6f, solutions: %s, ones: %d/%d",
+        "Ratio: %.12f RatioUnbounded: %.12f Score: %.6f, solutions: %s, ones: %d/%d",
         score / 100.0,
         score / 100.0,
         score,

@@ -1,4 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
+
+// Continuous reference calibration; the performance anchor earns 60 points.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 #include <bits/stdc++.h>
 using namespace std;
 
@@ -237,16 +259,11 @@ int main(int argc, char* argv[]) {
                 // Full score if Q <= 3000, zero if Q > 1,200,000, otherwise linear interpolation.
                 const long long Q_full = 3000;
                 const long long Q_zero = 1200000;
-                double ratio = 0.0, unbounded_ratio = 0.0;
-                if (query_count <= Q_full) ratio = 1.0, unbounded_ratio = 1.0;
-                else if (query_count > Q_zero) ratio = 0.0;
-                else {
-                    ratio = double(Q_zero - query_count) / double(Q_zero - Q_full);
-                    if (ratio < 0.0) ratio = 0.0;
-                    unbounded_ratio = max(0.0, ratio);
-                    if (ratio > 1.0) ratio = 1.0;
-                }
-                quitp(ratio, "Ratio: %.4f, RatioUnbounded: %.4f.", ratio, unbounded_ratio);
+                double r = max(0.0, double(Q_zero - query_count) / double(Q_zero - Q_full));
+                double ratio = referenceScore(r);
+    ratio = natural_log_score(100.0 * ratio, query_count, 3000.0L, true) / 100.0;
+    double unbounded_ratio = ratio;
+                quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f.", ratio, unbounded_ratio);
             }
 
             break;

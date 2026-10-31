@@ -48,7 +48,18 @@ Otherwise, you will get Idleness limit exceeded. To do this, use:
 
 Scoring
 
-Your score depends on the number of queries Q you use to order the pepes across all test cases. Smaller Q gives higher score.
+The physical objective is per-case race query count Q_j; smaller is better. The physical reference is `a = n_j*n_j`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(4*n_j*n_j-Q_j)/(3*n_j*n_j))^2.
+
+A valid solution with `Q_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Example Input:
 1

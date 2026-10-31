@@ -1,7 +1,27 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <vector>
 #include <numeric>
-#include <algorithm>
+
+
+// Map normalized performance to the reference-anchored score, without a cap.
+static double referenceScore(double r) {
+    return r <= 1.0 ? 0.6 * r : (0.6 + 0.02 * std::log(r));
+}
 
 int main(int argc, char* argv[]) {
     // Initialize the interactor.
@@ -16,6 +36,7 @@ int main(int argc, char* argv[]) {
     // Read secret information from .ans file
     // The .ans file should now contain the best_queries value first, then the permutation.
     long long best_queries = ans.readLong();
+    ensuref(0 <= best_queries && best_queries < 10000, "Reference query count must be in [0, 10000)");
     std::vector<int> hidden_permutation(n);
     for (int i = 0; i < n; ++i) {
         hidden_permutation[i] = ans.readInt();
@@ -79,17 +100,13 @@ int main(int argc, char* argv[]) {
                 // The "value" in the formula is how many queries you were *under* the baseline.
                 double your_value = (double)(MAX_QUERIES_BASELINE - your_queries);
                 double best_value = (double)(MAX_QUERIES_BASELINE - best_queries);
-                
-                // Avoid division by zero if the pre-calculated best is same or worse than baseline
-                if (best_value <= 0) {
-                     quitp(1.0, "Correct guess with %lld queries. Exceeded expectations. Ratio: 1.0000", your_queries);
-                }
 
-                double score_ratio = your_value / best_value;
-                score_ratio = std::max(0.0, std::min(1.0, score_ratio)); // Clamp
-                double unbounded_score_ratio = your_value / best_value; // No clamping for unbounded score
-                
-                quitp(score_ratio, "Correct guess in %lld queries. Ratio: %.4f, RatioUnbounded: %.4f", your_queries, score_ratio, unbounded_score_ratio);
+                double normalized_performance = your_value / best_value;
+                double score_ratio = referenceScore(normalized_performance);
+    score_ratio = natural_log_score(100.0 * score_ratio, your_queries, best_queries, true) / 100.0;
+                double unbounded_score_ratio = score_ratio;
+
+                quitp(score_ratio, "Correct guess in %lld queries. Ratio: %.12f, RatioUnbounded: %.12f", your_queries, score_ratio, unbounded_score_ratio);
             } else {
                 quitp(0.0, "Wrong guess. Ratio: 0.0000");
             }
@@ -102,4 +119,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-

@@ -1,3 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
+
+// Human reference earns 60 points; improvement remains uncapped.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
+
 // chk.cc
 #include "testlib.h"
 #include <bits/stdc++.h>
@@ -136,11 +159,12 @@ int main(int argc, char* argv[]){
     auto yourPath = readPathLenOnly(ouf, N, r0, c0, "participant", /*allowZeroLen=*/true);
     int Your = (int)yourPath.size();
 
-    double ratio = (Best==0)?0.0: (double)Your/(double)Best;
+    double ratio = calibrated((double)Your/(double)Best);
+    ratio = natural_log_score(100.0 * ratio, Your, Best, false) / 100.0;
     if (ratio<0) ratio=0;
     double unbounded_ratio = max(0.0, ratio);
-    if (ratio>1) ratio=1;
+    // No cap above the human reference.
 
     // Keep exact token (with space) your engine parses:
-    quitp(ratio, "Valid knight path. Your=%d Best=%lld Ratio: %.8f, RatioUnbounded: %.8f", Your, Best, ratio, unbounded_ratio);
+    quitp(ratio, "Valid knight path. Your=%d Best=%lld Ratio: %.12f, RatioUnbounded: %.12f", Your, Best, ratio, unbounded_ratio);
 }

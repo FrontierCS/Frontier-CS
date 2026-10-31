@@ -16,7 +16,7 @@ A bracket sequence is called regular if it can be constructed in the following w
 
 For example, the sequences "(())()", "()" are regular, while "(()" and "())(" are not.
 
-Find the sequence s using no more than 200 queries. Specifically, your score will be (200 - q) / 200, where q is the number of queries.
+Find the sequence s using no more than 200 queries. Fewer queries improve the score as defined in Scoring.
 
 The first line of each test case contains one integer n (2<=n<=1000). At this moment, the bracket sequence s is chosen. The interactor in this task is not adaptive. In other words, the bracket sequence s is fixed in every test case and does not change during the interaction.
 
@@ -77,3 +77,19 @@ Example Output 2 (you to interactor):
 0 4 1 2 1 2
 
 1 ()
+
+## Scoring
+
+Let x be q, the number of queries. The physical reference (the 60-point level) is a=80. Define the lower-band continuation:
+
+    L(x) = 100*max(0,min(1,1-x/200)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.

@@ -24,25 +24,19 @@ Details are described later.
 Squares containing humans or pets are also passable, and each square can contain any number of humans and pets.
 
 
-Scoring
+Raw task objective
 --------
+The formulas in this section define the raw reward V, not final benchmark points. The Scoring section specifies the per-file award and its aggregation.
+
 At the end of $300$ turn, for each $i=1,\cdots,M$, let $R_i$ be the set of squares reachable from the final position of person $i$ through only passable squares, and $n_i$ be the number of pets whose final position is in $R_i$.
 Then, person $i$ obtains satisfaction of $s_i=\frac{|R_i|}{900}\times 2^{-n_i}$.
-The score for the test case is $\mathrm{round}\left(10^8\times\frac{1}{M}\sum_{i=1}^M s_i\right)$.
+The raw task reward V is $\mathrm{round}\left(10^8\times\frac{1}{M}\sum_{i=1}^M s_i\right)$.
 
-#### Number of test cases
-- Provisional test: 100
-- System test: 2000. We will publish <a href="https://img.atcoder.jp/ahc008/seeds.txt">seeds.txt</a> (md5=27bf0702bbe0265900374c3b6b9846b4, sha256=33973e4ded08e3a607fc2e841e14751ff110ae10154b286e7fd5f766ff86d706) after the contest is over.
 
-The score of a submission is the total scores for each test case.
-In the provisional test, if your submission produces illegal output or exceeds the time limit for some test cases, the submission itself will be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> or <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> , and the score of the submission will be zero.
-In the system test, if your submission produces illegal output or exceeds the time limit for some test cases, only the score for those test cases will be zero.
 Note that if your program terminates abnormally, it may be judged as <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Wrong Answer">WA</span> instead of <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Runtime Error">RE</span>.
 
 #### About execution time
 Execution time may vary slightly from run to run.
-In addition, since system tests simultaneously perform a large number of executions, it has been observed that execution time increases by several percent compared to provisional tests.
-For these reasons, submissions that are very close to the time limit may result in <span class='label label-warning' data-toggle='tooltip' data-placement='top' title="Time Limit Exceeded">TLE</span> in the system test.
 Please measure the execution time in your program to terminate the process, or have enough margin in the execution time.
 
 
@@ -89,11 +83,11 @@ We define a basic move as follows: move to a square chosen at random among the a
 
 Each pet $i$ performs the following moves depending on $pt_i$, an integer value between $1$ and $5$ representing its type.
 
-1. <img src="./images/cow.png" width="30" height="30" style="background-color:silver;image-rendering:pixelated"> Cow: Perform one basic move.
-2. <img src="./images/pig.png" width="30" height="30" style="background-color:silver;image-rendering:pixelated"> Pig: Perform two basic moves.
-3. <img src="./images/rabbit.png" width="30" height="30" style="background-color:silver;image-rendering:pixelated"> Rabbit: Perform three basic moves.
-4. <img src="./images/dog.png" width="30" height="30" style="background-color:silver;image-rendering:pixelated"> Dog: Move toward a target person as follows. The first turn starts with no target. If it has no target, the target person is in the current position, or there exists no path to the target person, then it selects one person uniformly at random among those reachable from the current position, excluding those in the current position. If there is no such person, reset to no target and perform one basic move. Otherwise, move to an adjacent passable square that shortens the shortest distance to the target person (if there are multiple such squares, choose one of them uniformly at random), and then perform one basic move. If it reaches the destination after the first or the second move, reset to no target.
-5. <img src="./images/cat.png" width="30" height="30" style="background-color:silver;image-rendering:pixelated"> Cat: Move toward a target square as follows. The first turn starts with no target. If it has no target or there exists no path to the target square, then it selects one square uniformly at random among those reachable from the current position, excluding the current position. If there exists no such square, do nothing. Otherwise, move to an adjacent passable square that shortens the shortest distance to the target square (if there are multiple such squares, choose one of them uniformly at random), and then perform one basic move. If it reaches the destination after the first or the second move, reset to no target.
+1. Cow: Perform one basic move.
+2. Pig: Perform two basic moves.
+3. Rabbit: Perform three basic moves.
+4. Dog: Move toward a target person as follows. The first turn starts with no target. If it has no target, the target person is in the current position, or there exists no path to the target person, then it selects one person uniformly at random among those reachable from the current position, excluding those in the current position. If there is no such person, reset to no target and perform one basic move. Otherwise, move to an adjacent passable square that shortens the shortest distance to the target person (if there are multiple such squares, choose one of them uniformly at random), and then perform one basic move. If it reaches the destination after the first or the second move, reset to no target.
+5. Cat: Move toward a target square as follows. The first turn starts with no target. If it has no target or there exists no path to the target square, then it selects one square uniformly at random among those reachable from the current position, excluding the current position. If there exists no such square, do nothing. Otherwise, move to an adjacent passable square that shortens the shortest distance to the target square (if there are multiple such squares, choose one of them uniformly at random), and then perform one basic move. If it reaches the destination after the first or the second move, reset to no target.
 
 
 Input Generation
@@ -125,3 +119,13 @@ The local tester writes outputs from your program directly to the output file.
 Your program may output comment lines starting with `#`.
 The web version of the visualizer displays the comment lines at the time they are output, which may be useful for debugging and analysis.
 Since the judge program ignores all comment lines, you can submit a program that outputs comment lines as is.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Let V be the raw task reward defined in the problem, and let B and R be the stored baseline and reference rewards. They are calibration values, not assertions of optimality. The stored reward reference R is distinct from the physical reference a used in the logarithm; a is defined by the inverse or stage-specific formula below. Set L=60*max(0,(V-B)/(R-B)), with R>B, and T=R. For nonzero minimizing objectives, and all maximizing objectives, keep L exactly whenever L<=60. The following describes the upper band and any valid zero-cost optimum.
+
+Let X be the unrounded mean, over humans, of (reachable area/900)*2^(-number of reachable pets). Its physical reference is a=A=R/1e8. When L>60, take x=X, a=A, and r=x/a; award min(100,60+ln(r)).
+
+The checker reports points/100.

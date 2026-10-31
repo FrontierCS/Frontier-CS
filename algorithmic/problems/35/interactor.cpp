@@ -1,16 +1,32 @@
+#include <cmath>
+#include <algorithm>
+
+// Natural-log calibration above the previous 60-point threshold.
+// Keep validation and low scores; an exact zero minimization cost earns 100.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0 || !(value > 0.0L) || !(anchor > 0.0L))
+        return old_points;
+    const long double delta = minimize ? std::log(anchor) - std::log(value)
+                                       : std::log(value) - std::log(anchor);
+    return (double)std::min(100.0L, 60.0L + delta);
+}
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
+static double referenceScore(double r) { return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r); }
+
 
 double f_bounded(int x) {
-    if (x <= 500) return 100.0;
     if (x >= 5000) return 0.0;
-    return 100.0 * (5000.0 - x) / (5000.0 - 500.0);
+    return natural_log_score(100.0 * referenceScore((5000.0 - x) / (5000.0 - 500.0)), x, 500, true);
 }
 
 double f_unbounded(int x) {
     if (x >= 5000) return 0.0;
-    return 100.0 * (5000.0 - x) / (5000.0 - 500.0);
+    return natural_log_score(100.0 * referenceScore((5000.0 - x) / (5000.0 - 500.0)), x, 500, true);
 }
 
 int a[605], t[305];
@@ -78,7 +94,7 @@ int main(int argc, char* argv[]) {
     double ratio = best_bounded / 100.0;
     double ratio_unbounded = best_unbounded / 100.0;
 
-    quitp(ratio, "all %d tests passed; Ratio: %.4f; RatioUnbounded: %.4f; mxq = %d",
+    quitp(ratio, "all %d tests passed; Ratio: %.12f; RatioUnbounded: %.12f; mxq = %d",
           T, ratio, ratio_unbounded, mxq);
     return 0;
 }

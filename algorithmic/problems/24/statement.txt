@@ -16,7 +16,7 @@ For the following n lines, the i-th line contains n integers C_{i,1}, ..., C_{i,
 
 Output
 For each test case, if there exists an almost monochromatic permutation, out put n integers p_1, ..., p_n which denote the permutation. Otherwise, output -1.
-If there are multiple almost monochromatic permutations, you need to minimize the lexicographical order. Basically, set S = n * p_1 + (n - 1) * p_2 + ... + 1 * p_n, your score is inversely linear related to S.
+Among valid permutations, minimize V = n*p_1 + (n-1)*p_2 + ... + p_n. Points are defined in Scoring.
 
 SampleInput
 3
@@ -34,3 +34,21 @@ SampleOutput
 
 Note
 For the first test case, c1 = C_{3,1} = 1, c2 = C_{1,2} = 0, c3 = C_{2,3} = 0. Only when i=1, c_i ̸= c_{i+1}.Therefore, the permutation 3,1,2 is an almost monochromatic permutation
+
+## Scoring
+
+Let x be V=sum_i (n-i+1)*p_i, the weighted permutation value. B and R are the baseline and comparison weighted values stored for the subcase. If B<=R, award 100 for x=0, otherwise 60 for x<=R and 0 for x>R. The physical reference (the 60-point level) is a=R. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(B-x)/(B-R)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). If a=0, the zero-cost rule still applies; positive x uses L(x). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their arithmetic mean.
+
+Across test files, use the arithmetic mean of the file scores.

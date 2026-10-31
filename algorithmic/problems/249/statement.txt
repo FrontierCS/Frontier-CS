@@ -10,7 +10,7 @@ Ehab has a hidden permutation p of length n consisting of the elements from 0 to
 
 To do that, you can give Ehab 2 different indices i and j, and he'll reply with (p_i | p_j) where | is the bitwise-or operation.
 
-You can ask queries to figure out the permutation. However, making too many queries will reduce your score, and exceeding 4300 queries will result in 0 points. Ehab is too lazy to play your silly games, so he'll fix the permutation beforehand and will not change it depending on your queries.
+You can ask queries to figure out the permutation. However, making too many queries will reduce your score, and using n*n or more queries will result in 0 points. Ehab is too lazy to play your silly games, so he'll fix the permutation beforehand and will not change it depending on your queries.
 
 Input
 
@@ -34,7 +34,18 @@ Otherwise, you will get Idleness limit exceeded. To do this, use:
 
 Scoring
 
-Your score depends on the number of queries Q you use to guess the permutation. Fewer queries give higher score.
+The physical objective is per-graph query count Q_j; smaller is better. The physical reference is `a = R_j = floor(2*n_j+2*log2(n_j)); if R_j>=n_j*n_j then n_j*(n_j-1)/2`; matching a positive reference earns 60 points.
+
+Define the historical low-score expression (in points):
+
+    P_low = 60*max(0,(n_j*n_j-Q_j)/(n_j*n_j-R_j))^2.
+
+A valid solution with `Q_j=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
+
+    r = a / Q_j
+    P = min(100, 60 + ln(r)).
+
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Apply this mapping to each internal case, then average the points. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 Example Input:
 3

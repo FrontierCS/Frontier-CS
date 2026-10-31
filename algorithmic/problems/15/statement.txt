@@ -2,9 +2,24 @@ Problem Statement
 
 You are given a sequence p of length n, which is a permutation of the numbers 1, 2, ..., n.
 
-Your goal is to make the permutation lexicographically as small as possible by performing a specific operation at most 4n times, and then minimize the number of operations needed to reach that. 
+Your goal is to make the permutation lexicographically as small as possible by performing a specific operation at most 4n times, and then minimize the number of operations needed to reach that.
 More specifically, you must do operations to get the lexicographically smallest permutation that's possible after 4n operations, and then you will be scored based on the number of operations needed to reach it.
-Your final score will be calculated as the average of 100 * clamp((4 * n - your_operations)/(4 * n - best_operations), 0, 1) across all cases
+## Scoring
+
+Let x be m, the number of operations. The operation limit remains 4*n. The physical reference (the 60-point level) is a=2*n+1. Define the lower-band continuation:
+
+    L(x) = 60*max(0,(4*n-x)/(2*n-1)).
+
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 The Operation
 

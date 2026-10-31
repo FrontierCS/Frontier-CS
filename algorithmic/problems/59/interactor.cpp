@@ -1,3 +1,6 @@
+#include <cmath>
+#include <algorithm>
+
 #include "testlib.h"
 #include <bits/stdc++.h>
 using namespace std;
@@ -58,17 +61,17 @@ int main(int argc, char* argv[]) {
             if (b != a)
                 quitf(_wa, "Wrong final array.");
 
-            // === ƽ����ֲ��� ===
-            // 0 �� queries �� limit
-            // queries=0 -> 1.0, queries=limit -> 0.8
-            double ratio = 0.8 + 0.2 * (1.0 - (double)queries / limit);
-            double ratio_unbounded = 0.8 * limit / queries;
-            ratio = max(0.2, min(1.0, ratio));
-
-            double score = ratio * 100.0, score_unbounded = ratio_unbounded * 100.0;
+            // The hard query budget is the executable 60-point reference.
+            // Correctness and the query limit were checked above.
+            const double score = queries == 0 ? 100.0
+                : (double)min(100.0L, 60.0L + log((long double)limit)
+                                                   - log((long double)queries));
+            const double ratio = score / 100.0;
+            const double ratio_unbounded = ratio;
+            const double score_unbounded = score;
 
             string msg = format(
-                "Correct! Queries = %d (limit = %d). Ratio: %.6f (Score: %.2f). RatioUnbounded: %.6f (ScoreUnbounded: %.2f)",
+                "Correct! Queries = %d (limit = %d). Ratio: %.12f (Score: %.2f). RatioUnbounded: %.12f (ScoreUnbounded: %.2f)",
                 queries, limit, ratio, score, ratio_unbounded, score_unbounded);
 
             quitp(ratio, msg.c_str());

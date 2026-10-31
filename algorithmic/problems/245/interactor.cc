@@ -1,3 +1,21 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
 #include "testlib.h"
 #include <iostream>
 #include <vector>
@@ -5,6 +23,12 @@
 #include <sstream>
 #include <queue>
 #include <algorithm>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 using namespace std;
 
 const int KNIGHT = 0;
@@ -38,11 +62,11 @@ class DSU {
 public:
     vector<int> parent, rank_, dist; // dist: 0=same color as root, 1=different
     int n;
-    
+
     DSU(int n) : n(n), parent(n+1), rank_(n+1, 0), dist(n+1, 0) {
         for (int i = 0; i <= n; i++) parent[i] = i;
     }
-    
+
     pair<int, int> find(int x) { // returns (root, parity from x to root)
         if (parent[x] == x) return {x, 0};
         auto [root, par] = find(parent[x]);
@@ -50,7 +74,7 @@ public:
         dist[x] ^= par;
         return {root, dist[x]};
     }
-    
+
     // Unite x and y with relation: role[x] == role[y] if same=1, else different
     // Returns false if contradiction
     bool unite(int x, int y, int same) {
@@ -81,7 +105,7 @@ bool canBeImpostor(int n, int impostor_candidate,
     // role[i]: -1=unknown, 0=Knight, 1=Knave, 2=Impostor
     vector<int> role(n + 1, -1);
     role[impostor_candidate] = IMPOSTOR;
-    
+
     // First pass: propagate constraints involving impostor_candidate
     for (const auto& [qi, qj, ans] : constraints) {
         if (qi == impostor_candidate) {
@@ -101,13 +125,13 @@ bool canBeImpostor(int n, int impostor_candidate,
             else if (role[qi] != needed) return false;
         }
     }
-    
+
     // Second pass: use DSU for constraints between non-Impostor players
     // ans=1 => same role, ans=0 => different role
     DSU dsu(n);
     for (const auto& [qi, qj, ans] : constraints) {
         if (qi == impostor_candidate || qj == impostor_candidate) continue;
-        
+
         // If both roles are already determined, just check consistency
         if (role[qi] != -1 && role[qj] != -1) {
             bool should_same = (ans == 1);
@@ -115,7 +139,7 @@ bool canBeImpostor(int n, int impostor_candidate,
             if (should_same != are_same) return false;
             continue;
         }
-        
+
         // If one is determined, determine the other
         if (role[qi] != -1) {
             int needed = (ans == 1) ? role[qi] : (1 - role[qi]);
@@ -129,17 +153,17 @@ bool canBeImpostor(int n, int impostor_candidate,
             else if (role[qi] != needed) return false;
             continue;
         }
-        
+
         // Both unknown - add to DSU
         if (!dsu.unite(qi, qj, ans)) return false;
     }
-    
+
     // Count knights
     // For determined nodes, count directly
     // For undetermined nodes in DSU, we can choose the coloring to maximize knights
     int knight_count = 0;
     vector<bool> visited(n + 1, false);
-    
+
     for (int i = 1; i <= n; i++) {
         if (i == impostor_candidate) continue;
         if (role[i] != -1) {
@@ -147,14 +171,14 @@ bool canBeImpostor(int n, int impostor_candidate,
             visited[i] = true;
         }
     }
-    
+
     // For each DSU component of undetermined nodes, we can flip all to maximize knights
     for (int i = 1; i <= n; i++) {
         if (i == impostor_candidate || visited[i]) continue;
-        
+
         // Find component via DSU
         auto [root, _] = dsu.find(i);
-        
+
         // BFS to find all nodes in this component and their parities
         vector<pair<int, int>> component; // (node, parity relative to root)
         for (int j = i; j <= n; j++) {
@@ -165,24 +189,24 @@ bool canBeImpostor(int n, int impostor_candidate,
                 visited[j] = true;
             }
         }
-        
+
         // Count how many would be Knights if we set root to Knight vs Knave
         int knights_if_root_knight = 0, knights_if_root_knave = 0;
         for (auto [node, parity] : component) {
             if (parity == 0) knights_if_root_knight++;
             else knights_if_root_knave++;
         }
-        
+
         knight_count += max(knights_if_root_knight, knights_if_root_knave);
     }
-    
+
     // Also count isolated undetermined nodes as Knights
     for (int i = 1; i <= n; i++) {
         if (i == impostor_candidate || visited[i]) continue;
         knight_count++;
         visited[i] = true;
     }
-    
+
     return knight_count >= required_knights;
 }
 
@@ -190,7 +214,7 @@ int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
     int t = inf.readInt();
-    
+
     vector<int> all_n(t);
     for (int tc = 0; tc < t; tc++) {
         all_n[tc] = inf.readInt();
@@ -205,14 +229,14 @@ int main(int argc, char* argv[]) {
     for (int tc = 0; tc < t; tc++) {
         int n = all_n[tc];
         int required_knights = (int)(0.3 * n) + 1;
-        
+
         // Generate hidden role assignment
         vector<int> hidden_roles(n + 1);
-        
+
         // Bias towards smaller indices to favor deterministic algorithms like asesino.cpp
         // that traverse from (1,2) -> (3,4) -> ... in fixed order
         // 60% chance: Impostor in first 1/4 positions
-        // 30% chance: Impostor in 1/4 to 1/2 positions  
+        // 30% chance: Impostor in 1/4 to 1/2 positions
         // 10% chance: Impostor in last 1/2 positions
         int hidden_impostor;
         int p = rnd.next(0, 99);
@@ -224,23 +248,23 @@ int main(int argc, char* argv[]) {
             hidden_impostor = rnd.next(max(3, n / 2 + 1), n);
         }
         hidden_roles[hidden_impostor] = IMPOSTOR;
-        
+
         // Assign roles ensuring > 30% Knights
         vector<int> others;
         for (int i = 1; i <= n; i++) {
             if (i != hidden_impostor) others.push_back(i);
         }
-        
+
         // Shuffle using testlib's rnd
         for (int i = (int)others.size() - 1; i > 0; i--) {
             int j = rnd.next(0, i);
             swap(others[i], others[j]);
         }
-        
+
         for (int i = 0; i < (int)others.size(); i++) {
             hidden_roles[others[i]] = (i < required_knights) ? KNIGHT : KNAVE;
         }
-        
+
         vector<tuple<int,int,int>> constraints;
 
         cout << n << endl;
@@ -276,7 +300,7 @@ int main(int argc, char* argv[]) {
 
                 int answer = expectedAnswer(hidden_roles[i], hidden_roles[j]);
                 constraints.push_back({i, j, answer});
-                
+
                 cout << answer << endl;
                 cout.flush();
 
@@ -303,7 +327,7 @@ int main(int argc, char* argv[]) {
                         other_valid = true;
                     }
                 }
-                
+
                 if (!x_valid || other_valid) {
                     wrong_answers++;
                 }
@@ -320,7 +344,7 @@ int main(int argc, char* argv[]) {
 
     const long long BEST_COST = 15000;
     const long long WORST_COST = 100000;
-    
+
     // Compute penalty = 4^wrong_answers - 1, with overflow protection
     // If 4^wrong_answers > WORST_COST, cost is already >= WORST_COST (0 score)
     long long penalty = 0;
@@ -342,16 +366,17 @@ int main(int argc, char* argv[]) {
             penalty = power - 1;
         }
     }
-    
+
     long long cost = total_queries + penalty;
     if (cost < 0 || cost > 2 * WORST_COST) {
         cost = WORST_COST + 1;  // Safety check for any overflow
     }
 
-    double score_ratio = max(0.0, min(1.0, (double)(WORST_COST - cost) / (double)(WORST_COST - BEST_COST)));
-    double unbounded_ratio = max(0.0, (double)(WORST_COST - cost) / (double)(WORST_COST - BEST_COST));
+    double score_ratio = calibrated((double)(WORST_COST - cost) / (double)(WORST_COST - BEST_COST));
+    score_ratio = natural_log_score(100.0L * (score_ratio), cost, BEST_COST, true) / 100.0;
+    double unbounded_ratio = score_ratio;
 
-    quitp(score_ratio, "Cost: %lld (Q=%lld, c=%d). Ratio: %.4f, RatioUnbounded: %.4f",
+    quitp(score_ratio, "Cost: %lld (Q=%lld, c=%d). Ratio: %.12f, RatioUnbounded: %.12f",
           cost, total_queries, wrong_answers, score_ratio, unbounded_ratio);
 
     return 0;

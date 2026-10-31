@@ -11,7 +11,7 @@ Grammy plans to play Pishin for the next \( n \) days. As a rich girl, her Pishi
 
 On the \( i \)-th day, Grammy will earn \( a_i \) EXP for the character she plays. This means that if she plays a character continuously from the \( l \)-th day to the \( r \)-th day (both inclusive), the character's adventure rank will increase to level \( k \), where \( k \) is the largest integer between 0 and \( m \) such that the total EXP earned (which is \(\sum_{i=l}^{r} a_i\)) is greater than or equal to the requirement of leveling up to \( k \) (which is \(\sum_{i=1}^{k} b_i\)).
 
-Being a greedy girl, Grammy wants to maximize the total sum of adventure ranks across all her characters after the \( n \) days. However, as a single-minded girl, she doesn't want to play too many different characters. To balance this, she introduces a penalty factor of \( c \). Her goal is to maximize the total sum of adventure ranks across all characters after the \( n \) days, minus \( c \times d \), where \( d \) is the number of different characters she plays. As Grammy's best friend, your task is to compute the maximum value she can achieve under the optimal strategy for selecting characters.
+Being a greedy girl, Grammy wants to maximize the total sum of adventure ranks across all her characters after the \( n \) days. However, as a single-minded girl, she doesn't want to play too many different characters. To balance this, she introduces a penalty factor of \( c \). Her goal is to maximize the total sum of adventure ranks across all characters after the \( n \) days, minus \( c \times d \), where \( d \) is the number of different characters she plays. As Grammy's best friend, your task is to construct a schedule with a large value. The checker computes the value of your schedule from its consecutive segments.
 
 ## Input
 
@@ -25,7 +25,7 @@ It is guaranteed that neither the sum of \( n \) nor the sum of \( m \) of all t
 
 ## Output
 
-For each test case, output one line containing one integer, indicating the maximum value.
+For each test case, output an integer d (1 <= d <= n), followed by d pairs l r. Each pair is the inclusive interval of days assigned to one character. The intervals must be in chronological order, nonempty, consecutive, and cover every day exactly once: the first l is 1, each next l is the preceding r+1, and the last r is n. Whitespace and line breaks between these integers are unrestricted. Do not output a claimed objective value.
 
 ## Example
 
@@ -42,8 +42,14 @@ For each test case, output one line containing one integer, indicating the maxim
 
 **standard output**
 ```
-3
-6
+2
+1 3
+4 5
+4
+1 1
+2 2
+3 3
+4 4
 ```
 
 ## Note
@@ -51,3 +57,19 @@ For each test case, output one line containing one integer, indicating the maxim
 For the first sample test case, one solution is to use the first three days to get a character with adventure rank 4 and the next two days to get another character with adventure rank 3. This gives us a value of \((4-2)+(3-2)=3\).
 
 For the second sample test case, we can play a different character each day; this gives us adventure ranks 2, 3, 3, and 2, respectively. So the value is \((2-1)+(3-1)+(3-1)+(2-1)=6\).
+
+
+## Scoring
+
+For each test case the checker validates the segments and computes their net value V: the sum of the characters' achieved ranks minus c*d. The answer file stores the optimal value R. Let B be the value of assigning all n days to one character: B = rank(sum(a_i)) - c. Both V and R may be negative or zero.
+
+The physical cost is the optimality gap C = R - V, which is minimized. Its 60-point reference is C60 = R - B, the gap of the one-character schedule. This uses an actual feasible baseline, without adding an arbitrary offset to the net value. The case receives:
+
+    100,                              if C = 0;
+    0,                                if C60 = 0 and C > 0;
+    60 * max(0, 2 - C/C60),            if C >= C60 > 0;
+    min(100, 60 + ln(C60/C)),           if 0 < C < C60.
+
+Here ln is the natural logarithm with coefficient 1 in points. When C60>0, the one-character schedule earns 60 points. In the uncapped upper branch, reducing the remaining optimality gap by a factor e adds one point. An optimal schedule earns 100. When the one-character schedule is already optimal, there is no positive 60-point reference: optimal schedules earn 100 and strictly worse schedules earn 0.
+
+Invalid segments or extra output are rejected. If a validated schedule exceeds R, or the one-character value B exceeds R, the checker reports a reference-data failure instead of rejecting the better feasible schedule as wrong. Scores of the test cases in a file are averaged equally.

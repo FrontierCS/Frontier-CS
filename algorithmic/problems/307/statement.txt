@@ -134,22 +134,18 @@ For each test, the judge also computes a deterministic **baseline** solution:
    - assign every sensor in that block to that hub
 5. Let the baseline total cost be `C_base`
 
-If your solution has total cost `C`, then your per-test score is
+The physical objective is sensor assignment cost C=sum_used(P+A*r2+B*load²); smaller is better. The physical reference is `a = (2.0/3.0)*C_base`; matching a positive reference earns 60 points.
 
-\[
-\text{score} = 10^6 \cdot \frac{C_{base}}{C_{base} + C}
-\]
+Define the historical low-score expression (in points):
 
-Properties:
+    P_low = 100*C_base/(C_base+C) if C_base+C>0; 0 otherwise.
 
-- If your solution matches the baseline exactly, you get `500000`
-- Better-than-baseline solutions get more than `500000`
-- Worse-than-baseline solutions get less than `500000`
-- Invalid outputs get `0`
+A valid solution with `C=0` receives 100 points, including a zero-baseline instance. Otherwise, if `P_low<=60`, retain `max(0,P_low)`. For `P_low>60` and a positive physical reference, award:
 
-The final score is the arithmetic mean of per-test scores over all official tests.
+    r = a / C
+    P = min(100, 60 + ln(r)).
 
----
+Here `r` is the improvement factor relative to the physical reference, and `ln` is the natural logarithm with coefficient 1. In the uncapped upper branch, `r = exp(P-60)`: each additional point means an `exp(1)`-fold improvement in the physical objective. The factor is computed from the physical objective and its reference, not from a transformed reward or the old point score. Invalid output retains its existing rejection or zero score; the zero-cost exception applies only after validation. Use one score per file. Both reported ratio channels use points divided by 100. Across official files, take the arithmetic mean.
 
 ## Constraints
 
@@ -212,6 +208,6 @@ C = 37.111\ldots
 For this instance, the deterministic baseline produces the same partition, so `C = C_base`, and the score is exactly:
 
 \[
-10^6 \cdot \frac{C_base}{C_base + C} = 500000
+100 \cdot \frac{C_base}{C_base + C} = 50
 \]
 ```

@@ -1,5 +1,29 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
+#include <cmath>
+#include <algorithm>
 #include "testlib.h"
 #include <bits/stdc++.h>
+
+// Historical calibration supplies the unchanged low-score branch.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 using namespace std;
 
 int main(int argc, char* argv[]) {
@@ -163,32 +187,10 @@ int main(int argc, char* argv[]) {
         baseline += W[j] * (long long)abs(A[j] - B[j]);
     }
 
-    // ---- compute score ratio ----
-    // Statement: Score = floor(10^9 * min(5, B/U))
-    // Baseline (U=B): score = 10^9 = 1.0 * 10^9
-    // Maximum (B/U=5): score = 5*10^9
-    // Map to [0,1] for quitp: ratio = min(5, B/U) / 5
-    // So baseline -> ratio=0.2, maximum -> ratio=1.0
-    // This is consistent: quitp scores are relative; baseline is not "perfect" (ratio=1)
-    // but rather a known reference point. The problem rewards improvement beyond baseline.
-
-    double ratio;
-    if (U <= 0) {
-        ratio = 1.0;
-    } else {
-        double bu = (double)baseline / (double)U;
-        double score_mult = (bu < 5.0) ? bu : 5.0; // min(5, B/U)
-        ratio = score_mult / 5.0;                   // normalize to [0,1]
-    }
-
-    if (ratio < 0.0) ratio = 0.0;
-    if (ratio > 1.0) ratio = 1.0;
-
-    // The Ratio tag is parsed by the judge
-    quitp(ratio,
-          "Ratio: %.10f | B=%lld U=%lld (setup=%lld demand=%lld) score=%.0f",
-          ratio, baseline, U, setup_total, demand_total,
-          floor(1e9 * ((ratio * 5.0) < 5.0 ? ratio * 5.0 : 5.0)));
-
+    // Unit shift keeps the score finite at the feasible zero-cost optimum.
+    // r=1 still means U=B/5, the former full-score threshold.
+    double ratio = calibrated((double(baseline) + 5.0) / (5.0 * (double(U) + 1.0)));
+    ratio = natural_log_score(100.0L * (ratio), U, (long double)baseline/5.0L, true) / 100.0;
+    quitp(ratio, "Ratio: %.12f, RatioUnbounded: %.12f | B=%lld U=%lld", ratio, ratio, baseline, U);
     return 0;
 }

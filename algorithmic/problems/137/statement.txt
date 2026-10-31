@@ -1,7 +1,7 @@
 Title: Kangaroos
 
 Goal
-You must print a grid (“map”) on which a simple multi-agent movement game is played. The judge will run 500 random control sequences on your map. Your map is accepted if at least 125 of those sequences fail to gather all agents into a single cell.
+You must print a grid (“map”) on which a simple multi-agent movement game is played. The judge will run 500 random control sequences on your map. Your valid map is scored by how often those sequences fail to gather all agents into a single cell.
 
 World
 - The world is an n-by-m grid (1 ≤ n, m ≤ 20).
@@ -21,8 +21,8 @@ Map requirements
 Judging
 - The judge generates 500 random control strings, each of length 50,000.
 - Each character in a control string is chosen independently and uniformly from {U, D, L, R}.
-- In 1 string, if after applying all 50,000 moves there are still at least two kangaroos in different cells (i.e., not all agents have gathered into one cell), then you earn 1 point for that testcase.
-- Your goal is to try and maximize your score over 500 random testcases.
+- In 1 string, if after applying all 50,000 moves there are still at least two kangaroos in different cells (i.e., not all agents have gathered into one cell), then this sequence contributes 1 to your raw success count P.
+- Your goal is to maximize P over 500 random sequences.
 - If your map violates any of the legality rules above (size, connectedness, no cycles, etc.), it is rejected regardless of performance.
 
 Input
@@ -44,3 +44,16 @@ Notes
 - The judge’s random strings are produced by a standard uniform choice among U, D, L, R (e.g., typical rand()%4 mapping).
 - Make sure your map satisfies all “Map requirements”; otherwise it will be rejected even if it performs well on the random tests.
 - When printing out the grid, you should actually provide a c++ code which will print out the grid when run.
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original maximizing quantity or quality and a for its physical 60-point reference. The improvement factor is r=x/a, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+X is the number of the t control sequences for which the submitted map does not gather all agents, and R is the same count for the reference map. Define the objective x=X, its physical reference a=A=R when 0<R<t; 0.6*t when R=0 or R=t, and the lower-band calculation L=60*X/R when 0<R<t; 100*X/t when R=0 or R=t.
+
+```text
+P = L,                           if L <= 60
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero value of a maximizing objective is not a perfect solution and earns no special full-score award. The checker reports P/100.

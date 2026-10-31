@@ -1,3 +1,19 @@
+#include <cmath>
+#include <algorithm>
+
+// Scores are in points here. Preserve the previous lower band, and compare
+// the original objective with its 60-point anchor using the natural logarithm.
+static double natural_log_score(double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0) return old_points;
+    // A zero reference or a flat legacy score has no positive logarithmic anchor.
+    if (!(value > 0.0L) || !(anchor > 0.0L)) return old_points;
+    const long double gain = minimize ? std::log(anchor) - std::log(value)
+                                      : std::log(value) - std::log(anchor);
+    return static_cast<double>(std::min(100.0L, 60.0L + gain));
+}
+
 #include "testlib.h"
 #include <chrono>
 #include <vector>
@@ -7,6 +23,12 @@
 #include <process.h> // _getpid()
 #else
 #include <unistd.h>  // getpid()
+
+// Reference calibration: 60 points at r=1, logarithmic rewards above it.
+static double calibrated(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6 * r : 0.6 + 0.02 * std::log(r);
+}
 #endif
 
 using namespace std;
@@ -109,17 +131,12 @@ int main(int argc, char* argv[]) {
                 double your_value = double(MAX_QUESTIONS - your_queries);
                 double best_value = double(MAX_QUESTIONS - best_queries);
 
-                if (best_value <= your_value) {
-                    quitp(1.0, "Correct guess with %lld questions. Exceeded expectations. Ratio: 1.0000",
-                          your_queries);
-                }
+                if (best_value <= 0) quitf(_fail, "Reference questions must be below 53");
+                double score_ratio = calibrated(your_value / best_value);
+    score_ratio = natural_log_score(100.0 * score_ratio, your_queries, best_queries, true) / 100.0;
+                double unbounded_ratio = score_ratio;
 
-                double score_ratio = your_value / best_value;
-                if (score_ratio < 0.0) score_ratio = 0.0;
-                double unbounded_ratio = max(0.0, score_ratio);
-                if (score_ratio > 1.0) score_ratio = 1.0;
-
-                quitp(score_ratio, "Correct guess in %lld questions. Ratio: %.4f, RatioUnbounded: %.4f",
+                quitp(score_ratio, "Correct guess in %lld questions. Ratio: %.12f, RatioUnbounded: %.12f",
                       your_queries, score_ratio, unbounded_ratio);
             } else {
                 cout << ":(" << endl;

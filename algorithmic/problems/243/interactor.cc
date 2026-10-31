@@ -1,8 +1,26 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <csignal>
 #include <iostream>
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <cmath>
 
 using namespace std;
 
@@ -34,55 +52,58 @@ int getDistanceToWall(int r, int c, int dir) {
 
 int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
-    
+    // Preserve the verdict when a contestant closes its input after answering.
+    std::signal(SIGPIPE, SIG_IGN);
+
     // Read input
     R = inf.readInt();
     C = inf.readInt();
     inf.readEoln();  // Skip end of line
-    
+
     grid.resize(R);
     for (int i = 0; i < R; i++) {
         grid[i] = inf.readToken();
     }
-    
+
     trueR = inf.readInt() - 1;  // Convert to 0-based index
     trueC = inf.readInt() - 1;  // Convert to 0-based index
     trueDir = inf.readInt();
-    
+
     // Validate hidden start position
     if (!isValid(trueR, trueC)) {
         quitf(_fail, "Hidden start position (%d, %d) is invalid!", trueR + 1, trueC + 1);
     }
-    
+
     // Read standard answer
     string res = ans.readToken();  // "yes" or "no"
-    int stdSteps = ans.readInt();  // Standard number of steps
-    
+    int stdSteps = ans.readInt();  // Standard number of steps, including the final answer
+    if (stdSteps <= 0) quitf(_fail, "Reference round count must be positive");
+
     // Output initial grid to participant
     cout << R << " " << C << endl;
     for (int i = 0; i < R; i++) {
         cout << grid[i] << endl;
     }
     cout.flush();
-    
+
     // Initialize current position and direction
     int curR = trueR;
     int curC = trueC;
     int curDir = trueDir;
-    
+
     // Participant's step counter
     int userSteps = 0;
-    
+
     // Interaction loop: allow up to 2 * stdSteps steps
     while (userSteps <= 2 * stdSteps) {
         // Output distance to wall in current direction
         cout << getDistanceToWall(curR, curC, curDir) << endl;
         cout.flush();
-        
+
         // Read participant's command
         string cmd = ouf.readToken();
         userSteps++;  // Each command counts as one step (including final "yes"/"no")
-        
+
         if (cmd == "left") {
             // Turn left (counterclockwise)
             curDir = (curDir + 3) % 4;
@@ -99,80 +120,58 @@ int main(int argc, char* argv[]) {
                 cout.flush();
                 double score_ratio = 0.0;
                 double unbounded_ratio = 0.0;
-                quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Round %d: Crashed into wall at (%d, %d)", 
+                quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Round %d: Crashed into wall at (%d, %d)",
                       userSteps, score_ratio, unbounded_ratio, userSteps, curR + 1, curC + 1);
             }
             curR = nr;
             curC = nc;
         } else if (cmd == "yes" || cmd == "no") {
             // Participant claims to have found the position or determined it's impossible
-            // Calculate score based on number of steps
-            // Ensure denominator is not zero (handle edge case where stdSteps is 0)
-            if (stdSteps <= 0) stdSteps = 1;
-            
-            double score_ratio = 0.0;
-            double unbounded_ratio = 0.0;
-            string msg;
-            
-            if (userSteps <= stdSteps) {
-                score_ratio = 1.0;  // Perfect or better than standard
-                unbounded_ratio = 1.0;
-                msg = "Perfect!";
-            } else if (userSteps >= 2 * stdSteps) {
-                score_ratio = 0.0;  // Too slow
-                unbounded_ratio = 0.0;
-                msg = "Too slow.";
-            } else {
-                // Linear interpolation: score decreases from 1.0 to 0.0 as steps increase from stdSteps to 2*stdSteps
-                // Formula: (2*stdSteps - userSteps) / stdSteps
-                score_ratio = (double)(2 * stdSteps - userSteps) / (double)stdSteps;
-                unbounded_ratio = score_ratio;
-                msg = "Suboptimal.";
-            }
-            
-            // Ensure score is in [0.0, 1.0]
-            score_ratio = max(0.0, min(1.0, score_ratio));
-            unbounded_ratio = max(0.0, min(1.0, unbounded_ratio));
-            
+            double performance = max(0.0, (2.0 * stdSteps - userSteps) / stdSteps);
+            double score_ratio = (0.6 * performance);
+            score_ratio = natural_log_score(100.0L * (score_ratio), userSteps, stdSteps, true) / 100.0;
+            double unbounded_ratio = score_ratio;
+            string msg = userSteps <= stdSteps ? "At or above reference." : "Below reference.";
+
             if (cmd == "yes") {
                 // Participant claims solution exists, read guessed position
                 int guessR = ouf.readInt();
                 int guessC = ouf.readInt();
-                
+
                 cout << -1 << endl;
                 cout.flush();
-                
+
                 if (res != "yes") {
                     // Standard answer says "no" but participant says "yes"
                     double error_score = 0.0;
                     double error_unbounded = 0.0;
-                    quitp(error_score, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Standard answer is 'no' but you output 'yes'.", 
+                    quitp(error_score, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Standard answer is 'no' but you output 'yes'.",
                           userSteps, error_score, error_unbounded);
                 } else if (guessR - 1 == curR && guessC - 1 == curC) {
                     // Correct guess
-                    quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. %s UserSteps=%d, StdSteps=%d", 
+                    quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. %s UserSteps=%d, StdSteps=%d",
                           userSteps, score_ratio, unbounded_ratio, msg.c_str(), userSteps, stdSteps);
                 } else {
                     // Wrong position guessed
                     double error_score = 0.0;
                     double error_unbounded = 0.0;
-                    quitp(error_score, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Wrong position guessed. At (%d, %d), guessed (%d, %d)", 
+                    quitp(error_score, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Wrong position guessed. At (%d, %d), guessed (%d, %d)",
                           userSteps, error_score, error_unbounded, curR + 1, curC + 1, guessR, guessC);
                 }
             } else if (cmd == "no") {
                 // Participant claims no solution exists
                 cout << -1 << endl;
                 cout.flush();
-                
+
                 if (res != "no") {
                     // Standard answer says "yes" but participant says "no"
                     double error_score = 0.0;
                     double error_unbounded = 0.0;
-                    quitp(error_score, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Standard answer is 'yes' but you output 'no'.", 
+                    quitp(error_score, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Standard answer is 'yes' but you output 'no'.",
                           userSteps, error_score, error_unbounded);
                 } else {
                     // Correct: no solution exists
-                    quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. %s UserSteps=%d, StdSteps=%d", 
+                    quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. %s UserSteps=%d, StdSteps=%d",
                           userSteps, score_ratio, unbounded_ratio, msg.c_str(), userSteps, stdSteps);
                 }
             }
@@ -182,18 +181,18 @@ int main(int argc, char* argv[]) {
             cout.flush();
             double score_ratio = 0.0;
             double unbounded_ratio = 0.0;
-            quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Invalid command: %s", 
+            quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Invalid command: %s",
                   userSteps, score_ratio, unbounded_ratio, cmd.c_str());
         }
     }
-    
+
     // Exceeded maximum allowed steps
     cout << -1 << endl;
     cout.flush();
     double score_ratio = 0.0;
     double unbounded_ratio = 0.0;
-    quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f. Exceeded maximum allowed steps (2 * StdSteps = %d)", 
+    quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f. Exceeded maximum allowed steps (2 * StdSteps = %d)",
           userSteps, score_ratio, unbounded_ratio, 2 * stdSteps);
-    
+
     return 0;
 }

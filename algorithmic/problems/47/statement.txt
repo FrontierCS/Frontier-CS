@@ -135,21 +135,20 @@ The official hidden tests in this round follow these ranges:
 • Time & memory limits: see Section 8.
 
 
-6) Scoring
-----------
-For each test, the judge computes:
-• V = your total profit (sum of v_t for all placements).
-• B = a **lower bound** (baseline value) — a simple shelf heuristic without rotation, in input order.
-• K = an **upper bound** (“best” for this round) — a fractional area fill that respects per‑type limits
-      but ignores geometry (optimistically packs by value density).
+## Scoring
 
-Your per‑test ratio is:
-  ratio = clamp( (V − B) / (K − B), 0, 1 )
+Let x be V, the submitted profit. B is the stored shelf-heuristic baseline profit, K the stored target, and U the integer-profit upper bound from fractional area filling by decreasing value density while respecting supply limits. These formulas apply when K>B. If K<=B, award 100 for V>=K and 0 otherwise. The physical reference (the 60-point level) is a=B+0.6*(K-B) when K>=U; K when K<U. Define the lower-band continuation:
 
-Corner case: if K ≤ B, then ratio = 1 if V ≥ K, else 0.
+    L(x) = 100*min(1,max(0,(x-B)/(K-B))) when K>=U; 60*max(0,(x-B)/(K-B)) when K<U.
 
-Your problem score is the **average** ratio over all tests. Future rounds may tighten how B and/or K
-are computed; you do not need to output B or K.
+For positive x and positive physical reference a, define the improvement factor r=x/a. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
+
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (multiplication by e). A zero maximization objective is not a full-score exception. All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Across test files, use the arithmetic mean of the file scores.
 
 
 7) Common Mistakes That Cause Wrong Answer

@@ -1,4 +1,28 @@
+#include <cmath>
+#include <algorithm>
+
+// Keep historical scores through 60; above the anchor, compare physical objectives.
+static double natural_log_score(long double old_points, long double value,
+                                long double anchor, bool minimize) {
+    if (minimize && value == 0.0L) return 100.0;
+    if (old_points <= 60.0L) return (double)std::max(0.0L, old_points);
+    if (!(value > 0.0L) || !(anchor > 0.0L))
+        return (double)std::clamp(old_points, 0.0L, 100.0L);
+    const long double improvement = minimize
+        ? std::log(anchor) - std::log(value)
+        : std::log(value) - std::log(anchor);
+    return (double)std::clamp(60.0L + improvement, 0.0L, 100.0L);
+}
+
 #include "testlib.h"
+#include <cmath>
+#include <algorithm>
+// Historical calibration; the physical-objective mapping is applied below.
+static double reference_score(double r) {
+    r = std::max(0.0, r);
+    return r <= 1.0 ? 0.6*r : 0.6 + 0.02*std::log(r);
+}
+
 #include <iostream>
 #include <algorithm>
 #include <cstdio>
@@ -10,7 +34,7 @@ int n, c[N][N], a[N];
 
 int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
-    
+
     // Read input: n players, each has n cards
     n = inf.readInt();
     for (int i = 1; i <= n; i++) {
@@ -22,14 +46,14 @@ int main(int argc, char* argv[]) {
             ++c[i][x];
         }
     }
-    
+
     // Read output: number of operations
     int cnt = ouf.readInt();
     if (cnt < 0 || cnt > n * n * 2) {
         quitf(_wa, "Operation number out of range: %d (expected 0 to %d)", cnt, n * n * 2);
     }
     int num = cnt;
-    
+
     // Simulate operations
     while (cnt--) {
         // Read one operation: n cards to pass
@@ -48,14 +72,14 @@ int main(int argc, char* argv[]) {
             ++c[i % n + 1][a[i]];
         }
     }
-    
+
     // Verify final state: each player i should have exactly n cards with number i
     for (int i = 1; i <= n; i++) {
         if (c[i][i] != n) {
             quitf(_wa, "Player %d does not have exactly %d cards with number %d (has %d)", i, n, i, c[i][i]);
         }
     }
-    
+
     // Calculate score based on number of operations
     // According to the problem solution:
     // - Optimal solution: at most n*(n-1)/2 operations for each part = n*n - n total
@@ -63,23 +87,15 @@ int main(int argc, char* argv[]) {
     // - Maximum acceptable: n*n - n
     double base_score = n * n - n;  // Maximum operations from solution
     double perfect = n * n / 2.0;   // Perfect score threshold
-    
-    double score_ratio;
-    if (num <= perfect) {
-        score_ratio = 1.0;  // Perfect or better solution
-    } else if (num > base_score) {
-        score_ratio = 0.0;  // Exceeds maximum acceptable operations
-    } else {
-        // Linear interpolation between perfect and base_score
-        // Score decreases from 1.0 to 0.5 as operations increase from perfect to base_score
-        score_ratio = max(0.5, (base_score - 1.0 * num) / (base_score - perfect));
-    }
-    
-    // Ensure score is in [0.0, 1.0]
-    score_ratio = max(0.0, min(1.0, score_ratio));
+
+    double performance = base_score > perfect
+        ? max(0.0, (base_score-num)/(base_score-perfect))
+        : (perfect+1.0)/(num+1.0);
+    double score_ratio = reference_score(performance);
+    score_ratio = natural_log_score(100.0L * (score_ratio), num, perfect, true) / 100.0;
     double unbounded_ratio = score_ratio;
-    
-    quitp(score_ratio, "Value: %d. Ratio: %.4f, RatioUnbounded: %.4f", num, score_ratio, unbounded_ratio);
-    
+
+    quitp(score_ratio, "Value: %d. Ratio: %.12f, RatioUnbounded: %.12f", num, score_ratio, unbounded_ratio);
+
     return 0;
 }

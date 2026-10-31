@@ -44,20 +44,25 @@ Output
 ------
 Print exactly n integers, the labels p_1 … p_n with 1 ≤ p_i ≤ k. Whitespace is free.
 
-Scoring
--------
-The .ans file accompanying each test provides four integers:
-    bestEC bestCV baselineEC baselineCV
-Per metric, the checker computes:
-    s = clamp((baseline - your) / (baseline - best), 0, 1)    (minimization)
-and returns score = (s_EC + s_CV) / 2.
+## Scoring
 
-Important for this pack:
-• We set bestEC = 0 and bestCV = 0 for all tests. These are theoretical lower bounds (ideal targets) and
-  do not imply that EC=0 or CV=0 is achievable on a given graph or with k>1. They are used solely for
-  normalization, i.e. your normalized improvement is (baseline - your) / baseline (clamped to [0,1]).
-• baselineEC and baselineCV are computed from median performance of multiple random balanced partitions
-  (or may be fixed by the organizers).
+The answer file stores four integers in this order: bestEC, bestCV, baselineEC, baselineCV. For each metric separately, let x be its actual cost (edge cut EC or communication volume CV), R its stored best value, and B its baseline. In the released data R=0 is an ideal theoretical lower bound, not a claim that zero is attainable. Baselines describe random balanced partitions or organizer-selected comparisons.
+
+For B>R, retain the original checker's percentage score through 60 points:
+
+    L(x) = 100*clamp((B-x)/(B-R), 0, 1).
+    a = B-0.6*(B-R) = 0.4*B+0.6*R.
+
+Here a is the actual cost at the original 60-point level. In particular, the released R=0 gives a=0.4*B, not a=0. Define the improvement factor r=a/x for positive costs. Each metric receives:
+
+    P = 100,                          if x=0;
+    P = L(x),                         if x>0 and L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+The logarithm is natural and has coefficient 1 in percentage points. On an uncapped upper branch, r=exp(P-60): each additional metric point requires dividing that metric's actual cost by e. The reference is a continuous scale and need not be an attainable integer cost. For B<=R, retain the original binary branch: award 100 if x<=R and 0 otherwise; an exact valid x=0 always receives 100.
+
+Score EC and CV separately and take their arithmetic mean. Thus doubling the improvement factor of only one metric adds ln(2)/2 to the file score while both metrics remain on their uncapped upper branches; doubling both adds ln(2). All graph and balance checks apply before scoring; invalid output receives 0. Across test files, use the arithmetic mean of file scores.
+
 
 Constraints
 -----------
@@ -72,4 +77,4 @@ Validation by the checker
 • Exactly n labels read; each in [1..k].
 • Balance enforced: size(part) ≤ floor((1 + eps) * ceil(n / k)).
 • EC and CV computed on the simplified simple graph.
-• Partial credit reported with the substring “Ratio: <score>”.
+• Points are awarded according to Scoring above.

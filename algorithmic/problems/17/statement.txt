@@ -25,20 +25,24 @@ Constraints
 - The sum of n over all test cases does not exceed 100000.
 - The sum of (r − l + 1) over all queries in a test case must not exceed 30n.
 
-Scoring
--------
-Let x be the number of queries asked in one test case, and let log2n = log2(n).
+## Scoring
 
-- If x = log2n, the score for this test case is 100.
-- If x = 15·log2n, the score for this test case is 0.
-- For values of x in between, the score is computed by linear interpolation:
+Let x be Q, the query count in a subcase. n is the subcase size. The physical reference (the 60-point level) is a=log2(n). Define the lower-band continuation:
 
-  score(x, n) = 100 * (15·log2n − x) / (14·log2n)
+    L(x) = 60*max(0,(15*log2(n)-x)/(14*log2(n))).
 
-- If x < log2n, the score is clamped to 100.
-- If x > 15·log2n, the score is clamped to 0.
+For positive x and positive physical reference a, define the improvement factor r=a/x. The physical reference has r=1 and earns 60 points. For a valid output on this branch, the points P are:
 
-The final score of your submission is the minimum score among all test cases.
+    P = 100,                          if x=0;
+    P = L(x),                         if L(x)<=60;
+    P = min(100,60+ln(r)),             otherwise.
+
+Here ln is the natural logarithm. In the upper branch before the 100-point cap, r=exp(P-60): each additional point requires an e-fold improvement in the physical objective (division by e). All feasibility, correctness, and hard resource-limit checks remain required; invalid output receives 0.
+
+Score each subcase separately and take their minimum.
+
+Across test files, use the arithmetic mean of the file scores.
+
 
 Notes
 -----

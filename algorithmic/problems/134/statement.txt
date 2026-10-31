@@ -8,14 +8,13 @@ Each query consists of two integers x and y (both in the range [1, n]). The inte
 
 - 0: Both x = a and y = b. You have successfully found the answer!
 - 1: x is less than a (x < a)
-- 2: y is less than b (y < b)  
+- 2: y is less than b (y < b)
 - 3: x is greater than a OR y is greater than b (x > a or y > b)
 
 Important: If multiple responses are true for your query, the interactor may choose any of them.
 
 Your goal is to find both numbers a and b using as few queries as possible.
 
-This problem is graded based on the number of queries you use. In order to receive any points, you must use no more than 10,000 queries. Your answer will be compared to a reference solution ref_queries. Your final score will be calculated as the average of 100 * min((ref_queries + 1) / (your_queries + 1), 1) across all test cases.
 
 Input
 
@@ -62,3 +61,17 @@ Output:
 
 Time limit: 2 seconds
 Memory Limit: 512 MB
+
+## Scoring
+
+All feasibility and interaction limits apply before scoring; invalid output receives zero. Points are averaged over test files. For the logarithmic branch, write x for the original minimizing quantity and a for its physical 60-point reference. The improvement factor is r=a/x, and the upper-band award is P=min(100,60+ln(r)). Here ln is natural: r=1 corresponds to 60 points, and on the uncapped logarithmic upper band, r=exp(P-60). Each additional point multiplies the physical improvement factor by e (divides a minimizing objective by e or multiplies a maximizing objective by e, as applicable). The lower-band, zero-objective, and completion rules below still apply.
+
+Q is the number of queries including the successful query, and R>=0 is the stored reference query count. Define the objective x=Q, its physical reference a=A=R, and the lower-band calculation L=60*(R+1)/(Q+1).
+
+```text
+P = 100,                         if x = 0
+P = L,                           if L <= 60 and x > 0
+P = min(100, 60 + ln(r)),      otherwise
+```
+
+Zero is tested on the valid original count, cost, or error, before the lower-band test. A zero reference anchor has no positive improvement branch; positive objectives keep their lower-band score. The +1 shift is used only in L, not in the logarithm. The checker reports P/100.
