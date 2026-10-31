@@ -9,6 +9,9 @@ int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
     int n = inf.readInt(1, 30000, "n");
+    // Seed the generator from a per-test secret in the answer file so the
+    // hidden array is not a fixed function of the default rng seed (#208).
+    rnd.setSeed(ans.readLong());
     cout << n << endl;
     cout.flush();
 
