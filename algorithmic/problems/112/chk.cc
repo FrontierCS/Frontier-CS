@@ -59,6 +59,12 @@ int main(int argc, char* argv[]) {
 
     double claimed_min_dist = ouf.readDouble();
 
+    // testlib reads an overflowing literal such as 1e400 as inf, and the
+    // relative comparison below would treat inf as equal to any distance.
+    if (!std::isfinite(claimed_min_dist)) {
+        quitf(_wa, "Minimum distance is not a finite number");
+    }
+
     if (claimed_min_dist < 0) {
         quitf(_wa, "Minimum distance cannot be negative: %.10f", claimed_min_dist);
     }

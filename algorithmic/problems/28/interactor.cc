@@ -24,6 +24,7 @@ static double referenceScore(double r) {
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 
 using namespace std;
 
@@ -32,6 +33,7 @@ char current[15];
 int num[30];
 int cnt = 0;
 map<string, int>vis;
+set<string>dict;
 
 void dfs(int now, int start){
   if(cnt >= 1000)return;
@@ -69,7 +71,9 @@ int main(int argc, char *argv[]) {
   int t = inf.readInt(), n = inf.readInt();
   for(int i = 0; i < 26; i++){
     num[i] = inf.readInt();
+    for(int j = 1; j <= num[i]; j++)dict.insert(s[i][j]);
   }
+  ensuref((int)dict.size() == n, "The word lists hold %d words, but N is %d", (int)dict.size(), n);
   cout<<t<<endl;
   cout.flush();
   cout<<n<<endl;
@@ -83,10 +87,12 @@ int main(int argc, char *argv[]) {
       int k = ouf.readInt(1, n);
       sumk += k;
       int start = qs[0]-'a';
+      // Every word starts with a lowercase letter, so other prefixes match nothing.
+      int limit = (qs[0] >= 'a' && qs[0] <= 'z') ? num[start] : 0;
 
       int match_cnt = 0;
       string ret[1010];
-      for(int j = 1; j <= num[start]; j++){
+      for(int j = 1; j <= limit; j++){
         int match = 1;
         for(int t = 0; t < qs.length(); t++){
           if(s[start][j][t] != qs[t])match = 0;
@@ -105,10 +111,10 @@ int main(int argc, char *argv[]) {
       cout.flush();
     }
     else if(operation == "answer"){
+      // n distinct dictionary words are the whole dictionary.
       for(int j = 1; j <= n; j++){
         string answers = ouf.readWord();
-        int start = answers[0]-'a';
-        if(answers > s[start][num[start]])quitf(_wa, "Invalid answer");
+        if(!dict.count(answers))quitf(_wa, "Invalid answer");
         if(vis[answers])quitf(_wa, "Repeated answer");
         vis[answers] = 1;
       }
