@@ -24,7 +24,7 @@ def play(binary, directory, queries, wrong=False):
     inp = directory / "input"
     ans = directory / "answer"
     inp.write_text(f"{n}\n")
-    ans.write_text("")
+    ans.write_text("1\n")  # hidden seed
     p = subprocess.Popen([str(binary), str(inp), str(directory / "transcript"), str(ans)],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True)
