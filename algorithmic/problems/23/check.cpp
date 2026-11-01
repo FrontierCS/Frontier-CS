@@ -351,6 +351,8 @@ namespace test_gen{
 		}
 
 
+		if (op<0 || op>=(int)vf.size())
+			quitf(_fail, "Tid %d selects no test set. Please fix the data !!!",Tid);
 		(vf[op])();
 	}
 
@@ -368,7 +370,6 @@ namespace test_gen{
 }
 void check_Tid(){
 	test_gen::Tid=inf.readInteger();
-	if (test_gen::Tid%100==0) quitf(_ok,"Test 0.");
 }
 void read_test(){
 	test_gen::gao();
@@ -387,6 +388,10 @@ void read_test(){
 	*/
 }
 void validate_test(){
+	// Every test must run the program. Test set 0 is empty, and a Tid with
+	// Tid%100==0 used to be accepted without running it (#205).
+	if (Tcase==0)
+		quitf(_fail, "Tid %d generates no test strings. Please fix the data !!!",test_gen::Tid);
 	pattern tp1("[abcS]{3,1000}");
 	pattern tp2("[abc]{1,1000}S[abc]{1,1000}");
 	for (int T=1;T<=Tcase;T++){

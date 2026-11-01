@@ -321,8 +321,6 @@ b=1
 
 ## Scoring
 
-For Tid divisible by 100, the checker validates the submitted program syntax and then accepts it for 100 points without executing generated test strings. No currently released test case uses Tid divisible by 100. The execution-based rules below apply to the other test identifiers.
-
 Let x be E, the number of executed instructions in a test string. C=max(2*l*l,50), where l is the initial string length. The execution limit remains 2*C; program-length and correctness requirements still apply. The physical reference (the 60-point level) is a=C. Define the lower-band continuation:
 
     L(x) = 60*max(0,(2*C-x)/C).
