@@ -9,16 +9,23 @@ int main(int argc, char* argv[]) {
     registerInteraction(argc, argv);
 
     int n = inf.readInt(1, 30000, "n");
+    // The hidden array comes from a per-test secret seed in the answer file,
+    // which the contestant never sees. Unseeded testlib rnd is one fixed stream
+    // for every test, so a program could replay it without queries (#208).
+    const unsigned long long seed = ans.readLong(0LL, LLONG_MAX, "seed");
     cout << n << endl;
     cout.flush();
 
-    // === ���ɷ������������ ===
+    // Build the shuffled array before reading any query (non-adaptive).
+    // mt19937_64 is fully specified by the C++ standard, so a seed always
+    // gives the same array.
+    mt19937_64 gen(seed);
     vector<int> a(n);
     iota(a.begin(), a.end(), 1);
     for (int i = 0; i < n; i++) {
         int l = i;
         int r = min(n - 1, i + 2);
-        int j = rnd.next(l, r); // pick j uniformly in [i, min(n-1, i+2)]
+        int j = l + (int)(gen() % (unsigned long long)(r - l + 1)); // j in [i, min(n-1, i+2)]
         swap(a[i], a[j]);
     }
 
