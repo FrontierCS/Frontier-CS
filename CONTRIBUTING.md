@@ -362,3 +362,58 @@ Please include:
 - Area of expertise
 - Type of contribution (algorithmic/research problem)
 - Brief description of your proposed contribution
+
+## Formal Conjectures (Lean) Problems
+
+`research/problems/formal_conjectures/` hosts one problem per conjecture
+statement from [google-deepmind/formal-conjectures](https://github.com/google-deepmind/formal-conjectures)
+(categories `research open` and `research solved`). The source of truth is the
+git submodule at `third_party/formal-conjectures`, pinned to a `bench-*`
+release tag; **problem directories are generated from it and are not
+committed** (see the `.gitignore` there). Materialization is automatic: the
+first `frontier list|eval|show` touching these problems initializes the
+submodule and runs the generator (`src/frontier_cs/lazy_problems.py`), stamping
+the submodule commit plus a generator hash in `_generator/.generated-ref` so
+later accesses serve the files directly (and template changes in `generate.py`
+re-materialize automatically). To materialize manually:
+
+```bash
+git submodule update --init third_party/formal-conjectures
+python3 research/problems/formal_conjectures/_generator/generate.py
+```
+
+- The generator parses the submodule's Lean sources directly (namespaces,
+  `@[category ...]` attributes) — no Lean toolchain needed. "Fill-in-the-answer"
+  statements (`answer(sorry)`) elaborate with a placeholder (`True` for Props),
+  so the plain "prove this" contract would misstate them. Those of the exact
+  binder-free shape `answer(sorry) ↔ Q` become mode `prove_or_disprove`
+  problems (submit a proof of `Q` or of `¬Q`; the trusted checker extracts `Q`
+  from the compiled `True ↔ Q` type and fails closed on anything else). The
+  rest — value-style answers, statements referencing section `variable`s or
+  sorry-containing defs — are skipped rather than misrepresented. After a
+  submodule bump, validate with
+  `research/problems/formal_conjectures/_generator/shape_check.sh` (requires
+  docker + the eval image): it rechecks every prove-or-disprove target's
+  compiled shape.
+- Solutions are Lean 4 proofs, checked in a Docker image with Lean + Mathlib +
+  formal-conjectures prebuilt (`research/problems/formal_conjectures/docker/`).
+- Scoring is binary: 1.0 iff the submitted proof compiles without `sorry`,
+  proves a statement definitionally equal to the conjecture, and uses only the
+  standard axioms. See `research/problems/formal_conjectures/common/`.
+- These problems are **excluded from CI validation** (the `.skip-validation`
+  marker): open conjectures cannot have a reference solution scoring > 0.
+  They are also excluded from `research/scripts/problems.txt` and the README
+  problem count.
+
+To bump the submodule to a new upstream release:
+
+```bash
+git -C third_party/formal-conjectures checkout <new-bench-tag>
+research/problems/formal_conjectures/docker/build.sh --push   # rebuild eval image
+python3 research/problems/formal_conjectures/_generator/generate.py --wipe
+git add third_party/formal-conjectures                        # only the pointer changes
+```
+
+The parser can be cross-checked against upstream's own extractor:
+`docker run --rm <eval-image> lake exe extract_names > /tmp/extract.json`
+then `generate.py --check-against /tmp/extract.json`.
