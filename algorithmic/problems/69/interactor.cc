@@ -85,6 +85,30 @@ int main(int argc, char* argv[]) {
     long long cap = 30LL * n * n;
     long long optimal_total_len = ans.readLong(0, cap, "optimal_total_len");
 
+    // The pair of every round comes from a per-test secret seed in the answer
+    // file, which the contestant never sees. The pairs used to be a fixed
+    // function of the round number, so a program could print them without
+    // decoding any power.
+    const unsigned long long seed = ans.readLong(0LL, LLONG_MAX, "seed");
+
+    // Draw all q pairs before reading any word (non-adaptive). u and v are
+    // independent and uniform on [1, n], as the statement says. mt19937_64 is
+    // fully specified by the C++ standard, so a seed always gives the same
+    // pairs; the rejection loop keeps each draw exactly uniform.
+    mt19937_64 gen(seed);
+    const unsigned long long range = (unsigned long long)n;
+    const unsigned long long limit = ULLONG_MAX - ULLONG_MAX % range;
+    auto drawIndex = [&]() -> int {
+        unsigned long long x = gen();
+        while (x >= limit) x = gen();
+        return (int)(x % range) + 1;
+    };
+    vector<pair<int,int>> secret(q);
+    for (auto& pr : secret) {
+        pr.first = drawIndex();
+        pr.second = drawIndex();
+    }
+
     // Announce to participant and FLUSH.
     cout << n << ' ' << q << '\n' << flush;
 
@@ -128,15 +152,9 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Interaction phase: q rounds: print p, then read u v ----
-    auto pickPair = [&](int j)->pair<int,int>{
-        int u = (j % n) + 1;
-        int v = ((j * 37 + 13) % n) + 1;
-        return {u, v};
-    };
-
     for (int j = 0; j < q; ++j) {
         // Compute the p for our secret pair this round
-        auto [uu, vv] = pickPair(j);
+        const int uu = secret[j].first, vv = secret[j].second;
         long long pval = words_chars_ok ? powerConcat(words[uu-1], words[vv-1]) : 0;
 
         // Send p and FLUSH
@@ -159,19 +177,20 @@ int main(int argc, char* argv[]) {
 
         if (pu && pv && 1 <= u && u <= n && 1 <= v && v <= n) {
             if (u != uu || v != vv) {
-                // Optional: compute what their pair's power is (for a clearer message)
+                // Optional: compute what their pair's power is (for a clearer message).
+                // The secret pair itself stays out of the message.
                 if (words_chars_ok) {
                     long long got = powerConcat(words[u-1], words[v-1]);
                     if (got == pval) {
-                        add_wa(format("Query %d: wrong indices; expected (%d,%d), got (%d,%d) (same power).",
-                                      j+1, uu, vv, u, v));
+                        add_wa(format("Query %d: wrong indices; (%d,%d) has the same power p=%s but is not the pair.",
+                                      j+1, u, v, toString(pval).c_str()));
                     } else {
-                        add_wa(format("Query %d: wrong indices and wrong power; expected (%d,%d) with p=%s, but (%d,%d) gives %s.",
-                                      j+1, uu, vv, toString(pval).c_str(), u, v, toString(got).c_str()));
+                        add_wa(format("Query %d: wrong indices and wrong power; p=%s, but (%d,%d) gives %s.",
+                                      j+1, toString(pval).c_str(), u, v, toString(got).c_str()));
                     }
                 } else {
-                    add_wa(format("Query %d: wrong indices; expected (%d,%d), got (%d,%d).",
-                                  j+1, uu, vv, u, v));
+                    add_wa(format("Query %d: wrong indices; got (%d,%d).",
+                                  j+1, u, v));
                 }
             }
         }
